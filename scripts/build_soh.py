@@ -11,7 +11,25 @@ EXTRACTED = os.path.join(REPO_ROOT, "data", "masters") + os.sep
 
 N_WEEKS = int(sys.argv[1]) if len(sys.argv) > 1 else 104
 OUT_PATH = sys.argv[2] if len(sys.argv) > 2 else os.path.join(REPO_ROOT, "SOH_Master.xlsx")
-START_MONDAY = datetime.date(2026, 6, 1)  # matches sample data period
+ANCHOR_YEAR = int(sys.argv[3]) if len(sys.argv) > 3 else 2026
+
+
+def monday_containing_jan1(year):
+    jan1 = datetime.date(year, 1, 1)
+    return jan1 - datetime.timedelta(days=jan1.weekday())
+
+
+def week_year_and_number(week_start):
+    # Week1 of year Y = the Mon-Sun week that contains Jan 1 of Y.
+    for y in (week_start.year - 1, week_start.year, week_start.year + 1):
+        b = monday_containing_jan1(y)
+        nb = monday_containing_jan1(y + 1)
+        if b <= week_start < nb:
+            return y, (week_start - b).days // 7 + 1
+    raise ValueError(f"could not resolve week-year for {week_start}")
+
+
+START_MONDAY = monday_containing_jan1(ANCHOR_YEAR)  # Week1 start = Monday of the week containing Jan 1
 
 def load_csv(name):
     with open(EXTRACTED + name, newline="", encoding="utf-8") as f:
@@ -57,16 +75,19 @@ for r in inter_master:
     inter_dedup.append(r)
 inter_master = inter_dedup
 
-# production plan lookup by (Intermediate, WeekIndex-approx) -- we don't have true batch counts,
-# only historic quantity samples for a few weeks (23-31ish). We'll map sample weeks 23.. to WeekIndex 1..
+# production plan sample data: keyed by actual calendar date (WeekStart), not the source
+# file's own week numbering, so it lines up correctly regardless of ANCHOR_YEAR.
 plan_lookup = {}
 for r in plan_sample:
+    ws_str = r.get("WeekStart")
+    if not ws_str:
+        continue
     try:
-        wk = int(float(r["Week"]))
-    except (TypeError, ValueError):
+        wk_date = datetime.datetime.fromisoformat(ws_str).date()
+    except ValueError:
         continue
     qty = to_float(r["Qty"], 0.0)
-    plan_lookup.setdefault(r["Intermediate"], {})[wk] = qty
+    plan_lookup.setdefault(r["Intermediate"], {})[wk_date] = qty
 
 print(f"RM master: {len(rm_master)}, Intermediates: {len(inter_master)}, BOM rows: {len(bom)}, ProductMap: {len(prodmap)}")
 
@@ -90,16 +111,21 @@ def add_table(ws, name, ref, style="TableStyleMedium9"):
     ws.add_table(t)
 
 # ============================================================ Cal_Weeks
+# WeekIndex(内部の連番, グリッドの列位置に使用) と、年ごとに1へリセットするLabel(表示用) の両方を持つ。
+# Week1 = その年の1月1日を含む月〜日の週。
+week_labels = {}
 ws = wb.create_sheet("Cal_Weeks")
-ws.append(["WeekIndex", "WeekStart", "WeekEnd", "ISOWeek", "Month", "Year"])
+ws.append(["WeekIndex", "Year", "WeekOfYear", "Label", "WeekStart", "WeekEnd", "Month"])
 for i in range(1, N_WEEKS + 1):
     wk_start = START_MONDAY + datetime.timedelta(weeks=i - 1)
     wk_end = wk_start + datetime.timedelta(days=6)
-    iso_week = wk_start.isocalendar()[1]
-    ws.append([i, wk_start, wk_end, iso_week, wk_start.month, wk_start.year])
-style_header(ws, 6)
-add_table(ws, "Cal_Weeks", f"A1:F{N_WEEKS+1}")
-for col, w in zip("ABCDEF", [10, 12, 12, 9, 8, 8]):
+    yr, wn = week_year_and_number(wk_start)
+    label = f"{yr}-W{wn:02d}"
+    week_labels[i] = label
+    ws.append([i, yr, wn, label, wk_start, wk_end, wk_start.month])
+style_header(ws, 7)
+add_table(ws, "Cal_Weeks", f"A1:G{N_WEEKS+1}")
+for col, w in zip("ABCDEFG", [10, 8, 11, 12, 12, 12, 8]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 
@@ -159,7 +185,7 @@ def week_col(week_idx):
 
 # ============================================================ PP_Grid (production plan, INPUT)
 ws = wb.create_sheet("PP_Grid")
-header = ["Intermediate"] + [f"W{w}" for w in range(1, N_WEEKS + 1)]
+header = ["Intermediate"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
 ws.append(header)
 for i, r in enumerate(inter_master):
     row_num = i + 2
@@ -167,9 +193,8 @@ for i, r in enumerate(inter_master):
     row_vals = [inter]
     weekvals = plan_lookup.get(inter, {})
     for w in range(1, N_WEEKS + 1):
-        # seed sample data into first weeks if available (approx mapping from source week numbers 23..)
-        src_week = 22 + w
-        row_vals.append(to_float(weekvals.get(src_week, 0), 0))
+        wk_date = START_MONDAY + datetime.timedelta(weeks=w - 1)
+        row_vals.append(to_float(weekvals.get(wk_date, 0), 0))
     ws.append(row_vals)
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=1 + w).fill = INPUT_FILL
@@ -278,7 +303,7 @@ ws_req = wb.create_sheet("Grid_Requirement")
 ws_in = wb.create_sheet("Grid_Incoming")
 ws_st = wb.create_sheet("Grid_Stock")
 
-header = ["RM_Code"] + [f"W{w}" for w in range(1, N_WEEKS + 1)]
+header = ["RM_Code"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
 ws_req.append(header)
 ws_in.append(header)
 ws_st.append(header)
@@ -365,7 +390,7 @@ def build_po_draft(sheet_name, category, title):
 
     hdr_row = 10
     headers = ["Part Name", "TTAF Code", "CSA Code", "UOM", "SafetyStock", "CurrentStock"] + \
-              [f"W{w}" for w in range(1, N_WEEKS + 1)] + ["Total"]
+              [week_labels[w] for w in range(1, N_WEEKS + 1)] + ["Total"]
     for c, h in enumerate(headers, start=2):
         ws.cell(row=hdr_row, column=c, value=h)
     style_header(ws, len(headers) + 1, row=hdr_row)
@@ -413,6 +438,13 @@ ws = wb.create_sheet("README", 0)
 readme_lines = [
     "SOH（在庫管理）シート 使い方",
     "",
+    "このブックはPower BI等に読み込ませる中間テーブルではなく、これ自体が完成品です。",
+    "Dashboard と PO_Draft_* が最終的な閲覧・発注画面、それ以外は計算の土台です。",
+    "",
+    "【週番号のルール】",
+    "  Cal_Weeks の Label 列（例: 2026-W01）を使ってください。Week1=1月1日を含む月〜日の週で、",
+    "  年が変わると再び1にリセットされます（例: 2026-W52 の次は 2027-W01）。",
+    "",
     "【シート構成】",
     "  M_RawMaterials / M_Intermediates / M_BOM / M_ProductMap : マスタ（原材料・中間体・原単位・完成品紐付け）",
     "  PP_Grid            : 生産計画（中間体×週のバッチ数）。ここを更新すると全体に自動反映されます【入力】",
@@ -426,13 +458,17 @@ readme_lines = [
     "  Dashboard           : 品目ごとの現在庫・最小在庫・要発注アラートを一覧表示",
     "  PO_Draft_*          : 要発注分を注文書ひな形（Chemical Release形式）に自動転記",
     "",
-    "【週次の運用】",
-    "  1. 生産計画が確定/変更されたら PP_Grid を更新",
+    "【重要】PP_Grid と T_Shipments は現状「手入力」です。Plan Increase and Decrease や",
+    "  CSA Reportに既にある情報の二重入力になってしまっています。/powerquery フォルダの",
+    "  Mスクリプトを使うと、これらのファイルから自動取込みできます（詳細はdocs/SOH_System_Guide.md）。",
+    "",
+    "【週次・月次の運用】",
+    "  1. 生産計画が確定/変更されたら PP_Grid を更新（Power Query設定後は「すべて更新」のみ）",
     "  2. CSA Reportの最新情報でT_Shipments のETA/着荷日を更新（早着・遅着はここに反映）",
     "  3. 棚卸を実施したらT_StockCountに実測値を追記",
     "  4. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
     "",
-    "【前提・要確認事項】",
+    "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
     "  - M_RawMaterials の SafetyStock_Qty と LeadTime_Weeks は仮値です。実際の安全在庫水準に置き換えてください。",
     "  - Categoryの割り当て(Chemical/Hazardous Chemical/Substrate)は入手データから機械的に推定した部分があります。要レビュー。",
     "  - 生産計画(PP_Grid)は現状の顧客オーダーからバッチサイズ固定で算出される前提の入力データです。",
