@@ -277,23 +277,32 @@ def col_letter_ok(ci):
     return get_column_letter(ci)
 
 # ============================================================ Calc_Demand (explosion: BOM row x week)
+# Batches と RM_Qty_Per_Batch は PP_Grid / M_BOM への「ライブ参照」(INDEX/MATCH, SUMIFS)。
+# VBAでPP_Grid・M_BOMの値やRM_Qty_Per_Batchを更新しても、既存の(中間体,原材料)組み合わせの行は
+# 自動的に再計算される（行の追加・並べ替えにも耐える）。
+# ただし全く新しい(中間体,原材料)の組み合わせが増えた場合はこの表自体の再生成が必要。
 ws = wb.create_sheet("Calc_Demand")
-ws.append(["Intermediate", "RM_Code", "WeekIndex", "RM_Qty_Per_Batch", "Batches", "Demand"])
+ws.append(["Intermediate", "RM_Code", "WeekIndex", "Label", "RM_Qty_Per_Batch", "Batches", "Demand"])
 row_num = 1
+seen_pairs = set()
 for r in bom:
     inter = r["Intermediate"]
-    pp_row = inter_row.get(inter)
+    rm_code = r["RM_Code"]
+    if (inter, rm_code) in seen_pairs:
+        continue  # avoid duplicate explosion if the same pair appears from multiple source rows
+    seen_pairs.add((inter, rm_code))
     for w in range(1, N_WEEKS + 1):
         row_num += 1
-        if pp_row:
-            batches_formula = f"='PP_Grid'!{week_col(w)}{pp_row}"
-        else:
-            batches_formula = 0
-        ws.append([inter, r["RM_Code"], w, r["RM_Total_Per_Batch"], batches_formula, f"=D{row_num}*E{row_num}"])
+        ws.append([
+            inter, rm_code, w, week_labels[w],
+            f'=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],A{row_num},M_BOM[RM_Code],B{row_num})',
+            f'=IFERROR(INDEX(PP_Grid[#Data],MATCH(A{row_num},PP_Grid[Intermediate],0),MATCH(D{row_num},PP_Grid[#Headers],0)),0)',
+            f"=E{row_num}*F{row_num}",
+        ])
 n = row_num
-style_header(ws, 6)
-add_table(ws, "Calc_Demand", f"A1:F{n}", style="TableStyleLight9")
-for col, w in zip("ABCDEF", [14, 12, 10, 16, 10, 12]):
+style_header(ws, 7)
+add_table(ws, "Calc_Demand", f"A1:G{n}", style="TableStyleLight9")
+for col, w in zip("ABCDEFG", [14, 12, 10, 10, 16, 10, 12]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 ws.sheet_state = "hidden"
@@ -374,8 +383,6 @@ for rm_code, entries in bom_by_rm.items():
 
     for entry in entries:
         inter = entry["Intermediate"]
-        pp_row = inter_row.get(inter)
-        rate = entry["RM_Total_Per_Batch"]
 
         row_num += 1
         batches_row = row_num
@@ -383,14 +390,15 @@ for rm_code, entries in bom_by_rm.items():
         ws.cell(row=row_num, column=3, value="No. of batches")
         for w in range(1, N_WEEKS + 1):
             cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1)
-            if pp_row:
-                cell.value = f"='PP_Grid'!{week_col(w)}{pp_row}"
-            else:
-                cell.value = 0
+            cell.value = (
+                f'=IFERROR(INDEX(PP_Grid[#Data],MATCH($B{row_num},PP_Grid[Intermediate],0),'
+                f'MATCH("{week_labels[w]}",PP_Grid[#Headers],0)),0)'
+            )
 
         row_num += 1
         ws.cell(row=row_num, column=2, value="使用量(kg)")
-        ws.cell(row=row_num, column=3, value=rate)
+        ws.cell(row=row_num, column=3,
+                value=f'=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],$B{row_num-1},M_BOM[RM_Code],$A{mat_header_row})')
         for w in range(1, N_WEEKS + 1):
             wc = mdetail_week_col(w)
             ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
@@ -530,34 +538,27 @@ readme_lines = [
     "  Cal_Weeks の Label 列（例: 2026-W01）を使ってください。Week1=1月1日を含む月〜日の週で、",
     "  年が変わると再び1にリセットされます（例: 2026-W52 の次は 2027-W01）。",
     "",
-    "【シート構成】",
-    "  M_RawMaterials / M_Intermediates / M_BOM / M_ProductMap : マスタ（原材料・中間体・原単位・完成品紐付け）",
-    "    原単位(M_BOM)は「Usage from Production Engineering」、生産計画(PP_Grid)は",
-    "    「Powder & Slurry & Pgm Plan」から抽出しています。Plan Increase and Decrease と",
-    "    Inventory June Releasesはこのブックの計算からは切り離しています（月初の在庫差異報告には",
-    "    引き続き別途ご利用ください。Grid_Stockの週次実績がその報告の元データになります）。",
-    "  PP_Grid            : 生産計画（中間体×週のバッチ数）。Powder & Slurry & Pgm Planから抽出【入力/月次更新】",
-    "  T_OpeningStock      : 起点となる期首在庫【入力】",
-    "  T_Shipments         : 発注〜輸送〜着荷の実績・予定。ETAの週に入力した数量が見込み在庫に反映されます。",
-    "                        PO番号・発注日(Order_Date)も記録できます【入力】",
-    "  T_StockCount        : 棚卸の実測値。入力するとその週以降の在庫計算がリセットされます【入力】",
-    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
-    "  Calc_Demand         : 原単位展開の計算過程（非表示・監査用）",
-    "  Grid_Requirement    : 原材料の週次所要量（自動計算）",
-    "  Grid_Incoming       : 原材料の週次入荷予定（自動計算）",
-    "  Grid_Stock          : 原材料の週次在庫（自動計算・2年先まで）",
-    "  Dashboard           : 品目ごとの現在庫・最小在庫・要発注アラートを一覧表示",
-    "  PO_Draft_*          : 要発注分を注文書ひな形（Chemical Release形式）に自動転記",
+    "【普段見るシート】",
+    "  Dashboard           : 品目ごとの現在庫・最小在庫・要発注アラート一覧（まずここ）",
+    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示",
+    "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
+    "  T_Shipments/T_OpeningStock/T_StockCount : 入力用",
+    "  Grid_Stock          : 原材料の週次在庫の詳細（2年先まで）",
     "",
-    "【重要】PP_Grid・T_Shipmentsは現状、月次でファイルから再抽出/転記する運用です。",
-    "  /powerquery フォルダのMスクリプトを使うと自動取込みできます（詳細はdocs/SOH_System_Guide.md、未検証）。",
+    "  M_RawMaterials・M_BOM・PP_Grid・その他非表示シートは内部計算用です。通常は開く必要はありません。",
     "",
-    "【週次・月次の運用】",
-    "  1. 「Powder & Slurry & Pgm Plan」が新しい月版に更新されたら、scripts/build_soh.pyを再実行してPP_Grid等を更新",
-    "  2. CSA Reportの最新情報でT_Shipments のETA/着荷日/PO番号/発注日を更新（早着・遅着はここに反映）",
-    "  3. 棚卸を実施したらT_StockCountに実測値を追記",
-    "  4. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
-    "  5. 月初は、前月最終週と当月頭のGrid_Stockを見比べて在庫差異を確認（Plan Increase and Decrease /",
+    "【重要】原単位(M_BOM)とバッチ数(PP_Grid)はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
+    "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM を実行してください",
+    "  （対象ファイルを選ぶだけです。詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
+    "  T_Shipments・T_OpeningStock・T_StockCount等の入力データには一切触れません。",
+    "",
+    "【毎月の運用】",
+    "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
+    "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
+    "  3. CSA Reportの最新情報でT_Shipments のETA/着荷日/PO番号/発注日を更新（早着・遅着はここに反映）",
+    "  4. 棚卸を実施したらT_StockCountに実測値を追記",
+    "  5. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
+    "  6. 月初は、前月最終週と当月頭のGrid_Stockを見比べて在庫差異を確認（Plan Increase and Decrease /",
     "     Inventory Releasesの報告フォーマットに転記）",
     "",
     "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
@@ -569,6 +570,38 @@ for i, line in enumerate(readme_lines, start=1):
     ws.cell(row=i, column=1, value=line)
 ws["A1"].font = Font(bold=True, size=14)
 ws.column_dimensions["A"].width = 100
+
+# ---- ナビゲーション（README上部にジャンプリンクを追加） ----
+nav_targets = [
+    ("Dashboard", "在庫アラート一覧（まずここを見る）"),
+    ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
+    ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
+    ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
+    ("PO_Draft_Substrate", "発注書ドラフト（Substrate）"),
+    ("T_Shipments", "発注・着荷の入力"),
+    ("T_OpeningStock", "期首在庫の入力"),
+    ("T_StockCount", "棚卸実績の入力"),
+    ("Grid_Stock", "原材料の週次在庫（詳細）"),
+]
+ws.insert_rows(2, amount=len(nav_targets) + 2)
+ws["A2"] = "【ジャンプ】クリックで各シートへ移動"
+ws["A2"].font = Font(bold=True, size=12)
+for i, (target, label) in enumerate(nav_targets, start=3):
+    cell = ws.cell(row=i, column=1, value=f"▶ {target} - {label}")
+    cell.hyperlink = f"#'{target}'!A1"
+    cell.font = Font(color="0563C1", underline="single")
+
+# ---- 内部処理用シートは非表示にして視認性を上げる ----
+for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming"]:
+    if sheet_name in wb.sheetnames:
+        wb[sheet_name].sheet_state = "hidden"
+
+# ---- シートの並び順を業務で使う順に ----
+order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
+         "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount", "Grid_Stock",
+         "M_RawMaterials", "M_BOM", "PP_Grid",
+         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Calc_Demand", "Grid_Requirement", "Grid_Incoming"]
+wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
 wb.save(OUT_PATH)
 print("Full workbook written to", OUT_PATH)
