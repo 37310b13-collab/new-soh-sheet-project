@@ -2,140 +2,149 @@
 
 ## 1. これは何か（位置づけ）
 
-**これは完成したExcelツールとして使うことを意図しています。**Power BIやQueryで後から整理し直すための
-「中間テーブル置き場」ではありません。`Dashboard`と`PO_Draft_*`が最終的な閲覧・発注画面で、それ以外
-のシートはその計算のための土台です。
+これは完成したExcelツールとして使うことを意図しています。`Dashboard`と`PO_Draft_*`が最終的な
+閲覧・発注画面、`Material_Detail`が「どの材料が何に使われているか」のトレーサビリティ画面です。
 
-顧客オーダー → 生産計画（中間体バッチ数） → 原単位展開 → 原材料所要量 → 週次在庫（2年先まで）
-→ 発注書ドラフト、までを1つのExcelブック（`SOH_Master.xlsx`）内で自動計算します。Google Sheets /
-Apps Scriptは使用せず、Excelの通常の数式とテーブル機能のみで構築しています。既存の
-`Usage from Production Engineering` / `CSA Confirmed Order` / `Plan Increase and Decrease` の
-3ファイルは**フォーマットを一切変更していません**。
+**このブックが担う範囲は「在庫管理」に絞っています。** 生産計画や原単位そのものの再計算はせず、
+既存のファイルの値をそのまま参照します。
 
-## 2. シート構成と役割
+- **顧客オーダー・生産計画の策定**: このブックの範囲外（既存の運用のまま）
+- **原単位（1バッチあたり使用量）**: このブックの範囲外。「Usage from Production Engineering」から
+  そのまま参照
+- **週次バッチ数**: このブックの範囲外。「Powder & Slurry & Pgm Plan」（毎月改版）からそのまま参照
+- **在庫のロールフォワード、着荷予定との突合、発注アラート、PO発行**: このブックの役割
+
+「Plan Increase and Decrease」「Inventory June Releases」の2ファイルは、このブックの計算からは
+**完全に切り離しています**。ただし、毎月月初に前月最終週⇔当月頭の在庫差異を報告する運用は
+引き続き必要とのことなので、`Grid_Stock`の週次実績がその報告の元データとして使える設計にして
+あります（週ごとの在庫が既に手元にあるので、差分を見るだけで済みます）。
+
+## 2. データの出所
+
+| データ | 出所ファイル | 参照方法 |
+|---|---|---|
+| 原材料マスタ・区分(Chemical/Hazardous/Substrate) | TTAF R-Model系ファイルの Chemical Release / Hazardous Chemical Release シート | 月次で抽出スクリプト実行 |
+| 原単位（1バッチ使用量kg） | **Usage from Production Engineering**（Slurry/Powderシート） | 月次で抽出スクリプト実行 |
+| 週次バッチ数 | **Powder & Slurry & Pgm Plan**（毎月改版、約36枚の材料別シート） | 月次で抽出スクリプト実行 |
+| 完成品⇔中間体の紐付け | Usage from Production Engineeringの`TSP.TPP.CAT`シート | 月次で抽出スクリプト実行 |
+| 着荷予定・PO情報 | CSA Reportの`Shipping Schedule`シート | 手入力 or Power Query |
+
+## 3. シート構成と役割
 
 | シート | 種別 | 役割 |
 |---|---|---|
 | README | - | ブック内の使い方サマリ |
-| Cal_Weeks | マスタ | 週の定義（後述） |
-| M_RawMaterials | マスタ | 原材料マスタ（コード・品名・仕入先・区分：Chemical/Hazardous Chemical/Substrate） |
-| M_Intermediates | マスタ | 中間体マスタ（Slurry/Powder/Solution、バッチサイズ） |
-| M_BOM | マスタ | 原単位（中間体 → 原材料 → 1バッチあたり使用量） |
-| M_ProductMap | マスタ | 完成品コード ⇔ 中間体コードの紐付け（`TSP.TPP.CAT`シート由来） |
-| **PP_Grid** | **入力**（将来はPower Query自動更新） | 生産計画（中間体×週のバッチ数） |
-| **T_OpeningStock** | **入力** | 計算開始週の期首在庫 |
-| **T_Shipments** | **入力**（将来はPower Query自動更新） | 発注〜輸送〜着荷の実績・予定 |
-| **T_StockCount** | **入力** | 棚卸実測値（誤差リセット用） |
-| Calc_Demand | 計算(非表示) | 原単位展開の明細（監査用） |
-| Grid_Requirement / Grid_Incoming / Grid_Stock | 計算 | 原材料の週次所要量／入荷予定／在庫（2年ロールフォワード） |
-| **Dashboard** | **出力（最終確認画面）** | 品目ごとの現在庫・最小在庫・要発注アラート一覧 |
+| Cal_Weeks | マスタ | 週の定義（Week1=1月1日を含む週、年ごとにリセット） |
+| M_RawMaterials | マスタ | 原材料マスタ |
+| M_Intermediates | マスタ | 中間体マスタ |
+| M_BOM | マスタ | 原単位（中間体→原材料、1バッチ使用量） |
+| M_ProductMap | マスタ | 完成品⇔中間体の紐付け |
+| PP_Grid | 入力（月次で再抽出） | 生産計画（中間体×週のバッチ数） |
+| T_OpeningStock | 入力 | 起点となる期首在庫 |
+| T_Shipments | 入力 | 発注〜輸送〜着荷（PO番号・**発注日**・ETA・着荷日） |
+| T_StockCount | 入力 | 棚卸実測値（誤差リセット用） |
+| **Material_Detail** | **出力（トレーサビリティ）** | 材料ごとに「使用中間体・バッチ数・使用量・週次合計・入荷予定・在庫」をブロック表示 |
+| Calc_Demand | 計算(非表示) | 原単位展開の計算過程（監査用） |
+| Grid_Requirement / Grid_Incoming / Grid_Stock | 計算 | 週次所要量／入荷予定／在庫（2年ロールフォワード） |
+| **Dashboard** | **出力（最終確認画面）** | 品目ごとの現在庫・最小在庫・要発注アラート |
 | **PO_Draft_Chemical / _Hazardous / _Substrate** | **出力（最終発注画面）** | 要発注分を注文書ひな形へ自動転記 |
 
-## 3. 週番号のルール（Cal_Weeks）
+## 4. 着荷予定(CSA Order)の入力方法
 
-- **Week1 = 1月1日を含む月〜日の週**。年をまたぐ場合は、翌年1月1日を含む週で再び **Week1** に
-  戻ります（例: `2026-W52` の次は `2027-W01`）。
-- 表示・入力は必ず `Label`列（例 `2026-W01`）を使ってください。裏側の`WeekIndex`（1〜104の連番）は
-  シート内部でグラフや数式の列位置を揃えるための番号で、ユーザーが直接意識する必要はありません。
-- 現在のブックは2026年1月1日の週を起点に104週（≒2026年・2027年の2年分）を用意しています。年が
-  変わって表示期間をずらしたい場合は、`scripts/build_soh.py`を新しい起点年で再実行してください
-  （下記5.参照）。
+`T_Shipments`に1行追加してください。
 
-## 4. 毎月（毎週）の更新方法 — 現状とこれから
+| 列 | 内容 |
+|---|---|
+| RM_Code | 原材料コード |
+| PO_No | 発注書番号 |
+| Order_Date_発注日 | いつ発注したか（手入力。元データに発注日の情報がないため） |
+| Confirmed_Qty | 確定数量 |
+| Latest_ETA | 最新の到着予定日 |
+| Received_Date | 実際に着荷した日（着荷前は空欄） |
+| Status | ステータス |
 
-### 現状（このバージョン）
-Power Queryの自動接続はまだ組み込んでおらず、以下を手作業で行う必要があります。これは
-「他のシートにある情報をSOHにも入れる」二重入力になっており、改善が必要な点として認識しています。
+`Effective_Week`（何週の入荷として計上するか）は自動計算されます（着荷日があれば着荷日、なければ
+ETAを使用）。**ETAを書き換えるだけで、その原材料の見込み在庫（`Grid_Stock`）が自動的に更新され、
+早着・遅着がそのまま反映されます。**
 
-1. `Plan Increase and Decrease`の最新月シート（`All - MM`）の内容を`PP_Grid`に転記
-2. `CSA Report`の`Shipping Schedule`の最新分を`T_Shipments`に転記
-3. 棚卸実施週は`T_StockCount`に実測値を追記
+## 5. 毎月の更新方法
 
-### これから（Power Queryで自動化）— `powerquery/`フォルダ参照
-`powerquery/Q_ProductionPlan.pq` と `powerquery/Q_Shipments.pq` に、①フォルダ内から自動で最新の
-月次／週次ファイルを見つけ、②`All - MM`シートや`Shipping Schedule`シートを読み取り、③そのまま
-使えるテーブルに変換する、Power QueryのMコードを用意しました。**フォーマット変更は一切不要**で、
-今の運用フォルダ構成のまま自動更新できるように設計しています。
+1. 「Powder & Slurry & Pgm Plan」の新しい月版ファイルを受け取ったら:
+   ```
+   python3 scripts/extract_from_powder_slurry_pgm_plan.py "<新しいファイルのパス>"
+   ```
+2. 「Usage from Production Engineering」が更新されていれば同様に:
+   ```
+   python3 scripts/extract_bom_from_usage_engineering.py "<ファイルのパス>"
+   ```
+3. 上記いずれかを実行した場合は統合:
+   ```
+   python3 scripts/merge_bom_sources.py
+   ```
+4. ブックを再生成:
+   ```
+   python3 scripts/build_soh.py
+   ```
+5. `T_Shipments`をCSA Reportの最新情報で更新（ETA・着荷日・PO番号・発注日）
+6. 棚卸を実施した週は`T_StockCount`に追記
+7. `Dashboard`で「要発注」を確認し、`PO_Draft_*`から注文書を発行（`macros/PO_Export.bas`）
+8. 月初は、前月最終週と当月頭の`Grid_Stock`を見比べて在庫差異を確認し、従来通り
+   Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
-> **重要な注意点**: この環境にはPower Queryを実際に動かして検証する手段がないため、このMコードは
-> **未検証**です（Excelの数式部分は実データで動作確認済みですが、こちらは違います）。まず貴社の
-> Excelで動作確認をお願いします。エラーが出た場合はその内容を教えてください、すぐに修正します。
+### Power Query（任意・未検証）
+`T_Shipments`（CSA Reportからの取込み）はPower Queryでも自動化できます。`powerquery/Q_Shipments.pq`
+を参照してください。**この環境ではPower Queryの実行検証ができないため未検証です**。動作確認の
+結果を教えてください。
 
-**導入手順（概要）**
-1. `powerquery/Q_ProductionPlan.pq` を開き、`RootFolder`を実際のフォルダパスに書き換える
-2. Excelの データ → データの取得 → 空のクエリ → 詳細エディターに貼り付け → 読み込み
-3. 同様に `Q_Shipments.pq` も設定する
-4. 動作確認できたら、以下の2箇所の数式を切り替える（**この置き換えをして初めて二重入力がなくなります**）
+なお、`PP_Grid`/`M_BOM`（Powder & Slurry & Pgm Plan、Usage from Production Engineering由来）は
+シート構造が複雑（材料ごとに約40枚、繰り返しブロック構造）なため、Power QueryよりもPythonスクリプト
+（上記の`scripts/extract_*.py`、実データで動作検証済み）での自動化を推奨します。
 
-   - `Calc_Demand`の`Batches`列（F列）を全行、次の式に置き換え:
-     ```
-     =SUMIFS(Q_ProductionPlan[Batches],Q_ProductionPlan[Intermediate],[@Intermediate],Q_ProductionPlan[WeekStart],INDEX(Cal_Weeks[WeekStart],[@WeekIndex]))
-     ```
-   - `Q_Shipments`テーブルの右隣に`Effective_Week`列を追加し、`T_Shipments`と同じ式を入れる
-     （着荷日があれば着荷日、なければETAから週番号を計算）:
-     ```
-     =MAX(1,MIN(104,INT((IF([@Received_Date]="",[@Latest_ETA],[@Received_Date])-Cal_Weeks[[#Headers],[WeekStart]])/7)+1))
-     ```
-     ※ 実際のセル参照は環境に合わせて調整してください（`Cal_Weeks`のWeek1開始日を起点にする考え方は
-     `T_Shipments`の`Effective_Week`式と同じです）。
-   - `Grid_Incoming`の各セルの参照先を`T_Shipments`→`Q_Shipments`に変更
+## 6. 自動反映の仕組み
 
-5. 以後は データ → すべて更新（Refresh All） を押すだけで、`PP_Grid`/`T_Shipments`への手入力が
-   不要になります
-
-### 完全に自動化した場合の毎月の作業
-1. データ → すべて更新（Refresh All）を押す
-2. `Dashboard`で「要発注」を確認
-3. `PO_Draft_*`を確認・必要なら数量を手直しして発行（マクロ使用）
-4. 棚卸を実施した週だけ`T_StockCount`に実測値を追記（これは自動化の対象外です）
-
-## 5. 自動反映の仕組み（数式エンジンの動き）
-
-- **生産計画が変わったとき**: `PP_Grid`（またはPower Query経由の`Q_ProductionPlan`）を更新すると、
-  `Calc_Demand` → `Grid_Requirement` → `Grid_Stock` → `Dashboard` → `PO_Draft_*` まで自動的に
-  再計算されます。現状の「Plan Increase and Decrease」で行っている差分計算・反映作業は不要です。
-- **輸入品が早着・遅着したとき**: `T_Shipments`（または`Q_Shipments`）のETA・着荷日を書き換える
-  だけで、入荷が計上される週が自動的にシフトし、在庫予測に反映されます。
+- **生産計画が変わったとき**: 新しい月版の「Powder & Slurry & Pgm Plan」を上記4章の手順で取り込むと、
+  `Calc_Demand` → `Grid_Requirement` → `Grid_Stock` → `Dashboard` → `PO_Draft_*` → `Material_Detail`
+  まで自動的に再計算されます。
+- **輸入品が早着・遅着したとき**: `T_Shipments`のETA・着荷日を書き換えるだけで、入荷が計上される週が
+  自動的にシフトし、在庫予測に反映されます。
 - **棚卸で実測とズレがあったとき**: `T_StockCount`に「原材料コード・週番号・実測値」を1行追記すると、
   その週の在庫がその値で上書きされ、以降はそこから積み上げ直されます。
-
-## 6. ブックの再生成方法
-
-`SOH_Master.xlsx`は`data/masters/`のCSVから`scripts/build_soh.py`で生成しています。マスタデータ
-（原材料・中間体・原単位・紐付け表）が更新された場合は、CSVを更新した上で以下を再実行してください。
-
-```
-python3 scripts/build_soh.py [週数(既定104)] [出力パス] [起点年(既定2026)]
-```
 
 ## 7. 動作検証結果
 
 LibreOffice（Excel互換の検証環境）で実際に数式を再計算させ、以下を確認済みです（Power Query部分を
 除く）。
 
-- 101品目 × 104週、原単位展開59,280行を含むフル規模で、**開いて再計算するまで約19秒**
-  （現状のTTAF R-Modelはファイルを開くだけで90秒以上、実運用では10分以上とのことでした）
-- 全シートを通じて数式エラー（#REF!等）は0件
+- 101品目 × 104週、原単位展開73,000行超を含むフル規模で、**開いて再計算するまで約24〜33秒**
+  （現状のTTAF R-Model系ファイルは開くだけで90秒以上、実運用では10分以上とのことでした）
+- 全19シートを通じて数式エラー（#REF!等）は0件
+- **`Grid_Requirement`の値が、実際の「Powder & Slurry & Pgm Plan」のAS-200シートに記載された
+  実際の週次使用量（例: 172.121, 42.812, 86.061 kg等）と完全一致することを確認済み**
+  （BOM(Usage from Production Engineeringから独立抽出)×週次バッチ数(Powder & Slurry & Pgm Planから
+  独立抽出)を掛け合わせた結果が、元ファイルの計算結果と一致＝抽出・計算ロジックが正しいことの
+  裏付けになります）
 - 生産計画変更・ETA変更（早着遅着）・安全在庫割れ検知の自動連鎖を実データで確認済み
 
-## 8. 要確認・要入力の項目（このブックを使う前に）
+## 8. 要確認・要入力の項目
 
 - **`M_RawMaterials`の`SafetyStock_Qty` / `LeadTime_Weeks`**: すべて仮値（0 / 4週）です。実際の
   安全在庫水準・リードタイムに置き換えてください。「要発注」判定の基準になります。
-- **`M_RawMaterials`の`Category`**: Chemical / Hazardous Chemicalの割り当ては、TTAF R-Modelの
-  `Chemical Release` / `Hazardous Chemical Release`シートから機械的に判定しています。実際の危険物
-  区分と一致しているか確認してください。
-- **Substrates（基材）**: `CSA Report`の`SUBSTRATES`シートは原材料と異なるコード体系（Lot No等）を
-  使っており、今回は自動統合していません。`PO_Draft_Substrate`は雛形のみで品目が空です。
-- **`PP_Grid`のシード値**: サンプルとして提供いただいた期間のみ暫定的に値が入っています。それ以外の
-  週は0です。運用開始時に実際の生産計画で埋めてください（またはPower Query化）。
+- **`M_RawMaterials`の`Category`**: Chemical / Hazardous Chemicalの割り当ては機械的に判定した
+  ものです。実際の危険物区分と一致しているか確認してください。
+- **Substrates（基材）**: 原材料と異なるコード体系（Lot No等）を使っており、今回は自動統合して
+  いません。`PO_Draft_Substrate`は雛形のみで品目が空です。
 - **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫（自社＋TTAF合算）を
   入力してください。
-- **Power Queryスクリプト（`powerquery/*.pq`）**: 未検証です。動作確認の結果を教えてください。
+- **`T_Shipments`の`Order_Date`（発注日）**: 元データに発注日の情報がないため空欄です。手入力
+  してください。
+- **原単位・バッチ数の未解決品目**: 抽出スクリプト実行時に「unresolved」「unmapped」として
+  表示される品目名は、命名の揺れ等で自動マッチできなかったものです（例: "10H", "20P", "AMMONIA"
+  等）。`data/masters/`のCSVを直接確認し、必要に応じて手動で補完してください。
+- **Power Queryスクリプト（`powerquery/Q_Shipments.pq`）**: 未検証です。動作確認の結果を教えて
+  ください。
 
 ## 9. 今後の拡張候補（今回は未実装）
 
-- **生産計画バージョン管理・変更差分の自動タグ付け**: 現状の「Plan Increase and Decrease」のように、
-  改定前後の差分を自動集計・変動要因として表示する機能。`PP_Grid`／`Q_ProductionPlan`の週次
-  スナップショットを保存する仕組みを追加すれば実現できます。
 - **基材（Substrates）の統合**: 上記8.参照。
+- **Min/Max（週数ベースの安全在庫）モデル**: 現状はSafetyStock_Qtyの単一しきい値のみですが、
+  「N週分の使用量」を基準にしたMin/Max運用に拡張することも可能です。

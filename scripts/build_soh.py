@@ -39,7 +39,7 @@ rm_master = load_csv("rm_master.csv")
 inter_master = load_csv("intermediate_master.csv")
 bom = load_csv("bom.csv")
 prodmap = load_csv("product_intermediate_map.csv")
-plan_sample = load_csv("production_plan_sample.csv")
+weekly_batches = load_csv("weekly_batches.csv")
 
 # clean numeric fields, drop rows with missing numeric qty
 def to_float(x, default=0.0):
@@ -48,13 +48,11 @@ def to_float(x, default=0.0):
     except (TypeError, ValueError):
         return default
 
+# bom.csv (source: Usage from Production Engineering Slurry/Powder sheets, supplemented by
+# Powder & Slurry & Pgm Plan) already stores the direct per-batch kg amount -- no further
+# ratio x batch-size multiplication needed.
 for r in bom:
-    r["RM_Qty_Per_Batch"] = to_float(r["RM_Qty_Per_Batch"])
-    r["Batch_Size"] = to_float(r["Batch_Size"], 1.0)
-    # RM_Qty_Per_Batch in source csv is actually the per-unit ratio; total per batch = ratio * batch size
-    r["RM_Total_Per_Batch"] = r["RM_Qty_Per_Batch"] * (r["Batch_Size"] or 1.0)
-
-bom = [r for r in bom if r["RM_Total_Per_Batch"] not in (None, 0) or True]  # keep all, zero rows are fine
+    r["RM_Total_Per_Batch"] = to_float(r["RM_Qty_Per_Batch"])
 
 # dedupe rm_master by RM_Code (defensive)
 seen = set()
@@ -75,18 +73,19 @@ for r in inter_master:
     inter_dedup.append(r)
 inter_master = inter_dedup
 
-# production plan sample data: keyed by actual calendar date (WeekStart), not the source
-# file's own week numbering, so it lines up correctly regardless of ANCHOR_YEAR.
+# weekly batch counts, source: Powder & Slurry & Pgm Plan ("No. of batches" rows, one entry
+# per intermediate per week, extracted from ~36 per-material sheets). Keyed by actual calendar
+# date (WeekStart) so it lines up correctly regardless of ANCHOR_YEAR.
 plan_lookup = {}
-for r in plan_sample:
+for r in weekly_batches:
     ws_str = r.get("WeekStart")
     if not ws_str:
         continue
     try:
-        wk_date = datetime.datetime.fromisoformat(ws_str).date()
+        wk_date = datetime.date.fromisoformat(ws_str)
     except ValueError:
         continue
-    qty = to_float(r["Qty"], 0.0)
+    qty = to_float(r["Batches"], 0.0)
     plan_lookup.setdefault(r["Intermediate"], {})[wk_date] = qty
 
 print(f"RM master: {len(rm_master)}, Intermediates: {len(inter_master)}, BOM rows: {len(bom)}, ProductMap: {len(prodmap)}")
@@ -242,22 +241,24 @@ for row in raw_shipments:
                (recv_date is None and eta >= START_MONDAY - datetime.timedelta(days=14))
     if not relevant:
         continue
-    ship_rows.append([rm_code, row["PO_No"] or "", to_float(row["Confirmed_Qty"], 0), eta, recv_date, row["Status"] or ""])
+    ship_rows.append([rm_code, row["PO_No"] or "", None, to_float(row["Confirmed_Qty"], 0), eta, recv_date, row["Status"] or ""])
+    # ship_rows layout: RM_Code, PO_No, Order_Date(unknown from source, left blank for manual entry), Confirmed_Qty, Latest_ETA, Received_Date, Status
 
 ws = wb.create_sheet("T_Shipments")
-ws.append(["RM_Code", "PO_No", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status", "Effective_Week"])
+ws.append(["RM_Code", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status", "Effective_Week"])
 start_row = 2
 for i, r in enumerate(ship_rows):
     row_num = start_row + i
     ws.append(r + [None])
+    ws.cell(row=row_num, column=3).fill = INPUT_FILL  # Order_Date is not in the source file; input by hand
     # Effective_Week: use Received_Date if present else Latest_ETA; week index via anchor arithmetic, clamped to sheet horizon
-    ws.cell(row=row_num, column=7).value = (
-        f'=MAX(1,MIN({N_WEEKS},INT((IF(E{row_num}="",D{row_num},E{row_num})-DATE({START_MONDAY.year},{START_MONDAY.month},{START_MONDAY.day}))/7)+1))'
+    ws.cell(row=row_num, column=8).value = (
+        f'=MAX(1,MIN({N_WEEKS},INT((IF(F{row_num}="",E{row_num},F{row_num})-DATE({START_MONDAY.year},{START_MONDAY.month},{START_MONDAY.day}))/7)+1))'
     )
 n = len(ship_rows) + 1
-style_header(ws, 7)
-add_table(ws, "T_Shipments", f"A1:G{n}")
-for col, w in zip("ABCDEFG", [12, 14, 14, 14, 14, 14, 14]):
+style_header(ws, 8)
+add_table(ws, "T_Shipments", f"A1:H{n}")
+for col, w in zip("ABCDEFGH", [12, 14, 16, 14, 14, 14, 14, 14]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 print("Shipment rows seeded:", len(ship_rows))
@@ -339,6 +340,90 @@ for ws_ in (ws_req, ws_in, ws_st):
     for w in range(1, N_WEEKS + 1):
         ws_.column_dimensions[week_col(w)].width = 9
     ws_.freeze_panes = "B2"
+
+# ============================================================ Material_Detail
+# 「どの材料が何に使われているか」を、材料ごとにブロックで見せるトレーサビリティ表示。
+# 90枚のシートに分けず、1枚のシートに材料ブロックを縦に並べる（重さの原因を再現しない）。
+bom_by_rm = {}
+for r in bom:
+    bom_by_rm.setdefault(r["RM_Code"], []).append(r)
+
+ws = wb.create_sheet("Material_Detail")
+WEEK_START_COL = 4  # column D
+def mdetail_week_col(w):
+    return get_column_letter(WEEK_START_COL + w - 1)
+
+header = ["", "項目", "1バッチ使用量(kg)"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
+ws.append(header)
+style_header(ws, len(header))
+
+row_num = 1
+for rm_code, entries in bom_by_rm.items():
+    if rm_code not in rm_row:
+        continue
+    grow = rm_row[rm_code]
+    desc = next((r["Description"] for r in rm_master if r["RM_Code"] == rm_code), "")
+
+    row_num += 1
+    mat_header_row = row_num
+    ws.cell(row=row_num, column=1, value=rm_code)
+    ws.cell(row=row_num, column=2, value=desc)
+    for c in range(1, len(header) + 1):
+        ws.cell(row=row_num, column=c).fill = PatternFill("solid", fgColor="FFE699")
+        ws.cell(row=row_num, column=c).font = Font(bold=True)
+
+    for entry in entries:
+        inter = entry["Intermediate"]
+        pp_row = inter_row.get(inter)
+        rate = entry["RM_Total_Per_Batch"]
+
+        row_num += 1
+        batches_row = row_num
+        ws.cell(row=row_num, column=2, value=inter)
+        ws.cell(row=row_num, column=3, value="No. of batches")
+        for w in range(1, N_WEEKS + 1):
+            cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1)
+            if pp_row:
+                cell.value = f"='PP_Grid'!{week_col(w)}{pp_row}"
+            else:
+                cell.value = 0
+
+        row_num += 1
+        ws.cell(row=row_num, column=2, value="使用量(kg)")
+        ws.cell(row=row_num, column=3, value=rate)
+        for w in range(1, N_WEEKS + 1):
+            wc = mdetail_week_col(w)
+            ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
+                    value=f"=$C{row_num}*{wc}{batches_row}")
+
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="合計使用量(kg)/週")
+    for w in range(1, N_WEEKS + 1):
+        wc = mdetail_week_col(w)
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Requirement'!{week_col(w)}{grow}")
+
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="入荷予定(CSA Order)")
+    for w in range(1, N_WEEKS + 1):
+        wc = mdetail_week_col(w)
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Incoming'!{week_col(w)}{grow}")
+
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="在庫(週末時点)")
+    for w in range(1, N_WEEKS + 1):
+        wc = mdetail_week_col(w)
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Stock'!{week_col(w)}{grow}")
+
+    row_num += 1  # blank separator row
+
+last_row = row_num
+ws.column_dimensions["A"].width = 12
+ws.column_dimensions["B"].width = 22
+ws.column_dimensions["C"].width = 14
+for w in range(1, N_WEEKS + 1):
+    ws.column_dimensions[mdetail_week_col(w)].width = 9
+ws.freeze_panes = "D2"
+print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "rows")
 
 from openpyxl.formatting.rule import CellIsRule
 
@@ -447,10 +532,16 @@ readme_lines = [
     "",
     "【シート構成】",
     "  M_RawMaterials / M_Intermediates / M_BOM / M_ProductMap : マスタ（原材料・中間体・原単位・完成品紐付け）",
-    "  PP_Grid            : 生産計画（中間体×週のバッチ数）。ここを更新すると全体に自動反映されます【入力】",
+    "    原単位(M_BOM)は「Usage from Production Engineering」、生産計画(PP_Grid)は",
+    "    「Powder & Slurry & Pgm Plan」から抽出しています。Plan Increase and Decrease と",
+    "    Inventory June Releasesはこのブックの計算からは切り離しています（月初の在庫差異報告には",
+    "    引き続き別途ご利用ください。Grid_Stockの週次実績がその報告の元データになります）。",
+    "  PP_Grid            : 生産計画（中間体×週のバッチ数）。Powder & Slurry & Pgm Planから抽出【入力/月次更新】",
     "  T_OpeningStock      : 起点となる期首在庫【入力】",
-    "  T_Shipments         : 発注〜輸送〜着荷の実績・予定（ETAが変わると自動的に週がズレます）【入力】",
+    "  T_Shipments         : 発注〜輸送〜着荷の実績・予定。ETAの週に入力した数量が見込み在庫に反映されます。",
+    "                        PO番号・発注日(Order_Date)も記録できます【入力】",
     "  T_StockCount        : 棚卸の実測値。入力するとその週以降の在庫計算がリセットされます【入力】",
+    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
     "  Calc_Demand         : 原単位展開の計算過程（非表示・監査用）",
     "  Grid_Requirement    : 原材料の週次所要量（自動計算）",
     "  Grid_Incoming       : 原材料の週次入荷予定（自動計算）",
@@ -458,20 +549,21 @@ readme_lines = [
     "  Dashboard           : 品目ごとの現在庫・最小在庫・要発注アラートを一覧表示",
     "  PO_Draft_*          : 要発注分を注文書ひな形（Chemical Release形式）に自動転記",
     "",
-    "【重要】PP_Grid と T_Shipments は現状「手入力」です。Plan Increase and Decrease や",
-    "  CSA Reportに既にある情報の二重入力になってしまっています。/powerquery フォルダの",
-    "  Mスクリプトを使うと、これらのファイルから自動取込みできます（詳細はdocs/SOH_System_Guide.md）。",
+    "【重要】PP_Grid・T_Shipmentsは現状、月次でファイルから再抽出/転記する運用です。",
+    "  /powerquery フォルダのMスクリプトを使うと自動取込みできます（詳細はdocs/SOH_System_Guide.md、未検証）。",
     "",
     "【週次・月次の運用】",
-    "  1. 生産計画が確定/変更されたら PP_Grid を更新（Power Query設定後は「すべて更新」のみ）",
-    "  2. CSA Reportの最新情報でT_Shipments のETA/着荷日を更新（早着・遅着はここに反映）",
+    "  1. 「Powder & Slurry & Pgm Plan」が新しい月版に更新されたら、scripts/build_soh.pyを再実行してPP_Grid等を更新",
+    "  2. CSA Reportの最新情報でT_Shipments のETA/着荷日/PO番号/発注日を更新（早着・遅着はここに反映）",
     "  3. 棚卸を実施したらT_StockCountに実測値を追記",
     "  4. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
+    "  5. 月初は、前月最終週と当月頭のGrid_Stockを見比べて在庫差異を確認（Plan Increase and Decrease /",
+    "     Inventory Releasesの報告フォーマットに転記）",
     "",
     "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
     "  - M_RawMaterials の SafetyStock_Qty と LeadTime_Weeks は仮値です。実際の安全在庫水準に置き換えてください。",
     "  - Categoryの割り当て(Chemical/Hazardous Chemical/Substrate)は入手データから機械的に推定した部分があります。要レビュー。",
-    "  - 生産計画(PP_Grid)は現状の顧客オーダーからバッチサイズ固定で算出される前提の入力データです。",
+    "  - 週次バッチ数はPowder & Slurry & Pgm Planの実データ（約36材料シートから抽出）を使用しています。",
 ]
 for i, line in enumerate(readme_lines, start=1):
     ws.cell(row=i, column=1, value=line)
