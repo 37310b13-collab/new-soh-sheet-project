@@ -15,7 +15,9 @@
 ## 毎月の更新（Excel + VBAのみ、Python不要）
 
 1. `SOH_Master.xlsx`を「Excel マクロ有効ブック(*.xlsm)」として保存
-2. `macros/RefreshData.bas`をVBEに読み込む（Alt+F11 → 挿入 → 標準モジュール）
+2. `macros/RefreshData.bas`をVBEに読み込む（Alt+F11 →「ファイル」→「ファイルのインポート」で
+   `.bas`ファイルを直接選択。コピー＆貼り付けする場合は1行目の`Attribute VB_Name = "..."`を
+   削除してから貼り付けてください）
 3. 「Powder & Slurry & Pgm Plan」の新しい月版で `RefreshWeeklyBatches` マクロを実行
 4. 「Usage from Production Engineering」が更新されていれば `RefreshBOM` マクロを実行
 

@@ -6,9 +6,10 @@ Option Explicit
 '
 ' 【導入方法】
 '   1. SOH_Master.xlsm を「マクロを有効にする」で開く
-'   2. Alt+F11 でVBEを開く → 挿入(Insert) → 標準モジュール(Module)
-'   3. このファイルの中身を丸ごと貼り付けて保存
-'   4. Dashboardシート等にボタンを配置し、下記のExportChemical / ExportHazardous /
+'   2. Alt+F11 でVBEを開く → 「ファイル」→「ファイルのインポート」→ このファイル(PO_Export.bas)を選択
+'      （コピー＆貼り付けで導入する場合は、1行目の Attribute VB_Name = "..." を必ず削除してから
+'       貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります）
+'   3. Dashboardシート等にボタンを配置し、下記のExportChemical / ExportHazardous /
 '      ExportSubstrate をボタンのマクロ登録先として割り当てる
 '
 ' 【動作】
