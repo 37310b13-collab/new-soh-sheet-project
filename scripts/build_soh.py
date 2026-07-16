@@ -2,7 +2,7 @@ import csv, datetime, sys
 import openpyxl
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.workbook.defined_name import DefinedName
 
 import os
@@ -110,23 +110,45 @@ def add_table(ws, name, ref, style="TableStyleMedium9"):
     ws.add_table(t)
 
 # ============================================================ Cal_Weeks
-# WeekIndex(内部の連番, グリッドの列位置に使用) と、年ごとに1へリセットするLabel(表示用) の両方を持つ。
-# Week1 = その年の1月1日を含む月〜日の週。
-week_labels = {}
+# WeekIndex(内部の連番, グリッドの列位置に使用) と、年ごとに1へリセットするWeekOfYear/Label(表示用)。
+# Week1 = AnchorYearの1月1日を含む月〜日の週。日付・週番号はすべてExcelの数式で計算される
+# （B1のAnchorYearを変更すれば全体が再計算される）。
+week_labels = {}  # Python側でも列位置の対応付けに使うため、値は事前計算して保持しておく
+CAL_HEADER_ROW = 3  # row1=AnchorYear入力, row2=列見出し, row3以降=データ
 ws = wb.create_sheet("Cal_Weeks")
-ws.append(["WeekIndex", "Year", "WeekOfYear", "Label", "WeekStart", "WeekEnd", "Month"])
+ws["A1"] = "AnchorYear"
+ws["B1"] = ANCHOR_YEAR
+ws["A1"].font = Font(bold=True)
+ws["B1"].fill = INPUT_FILL
+ws.append([])
+ws.append(["WeekIndex", "WeekStart", "Year", "WeekOfYear", "Label", "WeekEnd", "MonthYearLabel"])
 for i in range(1, N_WEEKS + 1):
+    r = CAL_HEADER_ROW + i
+    if i == 1:
+        wk_start_formula = "=DATE($B$1,1,1)-WEEKDAY(DATE($B$1,1,1),3)"
+    else:
+        wk_start_formula = f"=B{r-1}+7"
+    year_formula = (
+        f"=IF(B{r}>=DATE(YEAR(B{r})+1,1,1)-WEEKDAY(DATE(YEAR(B{r})+1,1,1),3),YEAR(B{r})+1,"
+        f"IF(B{r}>=DATE(YEAR(B{r}),1,1)-WEEKDAY(DATE(YEAR(B{r}),1,1),3),YEAR(B{r}),YEAR(B{r})-1))"
+    )
+    week_of_year_formula = f"=(B{r}-(DATE(C{r},1,1)-WEEKDAY(DATE(C{r},1,1),3)))/7+1"
+    label_formula = f'=C{r}&"-W"&TEXT(D{r},"00")'
+    week_end_formula = f"=B{r}+6"
+    month_year_formula = f'=TEXT(B{r},"mmm-yy")'
+    ws.append([i, wk_start_formula, year_formula, week_of_year_formula, label_formula, week_end_formula, month_year_formula])
+    ws.cell(row=r, column=2).number_format = "yyyy-mm-dd"
+    ws.cell(row=r, column=6).number_format = "yyyy-mm-dd"
+    # Python側の記録用(他シートのビルド時の列位置計算・MATCH対象文字列の生成に使用。
+    # 実際のセルの値は上記の通りExcel数式で計算される)
     wk_start = START_MONDAY + datetime.timedelta(weeks=i - 1)
-    wk_end = wk_start + datetime.timedelta(days=6)
     yr, wn = week_year_and_number(wk_start)
-    label = f"{yr}-W{wn:02d}"
-    week_labels[i] = label
-    ws.append([i, yr, wn, label, wk_start, wk_end, wk_start.month])
-style_header(ws, 7)
-add_table(ws, "Cal_Weeks", f"A1:G{N_WEEKS+1}")
-for col, w in zip("ABCDEFG", [10, 8, 11, 12, 12, 12, 8]):
+    week_labels[i] = f"{yr}-W{wn:02d}"
+style_header(ws, 7, row=CAL_HEADER_ROW)
+add_table(ws, "Cal_Weeks", f"A{CAL_HEADER_ROW}:G{CAL_HEADER_ROW+N_WEEKS}")
+for col, w in zip("ABCDEFG", [10, 12, 8, 11, 12, 12, 14]):
     ws.column_dimensions[col].width = w
-ws.freeze_panes = "A2"
+ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 
 # ============================================================ M_RawMaterials
 ws = wb.create_sheet("M_RawMaterials")
@@ -362,11 +384,32 @@ WEEK_START_COL = 4  # column D
 def mdetail_week_col(w):
     return get_column_letter(WEEK_START_COL + w - 1)
 
-header = ["", "項目", "1バッチ使用量(kg)"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
-ws.append(header)
-style_header(ws, len(header))
+MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 1, 2, 3, 4
+for w in range(1, N_WEEKS + 1):
+    col = WEEK_START_COL + w - 1
+    cal_row = CAL_HEADER_ROW + w
+    if w == 1:
+        my_formula = f"='Cal_Weeks'!G{cal_row}"
+    else:
+        prev_cal_row = CAL_HEADER_ROW + w - 1
+        my_formula = (
+            f'=IF(TEXT(\'Cal_Weeks\'!B{cal_row},"mmm-yy")<>TEXT(\'Cal_Weeks\'!B{prev_cal_row},"mmm-yy"),'
+            f"'Cal_Weeks'!G{cal_row},\"\")"
+        )
+    ws.cell(row=MD_MONTHYEAR_ROW, column=col, value=my_formula)
+    dcell = ws.cell(row=MD_DATE_ROW, column=col, value=f"='Cal_Weeks'!B{cal_row}")
+    dcell.number_format = "m/d"
+    ws.cell(row=MD_WEEKNO_ROW, column=col, value=f"='Cal_Weeks'!D{cal_row}")
+    ws.cell(row=MD_TABLE_ROW, column=col, value=f"='Cal_Weeks'!E{cal_row}")
+for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
+    for c in range(1, WEEK_START_COL + N_WEEKS):
+        ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(row=r, column=c).font = Font(bold=(r in (MD_MONTHYEAR_ROW, MD_TABLE_ROW)))
+ws.cell(row=MD_TABLE_ROW, column=1, value="RM_Code")
+ws.cell(row=MD_TABLE_ROW, column=2, value="項目")
+ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
 
-row_num = 1
+row_num = MD_TABLE_ROW
 for rm_code, entries in bom_by_rm.items():
     if rm_code not in rm_row:
         continue
@@ -406,21 +449,14 @@ for rm_code, entries in bom_by_rm.items():
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計使用量(kg)/週")
+    ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         wc = mdetail_week_col(w)
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Requirement'!{week_col(w)}{grow}")
 
     row_num += 1
-    ws.cell(row=row_num, column=2, value="入荷予定(CSA Order)")
-    for w in range(1, N_WEEKS + 1):
-        wc = mdetail_week_col(w)
-        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Incoming'!{week_col(w)}{grow}")
-
-    row_num += 1
-    ws.cell(row=row_num, column=2, value="在庫(週末時点)")
-    for w in range(1, N_WEEKS + 1):
-        wc = mdetail_week_col(w)
-        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Stock'!{week_col(w)}{grow}")
+    ws.cell(row=row_num, column=2, value="（在庫・入荷予定はDashboard参照）")
+    ws.cell(row=row_num, column=2).font = Font(italic=True, color="808080")
 
     row_num += 1  # blank separator row
 
@@ -430,40 +466,112 @@ ws.column_dimensions["B"].width = 22
 ws.column_dimensions["C"].width = 14
 for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[mdetail_week_col(w)].width = 9
-ws.freeze_panes = "D2"
+ws.freeze_panes = f"{get_column_letter(WEEK_START_COL)}{MD_TABLE_ROW+1}"
 print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "rows")
 
-from openpyxl.formatting.rule import CellIsRule
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
 
 # ============================================================ Dashboard
+# 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
+# A〜E列(RM情報)とヘッダー行(月-年/日付/週No)を固定して、右にスクロールしながら見る設計。
+LEFT_COLS = ["RM_Code", "Description", "Category", "SafetyStock_Qty", "Status"]
+WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # F列から週データ
+HDR_MONTHYEAR_ROW = 3
+HDR_DATE_ROW = 4
+HDR_WEEKNO_ROW = 5
+HDR_TABLE_ROW = 6  # Excel Table の見出し行としても使う(Label)
+DATA_START_ROW = 7
+
 ws = wb.create_sheet("Dashboard")
-ws.append(["RM_Code", "Description", "Category", "Supplier", "SafetyStock_Qty",
-           "CurrentStock(W1)", "MinStock_2Y", "MinStock_Week", "Status"])
-last_col = week_col(N_WEEKS)
-for i, r in enumerate(rm_master):
-    rr = i + 2
-    rm = r["RM_Code"]
-    ws.append([
-        rm,
-        f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")',
-        f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")',
-        f'=IFERROR(INDEX(M_RawMaterials[Supplier],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")',
-        f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)',
-        f"='Grid_Stock'!B{rr}",
-        f"=MIN('Grid_Stock'!B{rr}:{last_col}{rr})",
-        f"=MATCH(G{rr},'Grid_Stock'!B{rr}:{last_col}{rr},0)",
-        f'=IF(G{rr}<E{rr},"要発注","OK")',
-    ])
-n = len(rm_master) + 1
-style_header(ws, 9)
-add_table(ws, "Dashboard", f"A1:I{n}", style="TableStyleMedium4")
-for col, w in zip("ABCDEFGHI", [14, 32, 16, 14, 14, 14, 12, 12, 10]):
+ws["A1"] = "この週へジャンプ（例: 2026-W23 の形式で入力）"
+ws["A1"].font = Font(bold=True)
+ws["C1"] = ""
+ws["C1"].fill = INPUT_FILL
+ws["C1"].font = Font(bold=True, size=12)
+
+for w in range(1, N_WEEKS + 1):
+    col = WEEK_START_COL_DASH + w - 1
+    cal_row = CAL_HEADER_ROW + w
+    cl = get_column_letter(col)
+    if w == 1:
+        my_formula = f"='Cal_Weeks'!G{cal_row}"
+    else:
+        prev_cal_row = CAL_HEADER_ROW + w - 1
+        my_formula = (
+            f'=IF(TEXT(\'Cal_Weeks\'!B{cal_row},"mmm-yy")<>TEXT(\'Cal_Weeks\'!B{prev_cal_row},"mmm-yy"),'
+            f"'Cal_Weeks'!G{cal_row},\"\")"
+        )
+    ws.cell(row=HDR_MONTHYEAR_ROW, column=col, value=my_formula)
+    dcell = ws.cell(row=HDR_DATE_ROW, column=col, value=f"='Cal_Weeks'!B{cal_row}")
+    dcell.number_format = "m/d"
+    ws.cell(row=HDR_WEEKNO_ROW, column=col, value=f"='Cal_Weeks'!D{cal_row}")
+    ws.cell(row=HDR_TABLE_ROW, column=col, value=f"='Cal_Weeks'!E{cal_row}")
+    ws.column_dimensions[cl].width = 9
+
+for c, name in enumerate(LEFT_COLS, start=1):
+    ws.cell(row=HDR_TABLE_ROW, column=c, value=name)
+style_header(ws, WEEK_START_COL_DASH + N_WEEKS - 1, row=HDR_TABLE_ROW)
+for row_i in (HDR_MONTHYEAR_ROW, HDR_DATE_ROW, HDR_WEEKNO_ROW):
+    for c in range(1, WEEK_START_COL_DASH + N_WEEKS):
+        ws.cell(row=row_i, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
+        ws.cell(row=row_i, column=c).font = Font(bold=(row_i == HDR_MONTHYEAR_ROW))
+
+for col, w in zip("ABCDE", [14, 32, 16, 14, 10]):
     ws.column_dimensions[col].width = w
-ws.freeze_panes = "A2"
+
+last_col_dash = get_column_letter(WEEK_START_COL_DASH + N_WEEKS - 1)
+for i, r in enumerate(rm_master):
+    rr = DATA_START_ROW + i
+    grow = rm_row[r["RM_Code"]]
+    rm = r["RM_Code"]
+    ws.cell(row=rr, column=1, value=rm)
+    ws.cell(row=rr, column=2,
+            value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")')
+    ws.cell(row=rr, column=3,
+            value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")')
+    ws.cell(row=rr, column=4,
+            value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
+    ws.cell(row=rr, column=5,
+            value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
+    for w in range(1, N_WEEKS + 1):
+        col = WEEK_START_COL_DASH + w - 1
+        gs_col = week_col(w)
+        ws.cell(row=rr, column=col, value=f"='Grid_Stock'!{gs_col}{grow}")
+
+n_last_row = DATA_START_ROW + len(rm_master) - 1
+# ヘッダー行が数式(Cal_Weeks参照)のため、Excelのテーブル機能(ListObject)ではなく
+# 罫線・縞模様の手動書式で「テーブルらしい」見た目にする（テーブル見出しは文字列必須のため）。
+thin = Side(style="thin", color="BFBFBF")
+border = Border(left=thin, right=thin, top=thin, bottom=thin)
+for rr2 in range(HDR_TABLE_ROW, n_last_row + 1):
+    stripe = (rr2 - HDR_TABLE_ROW) % 2 == 1
+    for c in range(1, WEEK_START_COL_DASH + N_WEEKS):
+        cell = ws.cell(row=rr2, column=c)
+        cell.border = border
+        if rr2 > HDR_TABLE_ROW and stripe:
+            cell.fill = PatternFill("solid", fgColor="F2F2F2")
+ws.freeze_panes = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}"
+
+# 安全在庫を下回った週を赤く強調
 ws.conditional_formatting.add(
-    f"I2:I{n}",
+    f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}:{last_col_dash}{n_last_row}",
+    FormulaRule(formula=[f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<$D{DATA_START_ROW}"],
+                fill=PatternFill("solid", fgColor="FFC7CE"))
+)
+# Statusが「要発注」の行を強調
+ws.conditional_formatting.add(
+    f"E{DATA_START_ROW}:E{n_last_row}",
     CellIsRule(operator="equal", formula=['"要発注"'], fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(color="9C0006"))
 )
+# 入力した週(C1)と一致する列(週No行)をハイライト
+ws.conditional_formatting.add(
+    f"{get_column_letter(WEEK_START_COL_DASH)}{HDR_TABLE_ROW}:{last_col_dash}{n_last_row}",
+    FormulaRule(
+        formula=[f'{get_column_letter(WEEK_START_COL_DASH)}${HDR_TABLE_ROW}=$C$1'],
+        fill=PatternFill("solid", fgColor="FFEB9C"),
+    )
+)
+print("Dashboard: week-by-week grid for", len(rm_master), "materials x", N_WEEKS, "weeks")
 
 # ============================================================ PO Draft sheets (Chemical Release format)
 def build_po_draft(sheet_name, category, title):
@@ -534,18 +642,19 @@ readme_lines = [
     "このブックはPower BI等に読み込ませる中間テーブルではなく、これ自体が完成品です。",
     "Dashboard と PO_Draft_* が最終的な閲覧・発注画面、それ以外は計算の土台です。",
     "",
-    "【週番号のルール】",
-    "  Cal_Weeks の Label 列（例: 2026-W01）を使ってください。Week1=1月1日を含む月〜日の週で、",
-    "  年が変わると再び1にリセットされます（例: 2026-W52 の次は 2027-W01）。",
+    "【週番号のルール】すべてExcelの数式で計算（Cal_WeeksのB1=AnchorYearを変えると全体が再計算）",
+    "  Week1=1月1日を含む月〜日の週。年が変わると再び1にリセットされます（2026-W52の次は2027-W01）。",
+    "  各シートの週見出しは3段: 1段目=月-年(Aug-26等) / 2段目=その週月曜の日付 / 3段目=週No。",
     "",
     "【普段見るシート】",
-    "  Dashboard           : 品目ごとの現在庫・最小在庫・要発注アラート一覧（まずここ）",
-    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示",
+    "  Dashboard           : 原材料×週の在庫を2年分、横軸で見渡せるメイン画面（まずここ）。",
+    "                        C1に'2026-W23'のように入力すると該当週の列が黄色くハイライトされます",
+    "                        （macros/JumpToWeek.bas のマクロを使うとその週まで自動スクロールもできます）。",
+    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments/T_OpeningStock/T_StockCount : 入力用",
-    "  Grid_Stock          : 原材料の週次在庫の詳細（2年先まで）",
     "",
-    "  M_RawMaterials・M_BOM・PP_Grid・その他非表示シートは内部計算用です。通常は開く必要はありません。",
+    "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
     "",
     "【重要】原単位(M_BOM)とバッチ数(PP_Grid)はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
     "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM を実行してください",
@@ -573,7 +682,7 @@ ws.column_dimensions["A"].width = 100
 
 # ---- ナビゲーション（README上部にジャンプリンクを追加） ----
 nav_targets = [
-    ("Dashboard", "在庫アラート一覧（まずここを見る）"),
+    ("Dashboard", "原材料×週の在庫（2年分・横軸で見渡せるメイン画面。まずここ）"),
     ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
     ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
     ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
@@ -581,7 +690,6 @@ nav_targets = [
     ("T_Shipments", "発注・着荷の入力"),
     ("T_OpeningStock", "期首在庫の入力"),
     ("T_StockCount", "棚卸実績の入力"),
-    ("Grid_Stock", "原材料の週次在庫（詳細）"),
 ]
 ws.insert_rows(2, amount=len(nav_targets) + 2)
 ws["A2"] = "【ジャンプ】クリックで各シートへ移動"
@@ -591,16 +699,17 @@ for i, (target, label) in enumerate(nav_targets, start=3):
     cell.hyperlink = f"#'{target}'!A1"
     cell.font = Font(color="0563C1", underline="single")
 
-# ---- 内部処理用シートは非表示にして視認性を上げる ----
-for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming"]:
+# ---- 内部処理用シートは非表示にして視認性を上げる（Dashboardが週次在庫の表示を兼ねるためGrid_Stockも非表示） ----
+for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming", "Grid_Stock"]:
     if sheet_name in wb.sheetnames:
         wb[sheet_name].sheet_state = "hidden"
 
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
-         "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount", "Grid_Stock",
+         "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount",
          "M_RawMaterials", "M_BOM", "PP_Grid",
-         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Calc_Demand", "Grid_Requirement", "Grid_Incoming"]
+         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Calc_Demand", "Grid_Requirement",
+         "Grid_Incoming", "Grid_Stock"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
 wb.save(OUT_PATH)

@@ -7,6 +7,7 @@
 - **成果物**: [`SOH_Master.xlsx`](./SOH_Master.xlsx)
 - **使い方・仕組みの詳細**: [`docs/SOH_System_Guide.md`](./docs/SOH_System_Guide.md)
 - **月次更新マクロ（Python不要）**: [`macros/RefreshData.bas`](./macros/RefreshData.bas)
+- **週ジャンプ用マクロ（任意）**: [`macros/JumpToWeek.bas`](./macros/JumpToWeek.bas)
 - **発注書エクスポート用マクロ**: [`macros/PO_Export.bas`](./macros/PO_Export.bas)
 - **マスタデータ**: [`data/masters/`](./data/masters/)
 - **(参考/任意) Python版の再抽出・再生成スクリプト**: [`scripts/`](./scripts/)
