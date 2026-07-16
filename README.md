@@ -20,6 +20,8 @@
    削除してから貼り付けてください）
 3. 「Powder & Slurry & Pgm Plan」の新しい月版で `RefreshWeeklyBatches` マクロを実行
 4. 「Usage from Production Engineering」が更新されていれば `RefreshBOM` マクロを実行
+5. 自社倉庫の現物確認（daily check）を実施したら `RefreshSelfStock` マクロを実行
+6. CSA Reportが週次で届いたら `RefreshTTAFStock` マクロを実行
 
 詳しい運用手順は [`docs/SOH_System_Guide.md`](./docs/SOH_System_Guide.md) を参照してください。
 「Usage from Production Engineering」「Powder & Slurry & Pgm Plan」「CSA Report」の各ファイルは

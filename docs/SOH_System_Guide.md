@@ -19,14 +19,23 @@
 - **顧客オーダー・生産計画の策定**: このブックの範囲外
 - **原単位（1バッチあたり使用量）**: 「Usage from Production Engineering」からマクロで取り込み
 - **週次バッチ数**: 「Powder & Slurry & Pgm Plan」（毎月改版）からマクロで取り込み
+- **自社倉庫の在庫実績**: 「Raw materials daily check」（現物確認シート）からマクロで取り込み
+- **TTAF倉庫の在庫実績**: 「CSA Report」の`PIVOT SOH TTAF`シートからマクロで取り込み
 - **在庫のロールフォワード、着荷予定との突合、発注アラート、PO発行**: このブックの役割
 
 「Plan Increase and Decrease」「Inventory June Releases」はこのブックの計算から切り離しています。
 月初の在庫差異報告（前月最終週⇔当月頭）には、`Dashboard`の週次実績を元データとしてご利用ください。
 
+**自社在庫・TTAF在庫の内訳**: `Dashboard`に「自社在庫(実績)」「TTAF在庫(実績)」「実績週」列があります。
+これは各原材料について、実績データが届いている**直近の週**の値を表示しています（自社倉庫は現物確認の
+たびに、TTAFは週次のPIVOT SOH TTAFのたびに更新）。合計在庫（週次グリッド本体）は、自社+TTAFの
+実績が両方揃っている週があればその実測値で在庫計算をリセットし、それ以外の週は通常のロールフォワード
+（入荷予定－使用量）で計算します。**将来週について自社/TTAFの内訳までは予測していません**（内訳は
+実績が届いた週のみ分かるものです）。
+
 ## 2. Python不要・Excel(VBA)だけで完結する更新の仕組み
 
-`macros/RefreshData.bas` に2つのマクロを用意しています。どちらも、対象ファイルを選ぶだけで
+`macros/RefreshData.bas` に4つのマクロを用意しています。いずれも、対象ファイルを選ぶだけで
 該当シートの値だけを更新し、**それ以外の入力済みデータ（T_Shipments・T_OpeningStock・
 T_StockCount・安全在庫の設定値など）には一切触れません。**
 
@@ -34,6 +43,16 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 |---|---|---|
 | `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid |
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
+| `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock |
+| `RefreshTTAFStock` | CSA Report（TTAF在庫、週次） | T_TTAFStock |
+
+`RefreshSelfStock`・`RefreshTTAFStock`は、選んだファイルの**ファイル名からDD.MM.YYYY形式の日付を
+自動で読み取り**、その日付がどの週に該当するかをCal_Weeksと照合して記録します。ファイル名に日付が
+含まれていない場合はエラーになりますので、ファイル名は変更せずそのまま使ってください。
+
+**取り込みは必ず日付が新しい順に行ってください。** `Dashboard`の「直近実績」表示は「その原材料コードに
+ついて表の中で一番後ろにある行」を最新として扱う仕組みのため、古いファイルを後から取り込むと表示が
+古い値に戻ってしまう可能性があります。
 
 **導入方法**
 1. `SOH_Master.xlsx`を「名前を付けて保存」→ファイルの種類を「Excel マクロ有効ブック(*.xlsm)」にする
@@ -87,7 +106,9 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | 要発注分を注文書ひな形へ自動転記 |
 | T_Shipments | 入力 | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日） |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
-| T_StockCount | 入力 | 棚卸実測値（誤差リセット用） |
+| T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
+| T_SelfStock | 入力（マクロ更新） | 自社倉庫の在庫実績。RefreshSelfStockで更新 |
+| T_TTAFStock | 入力（マクロ更新） | TTAF倉庫の在庫実績。RefreshTTAFStockで更新 |
 | M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定 |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
 | PP_Grid | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
@@ -103,10 +124,12 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
 2. 「Usage from Production Engineering」が更新されていれば`RefreshBOM`を実行
-3. `T_Shipments`をCSA Reportの最新情報で更新（ETA・着荷日・PO番号・発注日）
-4. 棚卸を実施した週は`T_StockCount`に追記
-5. `Dashboard`で「要発注」を確認し、`PO_Draft_*`から注文書を発行（`macros/PO_Export.bas`）
-6. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
+3. 自社倉庫の現物確認（daily check）を実施したら`RefreshSelfStock`を実行
+4. CSA Reportが週次で届いたら`RefreshTTAFStock`を実行し、あわせて`T_Shipments`もETA・着荷日・
+   PO番号・発注日で更新（早着・遅着はここに反映）
+5. 棚卸を実施した週は`T_StockCount`に追記
+6. `Dashboard`で「要発注」を確認し、`PO_Draft_*`から注文書を発行（`macros/PO_Export.bas`）
+7. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
    Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
 ## 6. 自動反映の仕組み
@@ -143,8 +166,11 @@ Power Query部分を除く。両者はこの環境で実行できないため未
   確認してください。
 - **Substrates（基材）**: 原材料と異なるコード体系（Lot No等）のため今回は未統合です。
   `PO_Draft_Substrate`は雛形のみで品目が空です。
-- **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください。
+- **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください
+  （`T_SelfStock`・`T_TTAFStock`に実績があれば、その週以降は自動でリセットされます）。
 - **`RefreshData.bas`・`Q_Shipments.pq`**: 未検証です。動作確認の結果を教えてください。
+- **`T_SelfStock`/`T_TTAFStock`の取り込み順**: 必ず日付が新しい順に`RefreshSelfStock`/
+  `RefreshTTAFStock`を実行してください（詳細は2章参照）。
 
 ## 9. 今後の拡張候補
 

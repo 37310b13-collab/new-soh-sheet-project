@@ -9,9 +9,12 @@ Option Explicit
 '                          PP_Grid（生産計画バッチ数）を更新する。
 '   RefreshBOM           : 「Usage from Production Engineering」を選択すると、
 '                          M_BOM（原単位）を更新する。
+'   RefreshSelfStock      : 「Raw materials daily check」(自社倉庫の現物確認)を選択すると、
+'                          T_SelfStock（自社在庫実績）を更新する。
+'   RefreshTTAFStock      : 「CSA Report」を選択すると、T_TTAFStock（TTAF在庫実績）を更新する。
 '
-' どちらも、T_Shipments・T_OpeningStock・T_StockCount・SafetyStock_Qty等、
-' 運用中に手入力した内容には一切触れません（PP_GridとM_BOMだけを更新します）。
+' いずれも、それぞれ対応するシートだけを更新します。T_Shipments・T_OpeningStock・
+' T_StockCount・SafetyStock_Qty等、運用中に手入力した内容には一切触れません。
 '
 ' 【注意】この環境ではVBAを実際に実行して検証できません。貴社のExcelで動作確認を
 '        お願いします。エラーが出た場合は内容を教えてください。
@@ -279,3 +282,163 @@ Private Function SheetExists(wb As Workbook, sName As String) As Boolean
     On Error GoTo 0
     SheetExists = Not sh Is Nothing
 End Function
+
+' ============================================================================
+' RefreshSelfStock / RefreshTTAFStock
+'
+'   RefreshSelfStock : 「Raw materials daily check」(自社倉庫の現物確認シート、ファイル名に
+'                      DD.MM.YYYY形式の日付を含む)を選択すると、T_SelfStockにその週の実績を
+'                      追加/更新する。
+'   RefreshTTAFStock : 「CSA Report」(ファイル名に日付を含む)を選択すると、その中の
+'                      "PIVOT SOH TTAF"シートからT_TTAFStockにその週の実績を追加/更新する。
+'
+' どちらも対象週は、ファイル名から読み取った日付をCal_Weeksと照合して自動判定します。
+' 既存の(原材料コード, 週)の組み合わせがあれば値を上書き、無ければ新しい行として末尾に追加します
+' （Dashboardの「直近実績」表示は、各原材料コードについてテーブル内で最後に見つかった行を
+' 採用する仕組みのため、必ず日付が新しい順に取り込んでください。過去のファイルを後から
+' 取り込むと最新表示がずれる可能性があります）。
+' ============================================================================
+
+Sub RefreshSelfStock()
+    Dim srcPath As Variant
+    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
+        "Raw materials daily check（自社在庫）ファイルを選択してください")
+    If srcPath = False Then Exit Sub
+
+    Dim srcWb As Workbook
+    On Error GoTo ErrHandler
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
+    Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
+
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock").ListObjects("T_SelfStock")
+    Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
+
+    Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock")
+    Dim r As Long, added As Long, updated As Long
+    added = 0: updated = 0
+    For r = 9 To 200
+        Dim code As String
+        code = Trim(CStr(sh.Cells(r, 3).Value))
+        If Left(code, 4) = "CHEM" Then
+            Dim v As Variant: v = sh.Cells(r, 10).Value
+            If IsNumeric(v) Then
+                Call UpsertStockRow(selfTbl, code, wIdx, reportDate, CDbl(v), added, updated)
+            End If
+        End If
+    Next r
+
+    srcWb.Close SaveChanges:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "T_SelfStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
+           "追加: " & added & " 件、更新: " & updated & " 件", vbInformation
+    Exit Sub
+
+ErrHandler:
+    On Error Resume Next
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
+End Sub
+
+Sub RefreshTTAFStock()
+    Dim srcPath As Variant
+    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
+        "CSA Report（TTAF在庫）ファイルを選択してください")
+    If srcPath = False Then Exit Sub
+
+    Dim srcWb As Workbook
+    On Error GoTo ErrHandler
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
+    Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
+
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock").ListObjects("T_TTAFStock")
+    Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
+
+    Dim sh As Worksheet: Set sh = srcWb.Sheets("PIVOT SOH TTAF")
+    Dim r As Long, added As Long, updated As Long
+    added = 0: updated = 0
+    r = 5
+    Do While True
+        Dim code As Variant
+        code = sh.Cells(r, 1).Value
+        If IsEmpty(code) Or CStr(code) = "Grand Total" Then Exit Do
+        If Left(CStr(code), 4) = "CHEM" Then
+            Dim v As Variant: v = sh.Cells(r, 4).Value
+            If IsNumeric(v) Then
+                Call UpsertStockRow(ttafTbl, CStr(code), wIdx, reportDate, CDbl(v), added, updated)
+            End If
+        End If
+        r = r + 1
+    Loop
+
+    srcWb.Close SaveChanges:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
+           "追加: " & added & " 件、更新: " & updated & " 件", vbInformation
+    Exit Sub
+
+ErrHandler:
+    On Error Resume Next
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
+End Sub
+
+Private Function ExtractDateFromName(path As String) As Date
+    Dim re As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Pattern = "(\d{2})\.(\d{2})\.(\d{4})"
+    Dim m As Object
+    Set m = re.Execute(path)
+    If m.Count = 0 Then
+        Err.Raise vbObjectError + 1, , "ファイル名から日付(DD.MM.YYYY)を読み取れませんでした。"
+    End If
+    ExtractDateFromName = DateSerial(CInt(m(0).SubMatches(2)), CInt(m(0).SubMatches(1)), CInt(m(0).SubMatches(0)))
+End Function
+
+Private Function WeekIndexForDate(wb As Workbook, d As Date) As Long
+    Dim calTbl As ListObject: Set calTbl = wb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks")
+    Dim i As Long
+    For i = 1 To calTbl.ListRows.Count
+        Dim wkStart As Date, wkEnd As Date
+        wkStart = calTbl.ListColumns("WeekStart").DataBodyRange.Cells(i, 1).Value
+        wkEnd = calTbl.ListColumns("WeekEnd").DataBodyRange.Cells(i, 1).Value
+        If d >= wkStart And d <= wkEnd Then
+            WeekIndexForDate = calTbl.ListColumns("WeekIndex").DataBodyRange.Cells(i, 1).Value
+            Exit Function
+        End If
+    Next i
+    WeekIndexForDate = 1 ' 見つからない場合はWeek1にフォールバック
+End Function
+
+Private Sub UpsertStockRow(tbl As ListObject, code As String, wIdx As Long, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        If tbl.ListColumns(1).DataBodyRange.Cells(i, 1).Value = code And _
+           tbl.ListColumns(2).DataBodyRange.Cells(i, 1).Value = wIdx Then
+            tbl.ListColumns(3).DataBodyRange.Cells(i, 1).Value = d
+            tbl.ListColumns(4).DataBodyRange.Cells(i, 1).Value = v
+            updated = updated + 1
+            Exit Sub
+        End If
+    Next i
+    Dim newRow As ListRow
+    Set newRow = tbl.ListRows.Add
+    newRow.Range.Cells(1, 1).Value = code
+    newRow.Range.Cells(1, 2).Value = wIdx
+    newRow.Range.Cells(1, 3).Value = d
+    newRow.Range.Cells(1, 4).Value = v
+    added = added + 1
+End Sub

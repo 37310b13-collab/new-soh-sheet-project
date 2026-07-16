@@ -31,6 +31,11 @@ def week_year_and_number(week_start):
 
 START_MONDAY = monday_containing_jan1(ANCHOR_YEAR)  # Week1 start = Monday of the week containing Jan 1
 
+
+def date_to_week_index(d, n_weeks):
+    idx = (d - START_MONDAY).days // 7 + 1
+    return max(1, min(n_weeks, idx))
+
 def load_csv(name):
     with open(EXTRACTED + name, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -39,6 +44,17 @@ rm_master = load_csv("rm_master.csv")
 inter_master = load_csv("intermediate_master.csv")
 bom = load_csv("bom.csv")
 prodmap = load_csv("product_intermediate_map.csv")
+
+
+def load_csv_optional(name):
+    path = os.path.join(EXTRACTED, name)
+    if not os.path.exists(path):
+        return []
+    return load_csv(name)
+
+
+self_stock_sample = load_csv_optional("self_stock_sample.csv")
+ttaf_stock_sample = load_csv_optional("ttaf_stock_sample.csv")
 weekly_batches = load_csv("weekly_batches.csv")
 
 # clean numeric fields, drop rows with missing numeric qty
@@ -294,9 +310,45 @@ add_table(ws, "T_StockCount", "A1:D2")
 for col, w in zip("ABCD", [16, 10, 12, 30]):
     ws.column_dimensions[col].width = w
 
-jj = 0
-def col_letter_ok(ci):
-    return get_column_letter(ci)
+# ============================================================ T_SelfStock (自社倉庫の実績, VBA更新)
+ws = wb.create_sheet("T_SelfStock")
+ws.append(["RM_Code", "WeekIndex", "Date", "Self_Qty"])
+self_rows_written = 0
+for r in self_stock_sample:
+    d = datetime.date.fromisoformat(r["Date"])
+    wi = date_to_week_index(d, N_WEEKS)
+    ws.append([r["RM_Code"], wi, d, to_float(r["Self_Qty"], 0)])
+    self_rows_written += 1
+if self_rows_written == 0:
+    ws.append(["(例) CHEM-1010", 1, START_MONDAY, 0])
+    self_rows_written = 1
+style_header(ws, 4)
+add_table(ws, "T_SelfStock", f"A1:D{self_rows_written+1}")
+for c, w in zip("ABCD", [16, 10, 12, 12]):
+    ws.column_dimensions[c].width = w
+for row_i in range(2, self_rows_written + 2):
+    ws.cell(row=row_i, column=3).number_format = "yyyy-mm-dd"
+print("T_SelfStock rows seeded:", self_rows_written)
+
+# ============================================================ T_TTAFStock (TTAF倉庫の実績, VBA更新)
+ws = wb.create_sheet("T_TTAFStock")
+ws.append(["RM_Code", "WeekIndex", "Date", "TTAF_Qty"])
+ttaf_rows_written = 0
+for r in ttaf_stock_sample:
+    d = datetime.date.fromisoformat(r["Date"])
+    wi = date_to_week_index(d, N_WEEKS)
+    ws.append([r["RM_Code"], wi, d, to_float(r["TTAF_Qty"], 0)])
+    ttaf_rows_written += 1
+if ttaf_rows_written == 0:
+    ws.append(["(例) CHEM-1010", 1, START_MONDAY, 0])
+    ttaf_rows_written = 1
+style_header(ws, 4)
+add_table(ws, "T_TTAFStock", f"A1:D{ttaf_rows_written+1}")
+for c, w in zip("ABCD", [16, 10, 12, 12]):
+    ws.column_dimensions[c].width = w
+for row_i in range(2, ttaf_rows_written + 2):
+    ws.cell(row=row_i, column=3).number_format = "yyyy-mm-dd"
+print("T_TTAFStock rows seeded:", ttaf_rows_written)
 
 # ============================================================ Calc_Demand (explosion: BOM row x week)
 # Batches と RM_Qty_Per_Batch は PP_Grid / M_BOM への「ライブ参照」(INDEX/MATCH, SUMIFS)。
@@ -356,12 +408,20 @@ for i, r in enumerate(rm_master):
         )
         has_count = f"SUMPRODUCT((T_StockCount[RM_Code]=$A{rr})*(T_StockCount[WeekIndex]={w}))"
         count_val = f"SUMPRODUCT((T_StockCount[RM_Code]=$A{rr})*(T_StockCount[WeekIndex]={w})*T_StockCount[CountedQty])"
+        has_self = f"SUMPRODUCT((T_SelfStock[RM_Code]=$A{rr})*(T_SelfStock[WeekIndex]={w}))"
+        self_val = f"SUMPRODUCT((T_SelfStock[RM_Code]=$A{rr})*(T_SelfStock[WeekIndex]={w})*T_SelfStock[Self_Qty])"
+        has_ttaf = f"SUMPRODUCT((T_TTAFStock[RM_Code]=$A{rr})*(T_TTAFStock[WeekIndex]={w}))"
+        ttaf_val = f"SUMPRODUCT((T_TTAFStock[RM_Code]=$A{rr})*(T_TTAFStock[WeekIndex]={w})*T_TTAFStock[TTAF_Qty])"
         if w == 1:
             prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[RM_Code],0)),0)'
         else:
             prior = f"{week_col(w-1)}{rr}"
         normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
-        ws_st.cell(row=rr, column=1 + w).value = f"=IF({has_count}>0,{count_val},{normal})"
+        # 優先順位: 手動棚卸(T_StockCount) > 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
+        ws_st.cell(row=rr, column=1 + w).value = (
+            f"=IF({has_count}>0,{count_val},"
+            f"IF(({has_self}>0)*({has_ttaf}>0)>0,{self_val}+{ttaf_val},{normal}))"
+        )
 
 n = len(rm_master) + 1
 for ws_ in (ws_req, ws_in, ws_st):
@@ -474,7 +534,8 @@ from openpyxl.formatting.rule import CellIsRule, FormulaRule
 # ============================================================ Dashboard
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
 # A〜E列(RM情報)とヘッダー行(月-年/日付/週No)を固定して、右にスクロールしながら見る設計。
-LEFT_COLS = ["RM_Code", "Description", "Category", "SafetyStock_Qty", "Status"]
+LEFT_COLS = ["RM_Code", "Description", "Category", "SafetyStock_Qty",
+             "自社在庫(実績)", "TTAF在庫(実績)", "実績週", "Status"]
 WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # F列から週データ
 HDR_MONTHYEAR_ROW = 3
 HDR_DATE_ROW = 4
@@ -516,7 +577,7 @@ for row_i in (HDR_MONTHYEAR_ROW, HDR_DATE_ROW, HDR_WEEKNO_ROW):
         ws.cell(row=row_i, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=row_i, column=c).font = Font(bold=(row_i == HDR_MONTHYEAR_ROW))
 
-for col, w in zip("ABCDE", [14, 32, 16, 14, 10]):
+for col, w in zip("ABCDEFGH", [14, 32, 16, 14, 14, 12, 12, 10]):
     ws.column_dimensions[col].width = w
 
 last_col_dash = get_column_letter(WEEK_START_COL_DASH + N_WEEKS - 1)
@@ -532,6 +593,13 @@ for i, r in enumerate(rm_master):
     ws.cell(row=rr, column=4,
             value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
     ws.cell(row=rr, column=5,
+            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A$100000=$A{rr}),T_SelfStock!$D$2:$D$100000),"")'))
+    ws.cell(row=rr, column=6,
+            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A$100000=$A{rr}),T_TTAFStock!$D$2:$D$100000),"")'))
+    ws.cell(row=rr, column=7,
+            value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A$100000=$A{rr}),'
+                   f'T_SelfStock!$B$2:$B$100000)),"")'))
+    ws.cell(row=rr, column=8,
             value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
@@ -560,7 +628,7 @@ ws.conditional_formatting.add(
 )
 # Statusが「要発注」の行を強調
 ws.conditional_formatting.add(
-    f"E{DATA_START_ROW}:E{n_last_row}",
+    f"H{DATA_START_ROW}:H{n_last_row}",
     CellIsRule(operator="equal", formula=['"要発注"'], fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(color="9C0006"))
 )
 # 入力した週(C1)と一致する列(週No行)をハイライト
@@ -648,26 +716,28 @@ readme_lines = [
     "",
     "【普段見るシート】",
     "  Dashboard           : 原材料×週の在庫を2年分、横軸で見渡せるメイン画面（まずここ）。",
+    "                        自社在庫(実績)・TTAF在庫(実績)・実績週の列で内訳も確認できます。",
     "                        C1に'2026-W23'のように入力すると該当週の列が黄色くハイライトされます",
     "                        （macros/JumpToWeek.bas のマクロを使うとその週まで自動スクロールもできます）。",
     "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
-    "  T_Shipments/T_OpeningStock/T_StockCount : 入力用",
+    "  T_Shipments/T_OpeningStock/T_StockCount/T_SelfStock/T_TTAFStock : 入力用",
     "",
     "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
     "",
-    "【重要】原単位(M_BOM)とバッチ数(PP_Grid)はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
-    "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM を実行してください",
-    "  （対象ファイルを選ぶだけです。詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
-    "  T_Shipments・T_OpeningStock・T_StockCount等の入力データには一切触れません。",
+    "【重要】原単位・バッチ数・自社/TTAF在庫はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
+    "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
+    "  RefreshTTAFStock を実行してください（対象ファイルを選ぶだけです。詳細はdocs/SOH_System_Guide.md、",
+    "  未検証のため要動作確認）。T_Shipments・T_OpeningStock・T_StockCount等には一切触れません。",
     "",
     "【毎月の運用】",
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
-    "  3. CSA Reportの最新情報でT_Shipments のETA/着荷日/PO番号/発注日を更新（早着・遅着はここに反映）",
-    "  4. 棚卸を実施したらT_StockCountに実測値を追記",
-    "  5. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
-    "  6. 月初は、前月最終週と当月頭のGrid_Stockを見比べて在庫差異を確認（Plan Increase and Decrease /",
+    "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
+    "  4. CSA Reportが届いたらRefreshTTAFStockを実行し、T_Shipments のETA/着荷日/PO番号/発注日も更新",
+    "  5. 棚卸を実施したらT_StockCountに実測値を追記",
+    "  6. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
+    "  7. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
     "     Inventory Releasesの報告フォーマットに転記）",
     "",
     "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
