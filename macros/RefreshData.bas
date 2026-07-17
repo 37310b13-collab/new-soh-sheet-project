@@ -100,7 +100,8 @@ Sub RefreshWeeklyBatches()
            "新規追加した中間体/完成品(Cat)コード: " & newInterRows & vbCrLf & _
            "更新/追加したsubstrate原単位(M_BOM): " & bomUpdated & vbCrLf & vbCrLf & _
            "(参考) 全く新しい中間体×原材料の組み合わせがある場合、M_BOM側にも" & vbCrLf & _
-           "RefreshBOMで追加してください。それでもCalc_Demandに反映されない場合はご連絡ください。", _
+           "RefreshBOMで追加してください（Grid_RequirementはM_BOM/PP_Gridを直接参照するため、" & vbCrLf & _
+           "追加した行はその場で自動反映されます）。", _
            vbInformation
     Exit Sub
 
@@ -332,7 +333,7 @@ Sub RefreshBOM()
     If Len(unresolved) > 0 Then
         msg = msg & vbCrLf & vbCrLf & "原材料コードが見つからず未反映の材料名:" & vbCrLf & unresolved
     End If
-    msg = msg & vbCrLf & vbCrLf & "新規追加した組み合わせは、Calc_Demandの再生成が必要な場合があります。"
+    msg = msg & vbCrLf & vbCrLf & "新規追加した組み合わせも、Grid_RequirementがM_BOMを直接参照しているため" & vbCrLf & "その場で自動反映されます。"
     MsgBox msg, vbInformation
     Exit Sub
 

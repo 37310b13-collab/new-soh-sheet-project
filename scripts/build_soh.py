@@ -191,14 +191,19 @@ for col, w in zip("ABCD", [14, 10, 8, 12]):
 ws.freeze_panes = "A2"
 
 # ============================================================ M_BOM
+# D列(PPGridRow)は、Grid_Requirementが毎週×毎材料でPP_Grid内をMATCHし直す(重い)代わりに
+# 「このIntermediateがPP_Grid内の何行目か」を1回だけ計算しておく内部ヘルパー列。
+# VBAでM_BOMに行を追加しても、Excelのテーブル機能が数式列を自動で複製するため引き続き機能する。
 ws = wb.create_sheet("M_BOM")
-ws.append(["Intermediate", "RM_Code", "RM_Qty_Per_Batch"])
-for r in bom:
-    ws.append([r["Intermediate"], r["RM_Code"], r["RM_Total_Per_Batch"]])
+ws.append(["Intermediate", "RM_Code", "RM_Qty_Per_Batch", "PPGridRow"])
+for i, r in enumerate(bom):
+    rr = i + 2
+    ws.append([r["Intermediate"], r["RM_Code"], r["RM_Total_Per_Batch"],
+               f'=IFERROR(MATCH($A{rr},PP_Grid[Intermediate],0),99999)'])
 n = len(bom) + 1
-style_header(ws, 3)
-add_table(ws, "M_BOM", f"A1:C{n}")
-for col, w in zip("ABC", [14, 12, 18]):
+style_header(ws, 4)
+add_table(ws, "M_BOM", f"A1:D{n}")
+for col, w in zip("ABCD", [14, 12, 18, 12]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 
@@ -354,39 +359,12 @@ for row_i in range(2, ttaf_rows_written + 2):
     ws.cell(row=row_i, column=3).number_format = "yyyy-mm-dd"
 print("T_TTAFStock rows seeded:", ttaf_rows_written)
 
-# ============================================================ Calc_Demand (explosion: BOM row x week)
-# Batches と RM_Qty_Per_Batch は PP_Grid / M_BOM への「ライブ参照」(INDEX/MATCH, SUMIFS)。
-# VBAでPP_Grid・M_BOMの値やRM_Qty_Per_Batchを更新しても、既存の(中間体,原材料)組み合わせの行は
-# 自動的に再計算される（行の追加・並べ替えにも耐える）。
-# ただし全く新しい(中間体,原材料)の組み合わせが増えた場合はこの表自体の再生成が必要。
-ws = wb.create_sheet("Calc_Demand")
-ws.append(["Intermediate", "RM_Code", "WeekIndex", "Label", "RM_Qty_Per_Batch", "Batches", "Demand"])
-row_num = 1
-seen_pairs = set()
-for r in bom:
-    inter = r["Intermediate"]
-    rm_code = r["RM_Code"]
-    if (inter, rm_code) in seen_pairs:
-        continue  # avoid duplicate explosion if the same pair appears from multiple source rows
-    seen_pairs.add((inter, rm_code))
-    for w in range(1, N_WEEKS + 1):
-        row_num += 1
-        ws.append([
-            inter, rm_code, w, week_labels[w],
-            f'=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],A{row_num},M_BOM[RM_Code],B{row_num})',
-            f'=IFERROR(INDEX(PP_Grid[#Data],MATCH(A{row_num},PP_Grid[Intermediate],0),MATCH(D{row_num},PP_Grid[#Headers],0)),0)',
-            f"=E{row_num}*F{row_num}",
-        ])
-n = row_num
-style_header(ws, 7)
-add_table(ws, "Calc_Demand", f"A1:G{n}", style="TableStyleLight9")
-for col, w in zip("ABCDEFG", [14, 12, 10, 10, 16, 10, 12]):
-    ws.column_dimensions[col].width = w
-ws.freeze_panes = "A2"
-ws.sheet_state = "hidden"
-print("Calc_Demand rows:", n - 1)
-
 # ============================================================ Grid_Requirement / Grid_Incoming / Grid_Stock
+# Grid_Requirementは、以前は「BOM行×週」を1行ずつ展開した中間表(Calc_Demand, 73,944行)を
+# SUMIFSで週次集計していたが、これが実Excelで開く・編集する・スクロールするたびに
+# 極めて重い処理となり、フリーズ・強制終了の主因になっていた（10,504セル×74,000行SUMIFS
+# ≈ 15億回超の比較）。M_BOM(711行)とPP_Grid(週次バッチ数)からSUMPRODUCTで直接集計する
+# 方式に変更し、中間表を廃止（同じ計算結果を約200分の1の計算量で得られる）。
 ws_req = wb.create_sheet("Grid_Requirement")
 ws_in = wb.create_sheet("Grid_Incoming")
 ws_st = wb.create_sheet("Grid_Stock")
@@ -404,8 +382,12 @@ for i, r in enumerate(rm_master):
     ws_st.append([rm] + [None] * N_WEEKS)
     for w in range(1, N_WEEKS + 1):
         cl = week_col(w)
+        # M_BOMのうちRM_Code=このRMの行だけを対象に、原単位×その週のバッチ数(PP_GridRow経由で
+        # 週ごとのMATCHをせず直接INDEX)を合計する。PP_Grid内の列位置(w+1列目=Intermediate列の次)
+        # は週ごとに固定できるため、MATCHは行位置(PPGridRow, M_BOM側で1回だけ計算済み)のみで済む。
         ws_req.cell(row=rr, column=1 + w).value = (
-            f"=SUMIFS(Calc_Demand[Demand],Calc_Demand[RM_Code],$A{rr},Calc_Demand[WeekIndex],{w})"
+            f"=SUMPRODUCT((M_BOM[RM_Code]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
+            f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))"
         )
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[RM_Code],$A{rr},T_Shipments[Effective_Week],{w})"
@@ -565,10 +547,12 @@ cal_label_rng = f"Cal_Weeks!$E${cal_data_first}:$E${cal_data_last}"
 cal_weekstart_rng = f"Cal_Weeks!$B${cal_data_first}:$B${cal_data_last}"
 cal_monthyear_rng = f"Cal_Weeks!$G${cal_data_first}:$G${cal_data_last}"
 
-# 入力("W23"/"w23"/"23"等)から週Noを取り出し、「現在年(YEAR(TODAY()))」×週Noに一致する
-# Cal_WeeksのWeekIndexをSUMPRODUCTで求める。MAXIFS/LOOKUPとテーブル構造化参照の組み合わせは
+# 入力("W23"/"w23"/"23"等)から週Noを取り出し、「現在年(Cal_WeeksのB1=AnchorYear)」×週Noに
+# 一致するCal_WeeksのWeekIndexをSUMPRODUCTで求める。MAXIFS/LOOKUPとテーブル構造化参照の組み合わせは
 # 本環境で不具合を確認済みのため、ここではプレーン範囲のSUMPRODUCTを使用（マクロ不要）。
-_wk_match = (f'({cal_year_rng}=YEAR(TODAY()))*'
+# TODAY()等の揮発性関数はワークブック全体の再計算負荷を増やすため使わず、既存のAnchorYear
+# セル（週No.のリセット基準としてすでに使われている「現在の基準年」）をそのまま流用する。
+_wk_match = (f"({cal_year_rng}=Cal_Weeks!$B$1)*"
              f'({cal_weekofyear_rng}=VALUE(SUBSTITUTE(UPPER(TRIM($C$1)),"W","")))')
 ws["F1"] = (
     # 該当週が0件(存在しない週No等)の場合はSUMPRODUCTが0を返しIFERRORでは捕捉できないため、
@@ -889,7 +873,7 @@ order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draf
          "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
-         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Calc_Demand", "Grid_Requirement",
+         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
          "Grid_Incoming", "Grid_Stock"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
