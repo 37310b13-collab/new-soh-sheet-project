@@ -537,10 +537,12 @@ from openpyxl.formatting.rule import CellIsRule, FormulaRule
 
 # ============================================================ Dashboard
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
-# A〜E列(RM情報)とヘッダー行(月-年/日付/週No)を固定して、右にスクロールしながら見る設計。
+# A〜H列(RM情報)+I列(選択週の在庫をStatusの隣に常時ピン留め表示)とヘッダー行(月-年/日付/週No)を
+# 固定して、右にスクロールしながら見る設計。
 LEFT_COLS = ["RM_Code", "Description", "Category", "SafetyStock_Qty",
              "自社在庫(実績)", "TTAF在庫(実績)", "実績週", "Status"]
-WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # F列から週データ
+PINNED_COL = len(LEFT_COLS) + 1  # I列: 選択週の在庫をStatusの隣に常時表示（ジャンプ・スクロール不要）
+WEEK_START_COL_DASH = PINNED_COL + 1  # J列から週データ
 HDR_MONTHYEAR_ROW = 3
 HDR_DATE_ROW = 4
 HDR_WEEKNO_ROW = 5
@@ -548,18 +550,38 @@ HDR_TABLE_ROW = 6  # Excel Table の見出し行としても使う(Label)
 DATA_START_ROW = 7
 
 ws = wb.create_sheet("Dashboard")
-ws["A1"] = "この週へジャンプ（例: 2026-W23 の形式で入力）"
+ws["A1"] = "選択週を入力（例: W23。現在年の週Noで検索します）"
 ws["A1"].font = Font(bold=True)
 ws["C1"] = ""
 ws["C1"].fill = INPUT_FILL
 ws["C1"].font = Font(bold=True, size=12)
-_hdr_start_col = get_column_letter(WEEK_START_COL_DASH)
-_hdr_end_col = get_column_letter(WEEK_START_COL_DASH + N_WEEKS - 1)
-# マクロ不要でジャンプできるHYPERLINKリンク（クリックすると該当週の列へ移動・自動スクロールされる）
+
+cal_data_first = CAL_HEADER_ROW + 1
+cal_data_last = CAL_HEADER_ROW + N_WEEKS
+cal_year_rng = f"Cal_Weeks!$C${cal_data_first}:$C${cal_data_last}"
+cal_weekofyear_rng = f"Cal_Weeks!$D${cal_data_first}:$D${cal_data_last}"
+cal_weekindex_rng = f"Cal_Weeks!$A${cal_data_first}:$A${cal_data_last}"
+cal_label_rng = f"Cal_Weeks!$E${cal_data_first}:$E${cal_data_last}"
+cal_weekstart_rng = f"Cal_Weeks!$B${cal_data_first}:$B${cal_data_last}"
+cal_monthyear_rng = f"Cal_Weeks!$G${cal_data_first}:$G${cal_data_last}"
+
+# 入力("W23"/"w23"/"23"等)から週Noを取り出し、「現在年(YEAR(TODAY()))」×週Noに一致する
+# Cal_WeeksのWeekIndexをSUMPRODUCTで求める。MAXIFS/LOOKUPとテーブル構造化参照の組み合わせは
+# 本環境で不具合を確認済みのため、ここではプレーン範囲のSUMPRODUCTを使用（マクロ不要）。
+_wk_match = (f'({cal_year_rng}=YEAR(TODAY()))*'
+             f'({cal_weekofyear_rng}=VALUE(SUBSTITUTE(UPPER(TRIM($C$1)),"W","")))')
+ws["F1"] = (
+    # 該当週が0件(存在しない週No等)の場合はSUMPRODUCTが0を返しIFERRORでは捕捉できないため、
+    # 一致件数を先に判定してから空文字を返す。
+    f'=IFERROR(IF(SUMPRODUCT({_wk_match})=0,"",SUMPRODUCT({_wk_match}*({cal_weekindex_rng}))),"")'
+)
+ws["F1"].font = Font(size=8, color="808080")
+ws["E1"] = "→WeekIndex"
+ws["E1"].font = Font(size=8, color="808080")
 ws["D1"] = (
-    f'=IFERROR(HYPERLINK("#Dashboard!"&ADDRESS({DATA_START_ROW},'
-    f'MATCH($C$1,{_hdr_start_col}${HDR_TABLE_ROW}:{_hdr_end_col}${HDR_TABLE_ROW},0)+{WEEK_START_COL_DASH}-1,4),'
-    f'"▶ この週へジャンプ"),"週Noを入力してください（例: 2026-W23）")'
+    f'=IF($C$1="","週Noを入力してください（例: W23）",'
+    f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
+    f'INDEX({cal_label_rng},$F$1)&" をI列に表示中"))'
 )
 ws["D1"].font = Font(bold=True, color="0563C1")
 
@@ -584,9 +606,25 @@ for w in range(1, N_WEEKS + 1):
 
 for c, name in enumerate(LEFT_COLS, start=1):
     ws.cell(row=HDR_TABLE_ROW, column=c, value=name)
+
+# I列(選択週ピン留め列): 通常の週列と同じ3段見出し＋選択中の週Noを表示
+pinned_letter = get_column_letter(PINNED_COL)
+ws.cell(row=HDR_MONTHYEAR_ROW, column=PINNED_COL, value=f'=IFERROR(INDEX({cal_monthyear_rng},$F$1),"")')
+pcell = ws.cell(row=HDR_DATE_ROW, column=PINNED_COL, value=f'=IFERROR(INDEX({cal_weekstart_rng},$F$1),"")')
+pcell.number_format = "m/d"
+ws.cell(row=HDR_WEEKNO_ROW, column=PINNED_COL, value=f'=IFERROR(INDEX({cal_weekofyear_rng},$F$1),"")')
+ws.cell(row=HDR_TABLE_ROW, column=PINNED_COL, value='=IF($C$1="","選択週",$C$1)')
+ws.column_dimensions[pinned_letter].width = 12
+
 style_header(ws, WEEK_START_COL_DASH + N_WEEKS - 1, row=HDR_TABLE_ROW)
+pin_fill = PatternFill("solid", fgColor="FFEB9C")
+ws.cell(row=HDR_TABLE_ROW, column=PINNED_COL).fill = pin_fill
+ws.cell(row=HDR_TABLE_ROW, column=PINNED_COL).font = Font(bold=True)
 for row_i in (HDR_MONTHYEAR_ROW, HDR_DATE_ROW, HDR_WEEKNO_ROW):
     for c in range(1, WEEK_START_COL_DASH + N_WEEKS):
+        if c == PINNED_COL:
+            ws.cell(row=row_i, column=c).fill = pin_fill
+            continue
         ws.cell(row=row_i, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=row_i, column=c).font = Font(bold=(row_i == HDR_MONTHYEAR_ROW))
 
@@ -614,6 +652,8 @@ for i, r in enumerate(rm_master):
                    f'T_SelfStock!$B$2:$B$2000)),"")'))
     ws.cell(row=rr, column=8,
             value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
+    ws.cell(row=rr, column=PINNED_COL,
+            value=(f'=IFERROR(INDEX({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr},$F$1),"")'))
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
         gs_col = week_col(w)
@@ -624,19 +664,22 @@ n_last_row = DATA_START_ROW + len(rm_master) - 1
 # 罫線・縞模様の手動書式で「テーブルらしい」見た目にする（テーブル見出しは文字列必須のため）。
 thin = Side(style="thin", color="BFBFBF")
 border = Border(left=thin, right=thin, top=thin, bottom=thin)
+pin_data_fill = PatternFill("solid", fgColor="FFF9DB")
 for rr2 in range(HDR_TABLE_ROW, n_last_row + 1):
     stripe = (rr2 - HDR_TABLE_ROW) % 2 == 1
     for c in range(1, WEEK_START_COL_DASH + N_WEEKS):
         cell = ws.cell(row=rr2, column=c)
         cell.border = border
-        if rr2 > HDR_TABLE_ROW and stripe:
+        if c == PINNED_COL and rr2 > HDR_TABLE_ROW:
+            cell.fill = pin_data_fill
+        elif rr2 > HDR_TABLE_ROW and stripe:
             cell.fill = PatternFill("solid", fgColor="F2F2F2")
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}"
 
-# 安全在庫を下回った週を赤く強調
+# 安全在庫を下回った週を赤く強調（I列のピン留めセルも対象）
 ws.conditional_formatting.add(
-    f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}:{last_col_dash}{n_last_row}",
-    FormulaRule(formula=[f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<$D{DATA_START_ROW}"],
+    f"{pinned_letter}{DATA_START_ROW}:{last_col_dash}{n_last_row}",
+    FormulaRule(formula=[f"{pinned_letter}{DATA_START_ROW}<$D{DATA_START_ROW}"],
                 fill=PatternFill("solid", fgColor="FFC7CE"))
 )
 # Statusが「要発注」の行を強調
@@ -644,11 +687,12 @@ ws.conditional_formatting.add(
     f"H{DATA_START_ROW}:H{n_last_row}",
     CellIsRule(operator="equal", formula=['"要発注"'], fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(color="9C0006"))
 )
-# 入力した週(C1)と一致する列(週No行)をハイライト
+# 選択中の週(F1のWeekIndex)に該当する列(週No行)をハイライト（COLUMN()の自己参照なので
+# テーブル構造化参照やLOOKUP配列を使わずに済み、本環境で確認済みの不具合を回避できる）
 ws.conditional_formatting.add(
     f"{get_column_letter(WEEK_START_COL_DASH)}{HDR_TABLE_ROW}:{last_col_dash}{n_last_row}",
     FormulaRule(
-        formula=[f'{get_column_letter(WEEK_START_COL_DASH)}${HDR_TABLE_ROW}=$C$1'],
+        formula=[f'(COLUMN()-COLUMN(${get_column_letter(WEEK_START_COL_DASH)}$1)+1)=$F$1'],
         fill=PatternFill("solid", fgColor="FFEB9C"),
     )
 )
@@ -782,8 +826,9 @@ readme_lines = [
     "【普段見るシート】",
     "  Dashboard           : 原材料×週の在庫を2年分、横軸で見渡せるメイン画面（まずここ）。",
     "                        自社在庫(実績)・TTAF在庫(実績)・実績週の列で内訳も確認できます。",
-    "                        C1に'2026-W23'のように入力すると該当週の列が黄色くハイライトされ、",
-    "                        D1のリンクをクリックするとその週まで自動移動します（マクロ不要）。",
+    "                        C1に'W23'のように入力すると（現在年の週Noとして検索）、",
+    "                        Statusのすぐ隣のI列にその週の在庫が常時表示され、",
+    "                        該当する週の列も黄色くハイライトされます（マクロ不要・スクロール不要）。",
     "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments/T_OpeningStock/T_StockCount/T_SelfStock/T_TTAFStock : 入力用",
