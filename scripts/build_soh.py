@@ -553,6 +553,15 @@ ws["A1"].font = Font(bold=True)
 ws["C1"] = ""
 ws["C1"].fill = INPUT_FILL
 ws["C1"].font = Font(bold=True, size=12)
+_hdr_start_col = get_column_letter(WEEK_START_COL_DASH)
+_hdr_end_col = get_column_letter(WEEK_START_COL_DASH + N_WEEKS - 1)
+# マクロ不要でジャンプできるHYPERLINKリンク（クリックすると該当週の列へ移動・自動スクロールされる）
+ws["D1"] = (
+    f'=IFERROR(HYPERLINK("#Dashboard!"&ADDRESS({DATA_START_ROW},'
+    f'MATCH($C$1,{_hdr_start_col}${HDR_TABLE_ROW}:{_hdr_end_col}${HDR_TABLE_ROW},0)+{WEEK_START_COL_DASH}-1,4),'
+    f'"▶ この週へジャンプ"),"週Noを入力してください（例: 2026-W23）")'
+)
+ws["D1"].font = Font(bold=True, color="0563C1")
 
 for w in range(1, N_WEEKS + 1):
     col = WEEK_START_COL_DASH + w - 1
@@ -727,8 +736,8 @@ readme_lines = [
     "【普段見るシート】",
     "  Dashboard           : 原材料×週の在庫を2年分、横軸で見渡せるメイン画面（まずここ）。",
     "                        自社在庫(実績)・TTAF在庫(実績)・実績週の列で内訳も確認できます。",
-    "                        C1に'2026-W23'のように入力すると該当週の列が黄色くハイライトされます",
-    "                        （macros/JumpToWeek.bas のマクロを使うとその週まで自動スクロールもできます）。",
+    "                        C1に'2026-W23'のように入力すると該当週の列が黄色くハイライトされ、",
+    "                        D1のリンクをクリックするとその週まで自動移動します（マクロ不要）。",
     "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments/T_OpeningStock/T_StockCount/T_SelfStock/T_TTAFStock : 入力用",

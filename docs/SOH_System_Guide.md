@@ -61,7 +61,7 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
    - コードをコピー＆貼り付けする場合は、**1行目の`Attribute VB_Name = "..."`を必ず削除してから**
      貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります
      （標準モジュールを挿入→中身を貼り付け、の手順を使う場合はこの点にご注意ください）
-3. `macros/JumpToWeek.bas`・`macros/PO_Export.bas`も同様にインポート
+3. `macros/PO_Export.bas`（完全に任意、下記参照）も使う場合は同様にインポート
 4. Alt+F8 → `RefreshWeeklyBatches`を選択して実行 → ファイル選択ダイアログで最新の
    「Powder & Slurry & Pgm Plan」ファイルを選ぶ
 5. 同様に`RefreshBOM`も必要なタイミングで実行
@@ -87,9 +87,9 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 `powerquery/Q_Shipments.pq`（CSA ReportのShipping Schedule取込み）だけは、シート構造がシンプルな
 ため引き続きPower Query案として残しています（任意・未検証）。
 
-`macros/JumpToWeek.bas`（任意）を導入すると、Dashboard C1に週を入力した状態で`GoToWeek`マクロを
-実行することで、該当週の列まで自動スクロールします（黄色ハイライトだけでも十分に見つけやすいため、
-必須ではありません）。
+**週へのジャンプはマクロ不要です。** `Dashboard`のC1に週(例:`2026-W23`)を入力すると、該当週の列が
+黄色くハイライトされ、D1の`HYPERLINK`リンクをクリックするとその週の列まで自動的に移動・スクロール
+します（TTAF R-Model等と同じく、通常のExcel数式のみで実現しています。マクロは使っていません）。
 
 ### Pythonスクリプトについて（参考・任意）
 `scripts/`にPython版の抽出・再生成スクリプトも残しています。Python環境がある場合はこちらでも
@@ -120,6 +120,16 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 されます。着荷日が確定したら`Received_Date`を入力してください（未確定分はETAが使われます）。
 `PO_No`・`Order_Date_発注日`もあわせて記録できます。
 
+## 4.5 注文書(PO)の発行 — マクロ不要
+
+`PO_Draft_Chemical`/`_Hazardous`/`_Substrate`は、常に最新の在庫予測にもとづいて自動計算される
+「生きた」注文書です。TTAF R-Model等の既存の`Chemical Release`シートと同じ考え方で、**このシートを
+そのまま印刷する、またはシートを右クリック→「移動またはコピー」→「コピーを作成する」にチェックを
+入れて別ブックに複製する**だけで発注書として使えます。マクロは不要です。
+
+`macros/PO_Export.bas`は、この複製・PDF化・リビジョン番号の自動採番をボタン1つで行うための**任意の
+補助マクロ**です。使わなくても運用に支障はありません。
+
 ## 5. 毎月の運用フロー
 
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
@@ -128,7 +138,7 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 4. CSA Reportが週次で届いたら`RefreshTTAFStock`を実行し、あわせて`T_Shipments`もETA・着荷日・
    PO番号・発注日で更新（早着・遅着はここに反映）
 5. 棚卸を実施した週は`T_StockCount`に追記
-6. `Dashboard`で「要発注」を確認し、`PO_Draft_*`から注文書を発行（`macros/PO_Export.bas`）
+6. `Dashboard`で「要発注」を確認し、`PO_Draft_*`から注文書を発行
 7. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
    Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
