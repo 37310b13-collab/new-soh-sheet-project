@@ -655,6 +655,18 @@ ws.conditional_formatting.add(
 print("Dashboard: week-by-week grid for", len(rm_master), "materials x", N_WEEKS, "weeks")
 
 # ============================================================ PO Draft sheets (Chemical Release format)
+# 注文書は2年先まで不要。翌月(Firm)＋翌々月・翌々翌月(Forecast)の3ヶ月＝約13週分だけを表示する。
+# 表示開始週はP7セル(基準週WeekIndex)で指定し、ここを変えるだけで対象月をずらせる（数式のみ、マクロ不要）。
+PO_N_WEEKS = 13
+PO_HDR_MONTHYEAR_ROW = 10
+PO_HDR_DATE_ROW = 11
+PO_HDR_WEEKNO_ROW = 12
+PO_HDR_FIRMFORECAST_ROW = 13
+PO_HDR_TABLE_ROW = 14
+PO_DATA_START_ROW = 15
+PO_FIRST_WEEK_COL = 8  # H列
+
+
 def build_po_draft(sheet_name, category, title):
     ws = wb.create_sheet(sheet_name)
     ws["B2"] = "TO：（サプライヤー／TTAF担当者名を入力）"
@@ -667,54 +679,88 @@ def build_po_draft(sheet_name, category, title):
     ws["N4"] = "Firm Month:"
     ws["N5"] = "Revision"
     ws["P5"] = "00"
+    ws["N7"] = "基準週(WeekIndex, 翌月の頭を推奨):"
+    # デフォルト値は「来月1日」が属する週のWeekIndex
+    default_firm_month = (datetime.date.today().replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
+    default_start_week = date_to_week_index(default_firm_month, N_WEEKS)
+    ws["P7"] = default_start_week
+    ws["P7"].fill = INPUT_FILL
+    ws["P7"].font = Font(bold=True)
     ws["B8"] = title
     ws["B8"].font = Font(bold=True, size=12)
 
-    hdr_row = 10
-    headers = ["Part Name", "TTAF Code", "CSA Code", "UOM", "SafetyStock", "CurrentStock"] + \
-              [week_labels[w] for w in range(1, N_WEEKS + 1)] + ["Total"]
-    for c, h in enumerate(headers, start=2):
-        ws.cell(row=hdr_row, column=c, value=h)
-    style_header(ws, len(headers) + 1, row=hdr_row)
+    for w in range(1, PO_N_WEEKS + 1):
+        col = PO_FIRST_WEEK_COL + w - 1
+        if w == 1:
+            my_formula = "=INDEX(Cal_Weeks[MonthYearLabel],$P$7)"
+        else:
+            my_formula = (
+                f'=IF(INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-1})<>INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-2}),'
+                f'INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-1}),"")'
+            )
+        ws.cell(row=PO_HDR_MONTHYEAR_ROW, column=col, value=my_formula)
+        dcell = ws.cell(row=PO_HDR_DATE_ROW, column=col, value=f"=INDEX(Cal_Weeks[WeekStart],$P$7+{w-1})")
+        dcell.number_format = "m/d"
+        ws.cell(row=PO_HDR_WEEKNO_ROW, column=col, value=f"=INDEX(Cal_Weeks[WeekOfYear],$P$7+{w-1})")
+        ws.cell(row=PO_HDR_FIRMFORECAST_ROW, column=col,
+                value=(f'=IF(INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-1})=INDEX(Cal_Weeks[MonthYearLabel],$P$7),'
+                       f'"Firm","Forecast")'))
+        ws.cell(row=PO_HDR_TABLE_ROW, column=col, value=f"=INDEX(Cal_Weeks[Label],$P$7+{w-1})")
+        ws.column_dimensions[get_column_letter(col)].width = 8
 
-    data_row = hdr_row
-    first_week_col = 8
+    left_headers = ["Part Name", "TTAF Code", "CSA Code", "UOM", "SafetyStock", "CurrentStock"]
+    for c, h in enumerate(left_headers, start=2):
+        ws.cell(row=PO_HDR_TABLE_ROW, column=c, value=h)
+    total_col = PO_FIRST_WEEK_COL + PO_N_WEEKS
+    ws.cell(row=PO_HDR_TABLE_ROW, column=total_col, value="Total")
+
+    last_col_idx = total_col
+    for row_i in (PO_HDR_MONTHYEAR_ROW, PO_HDR_DATE_ROW, PO_HDR_WEEKNO_ROW, PO_HDR_FIRMFORECAST_ROW, PO_HDR_TABLE_ROW):
+        for c in range(2, last_col_idx + 1):
+            cell = ws.cell(row=row_i, column=c)
+            cell.fill = PatternFill("solid", fgColor="D9E1F2")
+            cell.font = Font(bold=(row_i in (PO_HDR_MONTHYEAR_ROW, PO_HDR_TABLE_ROW)))
+
+    data_row = PO_HDR_TABLE_ROW
     items = [r for r in rm_master if r["Category"] == category]
     for r in items:
         data_row += 1
         rm = r["RM_Code"]
         grow = rm_row[rm]
+        grow_rel = grow - 1  # Grid_Stock[#Data]内の相対行位置(1始まり)
         ws.cell(row=data_row, column=2, value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH("{rm}",M_RawMaterials[RM_Code],0)),"")')
         ws.cell(row=data_row, column=3, value=r.get("TTAF_Code", ""))
         ws.cell(row=data_row, column=4, value=rm)
         ws.cell(row=data_row, column=5, value="kg")
         ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH("{rm}",M_RawMaterials[RM_Code],0)),0)')
-        ws.cell(row=data_row, column=7, value=f"='Grid_Stock'!B{grow}")
-        for w in range(1, N_WEEKS + 1):
-            cl = get_column_letter(first_week_col + w - 1)
-            gs_col = week_col(w)
-            ws.cell(row=data_row, column=first_week_col + w - 1,
-                    value=f"=MAX(0,$F{data_row}-'Grid_Stock'!{gs_col}{grow})")
-        total_col = first_week_col + N_WEEKS
-        rng_start = get_column_letter(first_week_col)
-        rng_end = get_column_letter(first_week_col + N_WEEKS - 1)
+        ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_rel},$P$7)")
+        for w in range(1, PO_N_WEEKS + 1):
+            col = PO_FIRST_WEEK_COL + w - 1
+            ws.cell(row=data_row, column=col,
+                    value=f"=MAX(0,$F{data_row}-INDEX(Grid_Stock[#Data],{grow_rel},$P$7+{w-1}))")
+        rng_start = get_column_letter(PO_FIRST_WEEK_COL)
+        rng_end = get_column_letter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)
         ws.cell(row=data_row, column=total_col, value=f"=SUM({rng_start}{data_row}:{rng_end}{data_row})")
 
     last_row = data_row
-    last_col_idx = 2 + len(headers) - 1
+    # ヘッダー行が数式(Cal_Weeks参照)のため、Excelのテーブル機能(ListObject)は使わず
+    # 罫線・縞模様の手動書式にする（テーブル見出しは文字列必須で、数式は入れられないため）。
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
     if items:
-        # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しない
-        # （その状態で保存すると、開いたときに「修復」されテーブルごと削除されてしまう）。
-        # 品目が1件もない場合は、テーブル化せず見出し行の書式だけ残す。
-        add_table(ws, sheet_name.replace(" ", "_"), f"B{hdr_row}:{get_column_letter(last_col_idx)}{last_row}", style="TableStyleMedium6")
+        for rr2 in range(PO_HDR_TABLE_ROW, last_row + 1):
+            stripe = (rr2 - PO_HDR_TABLE_ROW) % 2 == 1
+            for c in range(2, last_col_idx + 1):
+                cell = ws.cell(row=rr2, column=c)
+                cell.border = border
+                if rr2 > PO_HDR_TABLE_ROW and stripe:
+                    cell.fill = PatternFill("solid", fgColor="F2F2F2")
     else:
-        ws.cell(row=hdr_row + 1, column=2, value="(該当品目なし)")
+        ws.cell(row=PO_HDR_TABLE_ROW + 1, column=2, value="(該当品目なし)")
     ws.column_dimensions["B"].width = 30
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 12
-    for w in range(1, N_WEEKS + 1):
-        ws.column_dimensions[get_column_letter(first_week_col + w - 1)].width = 8
-    ws.freeze_panes = f"B{hdr_row+1}"
+    ws.freeze_panes = f"{get_column_letter(PO_FIRST_WEEK_COL)}{PO_DATA_START_ROW}"
     print(f"{sheet_name}: {len(items)} items")
 
 build_po_draft("PO_Draft_Chemical", "Chemical", "Chemicals : TTAF Supply")
