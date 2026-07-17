@@ -41,7 +41,7 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 
 | マクロ | 対象ファイル | 更新するシート |
 |---|---|---|
-| `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid |
+| `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid（+ substrate分のM_BOM） |
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、週次） | T_TTAFStock |
@@ -127,6 +127,12 @@ T_StockCount・安全在庫の設定値など）には一切触れません。**
 そのまま印刷する、またはシートを右クリック→「移動またはコピー」→「コピーを作成する」にチェックを
 入れて別ブックに複製する**だけで発注書として使えます。マクロは不要です。
 
+表示範囲は`Dashboard`と異なり、**翌月分(Firm)＋翌々月・翌々々月分(Forecast)の13週のみ**です
+（2年先までの計画はPOには不要という運用に合わせています）。各シート上部の入力セル
+「基準週(WeekIndex)」に週番号を入れると、その週を起点に13週分の表示がスライドします
+（既定値は翌月の第1週）。月-年／月曜日の日付／週番号の3段見出しと、Firm/Forecastの区分行は
+すべて`Cal_Weeks`参照のExcel関数で自動計算されるため、年をまたいでも手直し不要です。
+
 `macros/PO_Export.bas`は、この複製・PDF化・リビジョン番号の自動採番をボタン1つで行うための**任意の
 補助マクロ**です。使わなくても運用に支障はありません。
 
@@ -174,8 +180,12 @@ Power Query部分を除く。両者はこの環境で実行できないため未
   置き換えてください。「要発注」判定の基準になります。
 - **`M_RawMaterials`の`Category`**: 機械的に判定したものです。実際の危険物区分と一致しているか
   確認してください。
-- **Substrates（基材）**: 原材料と異なるコード体系（Lot No等）のため今回は未統合です。
-  `PO_Draft_Substrate`は雛形のみで品目が空です。
+- **Substrates（基材）**: 「Powder & Slurry & Pgm Plan」内の"Japan GPF Substr"/"China Substr"/
+  "Poland GPF Substr"（およびEster Film/PP Film等、1シート1品目のフィルム系シート）から
+  週次使用量(=完成品Catコードの受注数量×1個あたり使用量)を取り込み、`M_RawMaterials`に
+  Category="Substrate"として統合済みです。中間体を経由する化学原料と異なり、substrateは
+  完成品コード(Cat)が直接「中間体」の役割を果たします（`M_Intermediates`にType="Cat"として
+  登録）。`PO_Draft_Substrate`にも実データが反映されています。
 - **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください
   （`T_SelfStock`・`T_TTAFStock`に実績があれば、その週以降は自動でリセットされます）。
 - **`RefreshData.bas`・`Q_Shipments.pq`**: 未検証です。動作確認の結果を教えてください。
@@ -184,6 +194,5 @@ Power Query部分を除く。両者はこの環境で実行できないため未
 
 ## 9. 今後の拡張候補
 
-- **基材（Substrates）の統合**: 上記8.参照。
 - **Min/Max（週数ベースの安全在庫）モデル**: 現状は単一しきい値のみですが、「N週分の使用量」を
   基準にしたMin/Max運用に拡張することも可能です。

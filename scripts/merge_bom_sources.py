@@ -1,7 +1,8 @@
 """
 bom_from_usage_engineering.csv（主, Usage from Production Engineering由来）と
 bom_from_plan.csv（補完, Powder & Slurry & Pgm Plan由来）を統合して bom.csv を作る。
-また、新しく見つかった中間体コードを intermediate_master.csv に追加する。
+また、新しく見つかった中間体/完成品(Cat)コードを intermediate_master.csv に、
+新しく見つかったsubstrateコードを rm_master.csv に追加する。
 
 使い方:
     python3 scripts/merge_bom_sources.py [data/mastersディレクトリ]
@@ -42,6 +43,42 @@ def main(out_dir):
             w.writerow(r)
     print("bom.csv written:", len(merged), "rows")
 
+    # --- substrate_master.csv を rm_master.csv に統合(Category="Substrate") ---
+    # 既存の行(RM_Code一致)はCategoryのみ"Substrate"に補正し、他の項目(TTAF_Code等)は
+    # 既存の値(CSA Report等より正確な出所)を優先して残す。未登録のコードのみ新規追加する。
+    substrate_master = load(os.path.join(out_dir, "substrate_master.csv"))
+    rm_path = os.path.join(out_dir, "rm_master.csv")
+    rm_master = load(rm_path)
+    rm_codes = set(r["RM_Code"] for r in rm_master)
+    substrate_codes = set(r["RM_Code"] for r in substrate_master)
+
+    updated_rm = 0
+    for r in rm_master:
+        if r["RM_Code"] in substrate_codes and r["Category"] != "Substrate":
+            r["Category"] = "Substrate"
+            updated_rm += 1
+
+    added_rm = []
+    for r in substrate_master:
+        if r["RM_Code"] in rm_codes:
+            continue
+        added_rm.append({
+            "RM_Code": r["RM_Code"], "TTAF_Code": "", "Description": r["Description"],
+            "Supplier": "", "Category": "Substrate",
+        })
+        rm_codes.add(r["RM_Code"])
+
+    with open(rm_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["RM_Code", "TTAF_Code", "Description", "Supplier", "Category"])
+        w.writeheader()
+        for r in rm_master:
+            w.writerow(r)
+        for r in added_rm:
+            w.writerow(r)
+    print("rm_master.csv: added", len(added_rm), "new substrate codes,",
+          "updated Category for", updated_rm, "existing codes")
+
+    # --- 新しい中間体/完成品(Cat)コードを intermediate_master.csv に追加 ---
     inter_path = os.path.join(out_dir, "intermediate_master.csv")
     inter_master = load(inter_path)
     old_names = set(r["Intermediate"] for r in inter_master)
@@ -49,6 +86,10 @@ def main(out_dir):
 
     batches = load(os.path.join(out_dir, "weekly_batches.csv"))
     candidates = set(r["Intermediate"] for r in merged) | set(r["Intermediate"] for r in batches)
+
+    # substrateコード(RM_Code)と対になっているIntermediateは完成品(Cat)コードとみなす
+    cat_names = set(r["Intermediate"] for r in merged if r["RM_Code"] in substrate_codes) | \
+        set(r["Intermediate"] for r in supplement if r["RM_Code"] in substrate_codes)
 
     added = []
     for name in sorted(candidates):
@@ -62,7 +103,9 @@ def main(out_dir):
         for r in inter_master:
             w.writerow(r)
         for name in added:
-            if name.upper().startswith("SOL"):
+            if name in cat_names:
+                t = "Cat"
+            elif name.upper().startswith("SOL"):
                 t = "Solution"
             elif name.upper().startswith("TPP"):
                 t = "Powder"
