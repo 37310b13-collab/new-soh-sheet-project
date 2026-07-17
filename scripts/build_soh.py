@@ -597,12 +597,12 @@ for i, r in enumerate(rm_master):
     ws.cell(row=rr, column=4,
             value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
     ws.cell(row=rr, column=5,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A$100000=$A{rr}),T_SelfStock!$D$2:$D$100000),"")'))
+            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A$2000=$A{rr}),T_SelfStock!$D$2:$D$2000),"")'))
     ws.cell(row=rr, column=6,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A$100000=$A{rr}),T_TTAFStock!$D$2:$D$100000),"")'))
+            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A$2000=$A{rr}),T_TTAFStock!$D$2:$D$2000),"")'))
     ws.cell(row=rr, column=7,
-            value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A$100000=$A{rr}),'
-                   f'T_SelfStock!$B$2:$B$100000)),"")'))
+            value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A$2000=$A{rr}),'
+                   f'T_SelfStock!$B$2:$B$2000)),"")'))
     ws.cell(row=rr, column=8,
             value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
     for w in range(1, N_WEEKS + 1):
