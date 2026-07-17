@@ -284,6 +284,10 @@ for row in raw_shipments:
 
 ws = wb.create_sheet("T_Shipments")
 ws.append(["RM_Code", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status", "Effective_Week"])
+if not ship_rows:
+    # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないため、
+    # 該当する発注が無い場合はダミー行を1行入れておく（要削除・上書き可）。
+    ship_rows = [["(例) CHEM-1010", "", None, 0, START_MONDAY, None, ""]]
 start_row = 2
 for i, r in enumerate(ship_rows):
     row_num = start_row + i
@@ -689,7 +693,13 @@ def build_po_draft(sheet_name, category, title):
 
     last_row = data_row
     last_col_idx = 2 + len(headers) - 1
-    add_table(ws, sheet_name.replace(" ", "_"), f"B{hdr_row}:{get_column_letter(last_col_idx)}{last_row}", style="TableStyleMedium6")
+    if items:
+        # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しない
+        # （その状態で保存すると、開いたときに「修復」されテーブルごと削除されてしまう）。
+        # 品目が1件もない場合は、テーブル化せず見出し行の書式だけ残す。
+        add_table(ws, sheet_name.replace(" ", "_"), f"B{hdr_row}:{get_column_letter(last_col_idx)}{last_row}", style="TableStyleMedium6")
+    else:
+        ws.cell(row=hdr_row + 1, column=2, value="(該当品目なし)")
     ws.column_dimensions["B"].width = 30
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 12
@@ -777,10 +787,25 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
          "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount",
+         "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Calc_Demand", "Grid_Requirement",
          "Grid_Incoming", "Grid_Stock"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
+
+# ---- 保存前チェック: テーブルがヘッダー行のみ(データ0行)になっていないか ----
+# (この状態で保存するとExcelで開いたときに「修復」されテーブルが削除されてしまうため)
+broken_tables = []
+for sheet in wb.worksheets:
+    for tbl in sheet.tables.values():
+        min_col, min_row, max_col, max_row = openpyxl.utils.cell.range_boundaries(tbl.ref)
+        if max_row <= min_row:
+            broken_tables.append(f"{sheet.title}!{tbl.name} (ref={tbl.ref})")
+if broken_tables:
+    raise RuntimeError(
+        "以下のテーブルがヘッダー行のみでデータ行がありません(Excelで開くと修復されます): "
+        + ", ".join(broken_tables)
+    )
 
 wb.save(OUT_PATH)
 print("Full workbook written to", OUT_PATH)
