@@ -235,6 +235,21 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
   そのキャッシュ値をINDEXで使い回す方式に変更しました（列位置はPP_Gridの列並びが固定のため
   MATCH不要、週番号からそのまま計算できます）。
 
+**それでも`RefreshWeeklyBatches`実行時に強制終了する不具合について（VBA側の直し忘れ）**:
+上記のExcel数式の見直しの際、`macros/RefreshData.bas`側にも同じパターン（`UpsertBomRow`が
+M_BOMへの書き込みのたびに全711行以上をセル単位でスキャンする、`FindOrAddIntermediateRow`が
+中間体ごとに毎回`.Find()`を呼ぶ）が残っていると気づいていながら、そちらの修正を実装し忘れて
+いました。結果として`RefreshWeeklyBatches`実行時の強制終了が再発しました。`RefreshWeeklyBatches`
+の実行開始時に、PP_Grid(中間体名→行番号)とM_BOM(Intermediate|RM_Code→行番号)のDictionaryを
+1回だけ作っておき（`BuildNameIndex`/`BuildPairIndex`）、以降はそれを参照する方式に修正しました。
+あわせて`RefreshBOM`のインデックス構築、`WeekIndexForDate`の週特定処理も同じ考え方で1回の
+配列読み込みにまとめています。
+
+なお`BuildNameIndex`は、元の`.Find()`がExcelの既定動作として大文字/小文字を区別しない検索
+だったのに対し、単純にDictionaryへ置き換えると区別してしまう(表記ゆれのある中間体名を
+別物として扱い、実行のたびに重複行が増えていく)ため、`CompareMode=vbTextCompare`を明示的に
+設定し、元と同じ大文字/小文字を区別しない挙動を保っています。
+
 実際のExcelでの動作確認をお願いします。
 
 ## 8. 要確認・要入力の項目

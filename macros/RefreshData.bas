@@ -22,10 +22,12 @@ Option Explicit
 '
 ' 【パフォーマンスについて】どのRefresh*マクロも、外部ファイルのシートを1セルずつ.Cells(r,c).Value
 ' で読む代わりに、対象範囲を1回だけ配列として読み込み(Range.Value)、以降はメモリ上の配列だけを
-' 参照する設計にしています。また、T_SelfStock/T_TTAFStockへの書き込みも、毎回テーブル全行を
-' セル単位でスキャンする代わりに(RM_Code,WeekIndex)->行番号のDictionaryを1回だけ作って参照する
-' 設計です。これは実際にExcelが強制終了する不具合(1セルずつの読み書きがCOM通信の積み重ねで
-' 極めて遅くなることが原因)が2件報告されたことを受けての対策です。
+' 参照する設計にしています。また、PP_Grid(中間体名->行番号)・M_BOM(Intermediate|RM_Code->行番号)・
+' T_SelfStock/T_TTAFStock((RM_Code,WeekIndex)->行番号)への書き込みも、呼び出すたびに.Find()や
+' 全行スキャンをする代わりに、実行の最初にDictionaryを1回だけ作って参照する設計です
+' （BuildNameIndex/BuildPairIndex/BuildStockRowIndex）。これは実際にExcelが強制終了する不具合
+' (1セルずつの読み書きや毎回の全行スキャンがCOM通信の積み重ねで極めて遅くなることが原因)が
+' 複数回報告されたことを受けての対策です。
 '
 ' 【注意: 完全に新しいsubstrate/Catコードが増えた場合】
 '   RefreshWeeklyBatchesはPP_GridとM_BOMには自動で行を追加しますが、
@@ -65,13 +67,25 @@ Sub RefreshWeeklyBatches()
     Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
 
     ' WeekStart(日付のシリアル値) -> PP_Grid内の列番号(データ範囲内, 1=Intermediate,2=Week1,...)
+    ' Cal_Weeksは104行程度なので影響は小さいが、他の箇所と同じく1回の配列読み込みに統一する。
     Dim weekColByDate As Object: Set weekColByDate = CreateObject("Scripting.Dictionary")
-    Dim i As Long
-    For i = 1 To calWeeks.ListRows.Count
-        Dim wkDate As Variant
-        wkDate = calWeeks.ListColumns("WeekStart").DataBodyRange.Cells(i, 1).Value
-        weekColByDate(CLng(CDate(wkDate))) = i + 1
-    Next i
+    Dim calN As Long: calN = calWeeks.ListRows.Count
+    If calN > 0 Then
+        Dim calWeekStartData As Variant
+        calWeekStartData = calWeeks.ListColumns("WeekStart").DataBodyRange.Value
+        Dim i As Long
+        For i = 1 To calN
+            weekColByDate(CLng(CDate(calWeekStartData(i, 1)))) = i + 1
+        Next i
+    End If
+
+    ' PP_Grid(Intermediate->行番号)とM_BOM(Intermediate|RM_Code->行番号)のインデックスを
+    ' 実行の最初に1回だけ作る。以前はPP_Gridは.Find()を中間体ごとに毎回、M_BOMは
+    ' UpsertBomRow呼び出しのたびに全711行をセル単位でスキャンしており、これが
+    ' 「RefreshWeeklyBatches実行時に必ず強制終了する」不具合の直接の原因だった
+    ' （前回の見直しで見つけていながら直し忘れていた箇所）。
+    Dim ppIdx As Object: Set ppIdx = BuildNameIndex(ppGrid, "Intermediate")
+    Dim bomIdx As Object: Set bomIdx = BuildPairIndex(bomTbl)
 
     Dim updatedCells As Long, newInterRows As Long, bomUpdated As Long
     updatedCells = 0
@@ -110,9 +124,9 @@ Sub RefreshWeeklyBatches()
         Dim topCode As String: topCode = CStr(sh.Cells(3, 2).Value)
 
         If topDateCount >= 3 And Left(topCode, 4) = "CHEM" Then
-            Call ProcessMaterialSheet(sh, usedRowsTop, usedColsTop, ppGrid, weekColByDate, updatedCells, newInterRows)
+            Call ProcessMaterialSheet(sh, usedRowsTop, usedColsTop, ppGrid, ppIdx, weekColByDate, updatedCells, newInterRows)
         Else
-            Call ProcessSubstrateSheet(sh, usedRowsTop, usedColsTop, ppGrid, bomTbl, weekColByDate, updatedCells, newInterRows, bomUpdated)
+            Call ProcessSubstrateSheet(sh, usedRowsTop, usedColsTop, ppGrid, ppIdx, bomTbl, bomIdx, weekColByDate, updatedCells, newInterRows, bomUpdated)
         End If
 NextSheet:
     Next sh
@@ -139,7 +153,7 @@ ErrHandler:
     MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
 End Sub
 
-Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, _
+Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, ppIdx As Object, _
         weekColByDate As Object, ByRef updatedCells As Long, ByRef newInterRows As Long)
     If usedRows < 5 Then Exit Sub
 
@@ -172,7 +186,7 @@ Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As 
             rawInter = Trim(CStr(data(r, 2)))
             If Len(rawInter) > 0 Then
                 Dim ppRowIndex As Long
-                ppRowIndex = FindOrAddIntermediateRow(ppGrid, rawInter, newInterRows)
+                ppRowIndex = FindOrAddIntermediateRow(ppGrid, ppIdx, rawInter, newInterRows)
 
                 Dim keyVariant As Variant
                 For Each keyVariant In dateCols.Keys
@@ -191,18 +205,60 @@ Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As 
     Next r
 End Sub
 
-Private Function FindOrAddIntermediateRow(ppGrid As ListObject, interName As String, ByRef newInterRows As Long) As Long
-    Dim foundCell As Range
-    Set foundCell = ppGrid.ListColumns("Intermediate").DataBodyRange.Find(What:=interName, LookAt:=xlWhole)
-    If foundCell Is Nothing Then
+' ppIdx(中間体名->PP_Grid内の行番号)を使い、.Find()を毎回呼ばずに済ませる。
+' 新規追加時はppIdxにもその場で登録し、同じ実行内で同じ中間体が再度出てきても
+' 重複追加せず既存行を再利用できるようにする。
+Private Function FindOrAddIntermediateRow(ppGrid As ListObject, ppIdx As Object, interName As String, ByRef newInterRows As Long) As Long
+    If ppIdx.Exists(interName) Then
+        FindOrAddIntermediateRow = ppIdx(interName)
+    Else
         Dim newRow As ListRow
         Set newRow = ppGrid.ListRows.Add
         newRow.Range.Cells(1, 1).Value = interName
         newInterRows = newInterRows + 1
         FindOrAddIntermediateRow = newRow.Index
-    Else
-        FindOrAddIntermediateRow = foundCell.Row - ppGrid.HeaderRowRange.Row
+        ppIdx(interName) = newRow.Index
     End If
+End Function
+
+' tblの1・2列目から「1列目の値|2列目の値」->行番号のDictionaryを1回だけ作る。
+' M_BOM(Intermediate|RM_Code)・T_SelfStock/T_TTAFStock(RM_Code|WeekIndex)など、
+' 「先頭2列の組み合わせで行を特定する」テーブル全般に使う汎用ヘルパー。
+Private Function BuildPairIndex(tbl As ListObject) As Object
+    Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
+    Dim n As Long: n = tbl.ListRows.Count
+    If n > 0 Then
+        Dim data As Variant
+        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value
+        Dim i As Long
+        For i = 1 To n
+            idx(CStr(data(i, 1)) & "|" & CStr(data(i, 2))) = i
+        Next i
+    End If
+    Set BuildPairIndex = idx
+End Function
+
+' tblの指定した1列(colName)の値->行番号のDictionaryを1回だけ作る。
+' 旧実装は.Find()を使っており、Excelの既定の挙動として大文字/小文字を区別しない
+' 検索だった。同じ挙動を保つため、CompareMode=vbTextCompareで大文字/小文字を
+' 区別しないDictionaryにしている（区別してしまうと、表記ゆれ(TSP-049 と tsp-049等)を
+' 同じ中間体として扱えず、実行のたびに重複行が増えていく別の不具合につながるため）。
+Private Function BuildNameIndex(tbl As ListObject, colName As String) As Object
+    Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
+    idx.CompareMode = vbTextCompare
+    Dim n As Long: n = tbl.ListRows.Count
+    If n = 1 Then
+        idx(CStr(tbl.ListColumns(colName).DataBodyRange.Cells(1, 1).Value)) = 1
+    ElseIf n > 1 Then
+        Dim data As Variant
+        data = tbl.ListColumns(colName).DataBodyRange.Value
+        Dim i As Long
+        For i = 1 To n
+            Dim k As String: k = CStr(data(i, 1))
+            If Not idx.Exists(k) Then idx(k) = i
+        Next i
+    End If
+    Set BuildNameIndex = idx
 End Function
 
 ' substrate/フィルム等のシート用: 1シート内にコード+週初日ヘッダーを持つブロックが
@@ -213,7 +269,8 @@ End Function
 '                (空欄), "Usage per day"+1個あたり使用量+週次使用量 …
 ' の並び。完成品コード(Cat)が空欄の場合(Ester Film/PP Filmのように1ブロック=1品目のシート)は、
 ' ブロック自身のコード(SSコード等)を中間体名として使う。
-Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, bomTbl As ListObject, _
+Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, ppIdx As Object, _
+        bomTbl As ListObject, bomIdx As Object, _
         weekColByDate As Object, ByRef updatedCells As Long, ByRef newInterRows As Long, ByRef bomUpdated As Long)
     If usedRows < 5 Then Exit Sub
 
@@ -257,7 +314,7 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As
                     currentInter = rawInter
                     If Len(currentInter) > 0 Then
                         Dim ppRowIndex As Long
-                        ppRowIndex = FindOrAddIntermediateRow(ppGrid, currentInter, newInterRows)
+                        ppRowIndex = FindOrAddIntermediateRow(ppGrid, ppIdx, currentInter, newInterRows)
                         Dim keyVariant As Variant
                         For Each keyVariant In dateCols.Keys
                             If weekColByDate.Exists(dateCols(keyVariant)) Then
@@ -272,7 +329,7 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As
                 ElseIf lbl2 = "usage per day" And Len(currentInter) > 0 Then
                     Dim rateVal As Variant: rateVal = data(r, 3)
                     If IsNumeric(rateVal) Then
-                        Call UpsertBomRow(bomTbl, currentInter, blockCode, CDbl(rateVal), bomUpdated)
+                        Call UpsertBomRow(bomTbl, bomIdx, currentInter, blockCode, CDbl(rateVal), bomUpdated)
                     End If
                 ElseIf lbl2 = "total weekly usage" Or lbl3 = "total weekly usage" Then
                     r = r + 1
@@ -287,22 +344,24 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As
     Loop
 End Sub
 
-Private Sub UpsertBomRow(bomTbl As ListObject, interName As String, rmCode As String, rate As Double, ByRef bomUpdated As Long)
-    Dim i As Long
-    For i = 1 To bomTbl.ListRows.Count
-        If bomTbl.ListColumns("Intermediate").DataBodyRange.Cells(i, 1).Value = interName And _
-           bomTbl.ListColumns("RM_Code").DataBodyRange.Cells(i, 1).Value = rmCode Then
-            bomTbl.ListColumns("RM_Qty_Per_Batch").DataBodyRange.Cells(i, 1).Value = rate
-            bomUpdated = bomUpdated + 1
-            Exit Sub
-        End If
-    Next i
-    Dim newRow As ListRow
-    Set newRow = bomTbl.ListRows.Add
-    newRow.Range.Cells(1, 1).Value = interName
-    newRow.Range.Cells(1, 2).Value = rmCode
-    newRow.Range.Cells(1, 3).Value = rate
-    bomUpdated = bomUpdated + 1
+' bomIdx("Intermediate|RM_Code"->行番号)を使い、呼び出すたびにM_BOM全行をセル単位で
+' スキャンするのを避ける（この線形スキャンが「RefreshWeeklyBatches実行時に必ず強制終了する」
+' 不具合の直接の原因だった）。新規追加時はbomIdxにもその場で登録する。
+Private Sub UpsertBomRow(bomTbl As ListObject, bomIdx As Object, interName As String, rmCode As String, rate As Double, ByRef bomUpdated As Long)
+    Dim key As String: key = interName & "|" & rmCode
+    If bomIdx.Exists(key) Then
+        Dim rowN As Long: rowN = bomIdx(key)
+        bomTbl.ListColumns("RM_Qty_Per_Batch").DataBodyRange.Cells(rowN, 1).Value = rate
+        bomUpdated = bomUpdated + 1
+    Else
+        Dim newRow As ListRow
+        Set newRow = bomTbl.ListRows.Add
+        newRow.Range.Cells(1, 1).Value = interName
+        newRow.Range.Cells(1, 2).Value = rmCode
+        newRow.Range.Cells(1, 3).Value = rate
+        bomIdx(key) = newRow.Index
+        bomUpdated = bomUpdated + 1
+    End If
 End Sub
 
 Sub RefreshBOM()
@@ -322,25 +381,22 @@ Sub RefreshBOM()
     Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
-    ' 材料名(正規化) -> RM_Code
+    ' 材料名(正規化) -> RM_Code。RM_Code・Descriptionは隣接列(1,2列目)なので1回の配列読み込みで済む
+    ' （セルを1つずつ.Cells(i,1).Valueで読むより大幅に速い）。
     Dim descIndex As Object: Set descIndex = CreateObject("Scripting.Dictionary")
-    Dim i As Long
-    For i = 1 To rmTbl.ListRows.Count
-        Dim code As String, desc As String, key As String
-        code = CStr(rmTbl.ListColumns("RM_Code").DataBodyRange.Cells(i, 1).Value)
-        desc = CStr(rmTbl.ListColumns("Description").DataBodyRange.Cells(i, 1).Value)
-        key = NormalizeText(desc)
-        If Len(key) > 0 And Not descIndex.Exists(key) Then descIndex(key) = code
-    Next i
+    Dim rmN As Long: rmN = rmTbl.ListRows.Count
+    If rmN > 0 Then
+        Dim rmData As Variant
+        rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' RM_Code, Description
+        Dim i As Long
+        For i = 1 To rmN
+            Dim key As String: key = NormalizeText(CStr(rmData(i, 2)))
+            If Len(key) > 0 And Not descIndex.Exists(key) Then descIndex(key) = CStr(rmData(i, 1))
+        Next i
+    End If
 
     ' (Intermediate|RM_Code) -> M_BOM内の行番号(データ範囲内)
-    Dim pairIndex As Object: Set pairIndex = CreateObject("Scripting.Dictionary")
-    For i = 1 To bomTbl.ListRows.Count
-        Dim inter As String, rmc As String
-        inter = CStr(bomTbl.ListColumns("Intermediate").DataBodyRange.Cells(i, 1).Value)
-        rmc = CStr(bomTbl.ListColumns("RM_Code").DataBodyRange.Cells(i, 1).Value)
-        pairIndex(inter & "|" & rmc) = i
-    Next i
+    Dim pairIndex As Object: Set pairIndex = BuildPairIndex(bomTbl)
 
     Dim updated As Long, added As Long, unresolved As String
     updated = 0: added = 0: unresolved = ""
@@ -580,16 +636,19 @@ End Function
 
 Private Function WeekIndexForDate(wb As Workbook, d As Date) As Long
     Dim calTbl As ListObject: Set calTbl = wb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks")
-    Dim i As Long
-    For i = 1 To calTbl.ListRows.Count
-        Dim wkStart As Date, wkEnd As Date
-        wkStart = calTbl.ListColumns("WeekStart").DataBodyRange.Cells(i, 1).Value
-        wkEnd = calTbl.ListColumns("WeekEnd").DataBodyRange.Cells(i, 1).Value
-        If d >= wkStart And d <= wkEnd Then
-            WeekIndexForDate = calTbl.ListColumns("WeekIndex").DataBodyRange.Cells(i, 1).Value
-            Exit Function
-        End If
-    Next i
+    Dim n As Long: n = calTbl.ListRows.Count
+    If n > 0 Then
+        ' 列: 1=WeekIndex, 2=WeekStart, 6=WeekEnd。1回の配列読み込みで全列まとめて取得する。
+        Dim data As Variant
+        data = calTbl.DataBodyRange.Value
+        Dim i As Long
+        For i = 1 To n
+            If d >= CDate(data(i, 2)) And d <= CDate(data(i, 6)) Then
+                WeekIndexForDate = CLng(data(i, 1))
+                Exit Function
+            End If
+        Next i
+    End If
     WeekIndexForDate = 1 ' 見つからない場合はWeek1にフォールバック
 End Function
 
