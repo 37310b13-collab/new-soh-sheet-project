@@ -298,9 +298,13 @@ for i, r in enumerate(ship_rows):
     row_num = start_row + i
     ws.append(r + [None])
     ws.cell(row=row_num, column=3).fill = INPUT_FILL  # Order_Date is not in the source file; input by hand
-    # Effective_Week: use Received_Date if present else Latest_ETA; week index via anchor arithmetic, clamped to sheet horizon
+    # Effective_Week: use Received_Date if present else Latest_ETA; week index via anchor arithmetic, clamped to sheet horizon.
+    # 起点日はCal_Weeks!$B$1(AnchorYear)からその都度計算する(week1の起点と同じ式)。
+    # 以前はビルド時点のAnchorYearを固定値としてDATE(...)に埋め込んでいたため、
+    # AnchorYearをシート上で変更してもこの列だけ古い年のままズレる不具合があった。
+    anchor_monday_expr = "(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3))"
     ws.cell(row=row_num, column=8).value = (
-        f'=MAX(1,MIN({N_WEEKS},INT((IF(F{row_num}="",E{row_num},F{row_num})-DATE({START_MONDAY.year},{START_MONDAY.month},{START_MONDAY.day}))/7)+1))'
+        f'=MAX(1,MIN({N_WEEKS},INT((IF(F{row_num}="",E{row_num},F{row_num})-{anchor_monday_expr})/7)+1))'
     )
 n = len(ship_rows) + 1
 style_header(ws, 8)

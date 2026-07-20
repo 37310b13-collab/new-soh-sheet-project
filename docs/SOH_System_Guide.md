@@ -160,6 +160,36 @@ Excel数式のみで実現しており、マクロは使っていません（`TO
 7. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
    Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
+## 5.5 表示ウィンドウを先の年へ進める（年次作業・Dec-27以降の追加方法）
+
+このブックは「常に2年分(104週)」を表示するローリングウィンドウ方式で、過去分を蓄積していく
+アーカイブ形式ではありません。現状は`Cal_Weeks`のB1セル(AnchorYear)=2026を起点に、2026年〜
+2027年末あたりまでを表示しています。それより先(例: 2028年分)を見えるようにしたい場合は、
+以下の手順で対応してください。**Pythonの再生成もブックの作り直しも不要です。**
+
+1. `Cal_Weeks`シートのB1セル(AnchorYear)を、次に基準としたい年（例: `2027`）に書き換える
+2. これだけで、`Cal_Weeks`のWeekStart/Year/WeekOfYear/Label等が全てExcelの数式で再計算され、
+   `Dashboard`・`Material_Detail`・`PO_Draft_*`・`Grid_Requirement`等、日付を扱う全シートの
+   週の並びが新しい2年分（2027年〜2028年末あたり）にスライドします
+
+**AnchorYearを変更する前に確認してほしいこと（重要）**:
+
+- `T_SelfStock`・`T_TTAFStock`・`T_StockCount`は「週番号(WeekIndex)」で実績を記録しています。
+  AnchorYearを変えると、WeekIndexが指す実際の暦週が変わってしまうため、**それ以前に記録した
+  実績データは、新しいAnchorYearのもとでは別の週のデータであるかのように誤表示されます**。
+  そのため、AnchorYearを切り替える前に、過去の実績を振り返る必要がなくなったタイミング
+  （新しい2年分の運用に完全に切り替わった後等）で行うことをおすすめします。念のため、
+  切り替え前に`T_SelfStock`/`T_TTAFStock`/`T_StockCount`シートを別ブックにコピーして
+  保存しておくと安心です。
+- `PP_Grid`（生産計画バッチ数）は毎月`RefreshWeeklyBatches`で最新のPlanファイルの内容に
+  上書きされるため、AnchorYear切り替え後に最初の`RefreshWeeklyBatches`を実行すれば、新しい
+  週番号の並びに合わせて自然に上書きされます（切り替え直後は空欄/0が見えることがありますが、
+  次のRefresh実行で解消します）。
+
+（本項目は、`T_Shipments`のEffective_Week計算式がAnchorYearの変更に追随しない不具合を
+修正した上で有効です。旧バージョンではビルド時点のAnchorYearが固定値として埋め込まれており、
+AnchorYearをシート上で変更してもPOの週位置がズレたままになる不具合がありました。）
+
 ## 6. 自動反映の仕組み
 
 - **生産計画が変わったとき**: `RefreshWeeklyBatches`実行後、`Grid_Requirement` → `Grid_Stock` →
