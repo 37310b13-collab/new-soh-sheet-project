@@ -74,21 +74,40 @@ Sub RefreshWeeklyBatches()
     ' 化学原料シート(row3のB列がCHEM-で始まり、row2のD列以降に週初日が3つ以上ある、
     ' シート全体で1材料)か、substrate/フィルム等のシート(row2以降のどこかにコード+週初日の
     ' ヘッダーが複数ブロック並ぶ)かを、Pythonの抽出スクリプトと同じロジックでシートごとに判定する。
+    '
+    ' 【重要】シートのセルを1つずつ.Cells(r,c).Valueで読むと、Excelの内部的な「使用範囲
+    ' (UsedRange)」が実データより大きく認識されているケース(書式設定の残骸等でよくある)や、
+    ' シート数(40枚超)と掛け合わさった際に、COM通信の呼び出し回数が数十万〜数百万回に
+    ' 達し、Excelが長時間「応答なし」になり強制終了したように見える不具合の原因となる。
+    ' そのため、各シートのデータは1回だけ配列にまとめて読み込み(sh.Range(...).Value)、
+    ' 以降はその配列(メモリ上)だけを参照する。また使用範囲の異常な肥大化に備え上限も設ける。
+    Const MAX_SCAN_ROWS As Long = 500
+    Const MAX_SCAN_COLS As Long = 200
+
     Dim sh As Worksheet
     For Each sh In srcWb.Worksheets
-        Dim usedCols As Long: usedCols = sh.UsedRange.Columns.Count
+        Dim usedRowsTop As Long, usedColsTop As Long
+        usedRowsTop = sh.UsedRange.Rows.Count
+        usedColsTop = sh.UsedRange.Columns.Count
+        If usedRowsTop > MAX_SCAN_ROWS Then usedRowsTop = MAX_SCAN_ROWS
+        If usedColsTop > MAX_SCAN_COLS Then usedColsTop = MAX_SCAN_COLS
+        If usedRowsTop < 3 Or usedColsTop < 4 Then GoTo NextSheet
+
+        Dim row2Data As Variant
+        row2Data = sh.Range(sh.Cells(2, 1), sh.Cells(2, usedColsTop)).Value
         Dim topDateCount As Long: topDateCount = 0
         Dim cc As Long
-        For cc = 4 To usedCols
-            If IsDate(sh.Cells(2, cc).Value) Then topDateCount = topDateCount + 1
+        For cc = 4 To usedColsTop
+            If IsDate(row2Data(1, cc)) Then topDateCount = topDateCount + 1
         Next cc
         Dim topCode As String: topCode = CStr(sh.Cells(3, 2).Value)
 
         If topDateCount >= 3 And Left(topCode, 4) = "CHEM" Then
-            Call ProcessMaterialSheet(sh, ppGrid, weekColByDate, updatedCells, newInterRows)
+            Call ProcessMaterialSheet(sh, usedRowsTop, usedColsTop, ppGrid, weekColByDate, updatedCells, newInterRows)
         Else
-            Call ProcessSubstrateSheet(sh, ppGrid, bomTbl, weekColByDate, updatedCells, newInterRows, bomUpdated)
+            Call ProcessSubstrateSheet(sh, usedRowsTop, usedColsTop, ppGrid, bomTbl, weekColByDate, updatedCells, newInterRows, bomUpdated)
         End If
+NextSheet:
     Next sh
 
     srcWb.Close SaveChanges:=False
@@ -113,35 +132,37 @@ ErrHandler:
     MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
 End Sub
 
-Private Sub ProcessMaterialSheet(sh As Worksheet, ppGrid As ListObject, _
+Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, _
         weekColByDate As Object, ByRef updatedCells As Long, ByRef newInterRows As Long)
-    Dim usedRows As Long, usedCols As Long
-    usedRows = sh.UsedRange.Rows.Count
-    usedCols = sh.UsedRange.Columns.Count
     If usedRows < 5 Then Exit Sub
+
+    ' シート全体を1回だけ配列として読み込み、以降はメモリ上の配列(data)だけを参照する
+    ' （.Cells(r,c).Valueをループ内で毎回呼ぶとCOM通信が積み重なり非常に遅くなるため）
+    Dim data As Variant
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(usedRows, usedCols)).Value
 
     ' row2: 週初日(日付), col D(4)以降
     Dim dateCols As Object: Set dateCols = CreateObject("Scripting.Dictionary")
     Dim c As Long
     For c = 4 To usedCols
-        If IsDate(sh.Cells(2, c).Value) Then
-            dateCols(c) = CLng(CDate(sh.Cells(2, c).Value))
+        If IsDate(data(2, c)) Then
+            dateCols(c) = CLng(CDate(data(2, c)))
         End If
     Next c
     If dateCols.Count < 3 Then Exit Sub
 
     ' row3 col B: 材料コード(CHEM-xxxx)であることを確認（材料シートのみ処理）
     Dim matCode As String
-    matCode = CStr(sh.Cells(3, 2).Value)
+    matCode = CStr(data(3, 2))
     If Left(matCode, 4) <> "CHEM" Then Exit Sub
 
     Dim r As Long
     For r = 4 To usedRows
         Dim lbl As String
-        lbl = LCase(Trim(CStr(sh.Cells(r, 3).Value)))
+        lbl = LCase(Trim(CStr(data(r, 3))))
         If Left(lbl, 14) = "no. of batches" Then
             Dim rawInter As String
-            rawInter = Trim(CStr(sh.Cells(r, 2).Value))
+            rawInter = Trim(CStr(data(r, 2)))
             If Len(rawInter) > 0 Then
                 Dim ppRowIndex As Long
                 ppRowIndex = FindOrAddIntermediateRow(ppGrid, rawInter, newInterRows)
@@ -153,7 +174,7 @@ Private Sub ProcessMaterialSheet(sh As Worksheet, ppGrid As ListObject, _
                         colIdx = weekColByDate(dateCols(keyVariant))
                         Dim v As Double
                         v = 0
-                        If IsNumeric(sh.Cells(r, keyVariant).Value) Then v = sh.Cells(r, keyVariant).Value
+                        If IsNumeric(data(r, keyVariant)) Then v = data(r, keyVariant)
                         ppGrid.DataBodyRange.Cells(ppRowIndex, colIdx).Value = v
                         updatedCells = updatedCells + 1
                     End If
@@ -185,12 +206,14 @@ End Function
 '                (空欄), "Usage per day"+1個あたり使用量+週次使用量 …
 ' の並び。完成品コード(Cat)が空欄の場合(Ester Film/PP Filmのように1ブロック=1品目のシート)は、
 ' ブロック自身のコード(SSコード等)を中間体名として使う。
-Private Sub ProcessSubstrateSheet(sh As Worksheet, ppGrid As ListObject, bomTbl As ListObject, _
+Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, bomTbl As ListObject, _
         weekColByDate As Object, ByRef updatedCells As Long, ByRef newInterRows As Long, ByRef bomUpdated As Long)
-    Dim usedRows As Long, usedCols As Long
-    usedRows = sh.UsedRange.Rows.Count
-    usedCols = sh.UsedRange.Columns.Count
     If usedRows < 5 Then Exit Sub
+
+    ' シート全体を1回だけ配列として読み込み、以降はメモリ上の配列(data)だけを参照する
+    ' （.Cells(r,c).Valueをループ内で毎回呼ぶとCOM通信が積み重なり非常に遅くなるため）
+    Dim data As Variant
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(usedRows, usedCols)).Value
 
     Dim ri As Long
     ri = 1
@@ -198,10 +221,10 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, ppGrid As ListObject, bomTbl 
         Dim dateCols As Object: Set dateCols = CreateObject("Scripting.Dictionary")
         Dim c As Long
         For c = 4 To usedCols
-            If IsDate(sh.Cells(ri, c).Value) Then dateCols(c) = CLng(CDate(sh.Cells(ri, c).Value))
+            If IsDate(data(ri, c)) Then dateCols(c) = CLng(CDate(data(ri, c)))
         Next c
 
-        Dim blockCode As String: blockCode = Trim(CStr(sh.Cells(ri, 2).Value))
+        Dim blockCode As String: blockCode = Trim(CStr(data(ri, 2)))
         If dateCols.Count >= 3 And Len(blockCode) > 0 And Len(blockCode) <= 12 And Left(blockCode, 4) <> "CHEM" Then
             ' ブロック発見。データはheader+2行目から
             Dim r As Long: r = ri + 2
@@ -211,18 +234,18 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, ppGrid As ListObject, bomTbl 
                 Dim nextDateCount As Long: nextDateCount = 0
                 Dim c2 As Long
                 For c2 = 4 To usedCols
-                    If IsDate(sh.Cells(r, c2).Value) Then nextDateCount = nextDateCount + 1
+                    If IsDate(data(r, c2)) Then nextDateCount = nextDateCount + 1
                 Next c2
-                Dim nextCode As String: nextCode = Trim(CStr(sh.Cells(r, 2).Value))
+                Dim nextCode As String: nextCode = Trim(CStr(data(r, 2)))
                 If nextDateCount >= 3 And Len(nextCode) > 0 And Len(nextCode) <= 12 And Left(nextCode, 4) <> "CHEM" Then
                     Exit Do
                 End If
 
-                Dim lbl3 As String: lbl3 = LCase(Trim(CStr(sh.Cells(r, 3).Value)))
-                Dim lbl2 As String: lbl2 = LCase(Trim(CStr(sh.Cells(r, 2).Value)))
+                Dim lbl3 As String: lbl3 = LCase(Trim(CStr(data(r, 3))))
+                Dim lbl2 As String: lbl2 = LCase(Trim(CStr(data(r, 2))))
 
                 If Left(lbl3, 14) = "no. of batches" Then
-                    Dim rawInter As String: rawInter = Trim(CStr(sh.Cells(r, 2).Value))
+                    Dim rawInter As String: rawInter = Trim(CStr(data(r, 2)))
                     If Len(rawInter) = 0 Then rawInter = blockCode
                     currentInter = rawInter
                     If Len(currentInter) > 0 Then
@@ -233,14 +256,14 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, ppGrid As ListObject, bomTbl 
                             If weekColByDate.Exists(dateCols(keyVariant)) Then
                                 Dim colIdx As Long: colIdx = weekColByDate(dateCols(keyVariant))
                                 Dim v As Double: v = 0
-                                If IsNumeric(sh.Cells(r, keyVariant).Value) Then v = sh.Cells(r, keyVariant).Value
+                                If IsNumeric(data(r, keyVariant)) Then v = data(r, keyVariant)
                                 ppGrid.DataBodyRange.Cells(ppRowIndex, colIdx).Value = v
                                 updatedCells = updatedCells + 1
                             End If
                         Next keyVariant
                     End If
                 ElseIf lbl2 = "usage per day" And Len(currentInter) > 0 Then
-                    Dim rateVal As Variant: rateVal = sh.Cells(r, 3).Value
+                    Dim rateVal As Variant: rateVal = data(r, 3)
                     If IsNumeric(rateVal) Then
                         Call UpsertBomRow(bomTbl, currentInter, blockCode, CDbl(rateVal), bomUpdated)
                     End If
@@ -350,15 +373,22 @@ Private Sub ProcessBomSheet(sh As Worksheet, bomTbl As ListObject, descIndex As 
     Dim lastRow As Long, lastCol As Long
     lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
     lastCol = sh.Cells(2, sh.Columns.Count).End(xlToLeft).Column
+    If lastRow > 3000 Then lastRow = 3000  ' 異常値対策(通常は数十〜数百行)
+    If lastCol > 500 Then lastCol = 500
+    If lastRow < 4 Or lastCol < 2 Then Exit Sub
+
+    ' シート全体を1回だけ配列として読み込む（.Cells(r,c).Valueをループ内で毎回呼ぶと遅いため）
+    Dim data As Variant
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, lastCol)).Value
 
     Dim r As Long, c As Long
     For r = 4 To lastRow
         Dim interName As String
-        interName = Trim(CStr(sh.Cells(r, 1).Value))
+        interName = Trim(CStr(data(r, 1)))
         If Len(interName) > 0 Then
             For c = 2 To lastCol
-                Dim matName As String: matName = Trim(CStr(sh.Cells(2, c).Value))
-                Dim v As Variant: v = sh.Cells(r, c).Value
+                Dim matName As String: matName = Trim(CStr(data(2, c)))
+                Dim v As Variant: v = data(r, c)
                 If Len(matName) > 0 And IsNumeric(v) Then
                     If CDbl(v) <> 0 Then
                         Dim mkey As String: mkey = NormalizeText(matName)
