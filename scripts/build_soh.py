@@ -426,11 +426,45 @@ for r in bom:
     bom_by_rm.setdefault(r["RM_Code"], []).append(r)
 
 ws = wb.create_sheet("Material_Detail")
-WEEK_START_COL = 4  # column D
+PINNED_COL_MD = 4  # column D: 選択週の数値をここに常時ピン留め表示(Dashboardと同じ考え方)
+WEEK_START_COL = 5  # column E
 def mdetail_week_col(w):
     return get_column_letter(WEEK_START_COL + w - 1)
 
-MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 1, 2, 3, 4
+MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 3, 4, 5, 6
+
+ws["A1"] = "選択週を入力（例: W23。現在年の週Noで検索します）"
+ws["A1"].font = Font(bold=True)
+ws["C1"] = ""
+ws["C1"].fill = INPUT_FILL
+ws["C1"].font = Font(bold=True, size=12)
+
+_md_cal_first = CAL_HEADER_ROW + 1
+_md_cal_last = CAL_HEADER_ROW + N_WEEKS
+_md_cal_year_rng = f"Cal_Weeks!$C${_md_cal_first}:$C${_md_cal_last}"
+_md_cal_weekofyear_rng = f"Cal_Weeks!$D${_md_cal_first}:$D${_md_cal_last}"
+_md_cal_weekindex_rng = f"Cal_Weeks!$A${_md_cal_first}:$A${_md_cal_last}"
+_md_cal_label_rng = f"Cal_Weeks!$E${_md_cal_first}:$E${_md_cal_last}"
+_md_cal_weekstart_rng = f"Cal_Weeks!$B${_md_cal_first}:$B${_md_cal_last}"
+_md_cal_monthyear_rng = f"Cal_Weeks!$G${_md_cal_first}:$G${_md_cal_last}"
+
+# Dashboardと同じ仕組み(TODAY()等の揮発性関数を使わず、AnchorYearを「現在年」として使う
+# SUMPRODUCT)。DashboardのC1とは独立した、このシート専用の入力。
+_md_wk_match = (f"({_md_cal_year_rng}=Cal_Weeks!$B$1)*"
+                f'({_md_cal_weekofyear_rng}=VALUE(SUBSTITUTE(UPPER(TRIM($C$1)),"W","")))')
+ws["F1"] = (
+    f'=IFERROR(IF(SUMPRODUCT({_md_wk_match})=0,"",SUMPRODUCT({_md_wk_match}*({_md_cal_weekindex_rng}))),"")'
+)
+ws["F1"].font = Font(size=8, color="808080")
+ws["E1"] = "→WeekIndex"
+ws["E1"].font = Font(size=8, color="808080")
+ws["D1"] = (
+    f'=IF($C$1="","週Noを入力してください（例: W23）",'
+    f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
+    f'INDEX({_md_cal_label_rng},$F$1)&" をD列に表示中"))'
+)
+ws["D1"].font = Font(bold=True, color="0563C1")
+
 for w in range(1, N_WEEKS + 1):
     col = WEEK_START_COL + w - 1
     cal_row = CAL_HEADER_ROW + w
@@ -447,13 +481,25 @@ for w in range(1, N_WEEKS + 1):
     dcell.number_format = "m/d"
     ws.cell(row=MD_WEEKNO_ROW, column=col, value=f"='Cal_Weeks'!D{cal_row}")
     ws.cell(row=MD_TABLE_ROW, column=col, value=f"='Cal_Weeks'!E{cal_row}")
+last_col_md = WEEK_START_COL + N_WEEKS - 1
 for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
-    for c in range(1, WEEK_START_COL + N_WEEKS):
+    for c in range(1, last_col_md + 1):
         ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=r, column=c).font = Font(bold=(r in (MD_MONTHYEAR_ROW, MD_TABLE_ROW)))
 ws.cell(row=MD_TABLE_ROW, column=1, value="RM_Code")
 ws.cell(row=MD_TABLE_ROW, column=2, value="項目")
 ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
+
+# 選択週ピン留め列(D)のヘッダー: 通常の週列と同じ3段見出し＋選択中の週Noを表示
+pin_fill_md = PatternFill("solid", fgColor="FFEB9C")
+ws.cell(row=MD_MONTHYEAR_ROW, column=PINNED_COL_MD, value=f'=IFERROR(INDEX({_md_cal_monthyear_rng},$F$1),"")')
+_pcell_md = ws.cell(row=MD_DATE_ROW, column=PINNED_COL_MD, value=f'=IFERROR(INDEX({_md_cal_weekstart_rng},$F$1),"")')
+_pcell_md.number_format = "m/d"
+ws.cell(row=MD_WEEKNO_ROW, column=PINNED_COL_MD, value=f'=IFERROR(INDEX({_md_cal_weekofyear_rng},$F$1),"")')
+ws.cell(row=MD_TABLE_ROW, column=PINNED_COL_MD, value='=IF($C$1="","選択週",$C$1)')
+for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
+    ws.cell(row=r, column=PINNED_COL_MD).fill = pin_fill_md
+ws.cell(row=MD_TABLE_ROW, column=PINNED_COL_MD).font = Font(bold=True)
 
 row_num = MD_TABLE_ROW
 for rm_code, entries in bom_by_rm.items():
@@ -466,7 +512,7 @@ for rm_code, entries in bom_by_rm.items():
     mat_header_row = row_num
     ws.cell(row=row_num, column=1, value=rm_code)
     ws.cell(row=row_num, column=2, value=desc)
-    for c in range(1, len(header) + 1):
+    for c in range(1, last_col_md + 1):
         ws.cell(row=row_num, column=c).fill = PatternFill("solid", fgColor="FFE699")
         ws.cell(row=row_num, column=c).font = Font(bold=True)
 
@@ -483,6 +529,8 @@ for rm_code, entries in bom_by_rm.items():
                 f'=IFERROR(INDEX(PP_Grid[#Data],MATCH($B{row_num},PP_Grid[Intermediate],0),'
                 f'MATCH("{week_labels[w]}",PP_Grid[#Headers],0)),0)'
             )
+        ws.cell(row=row_num, column=PINNED_COL_MD,
+                value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
 
         row_num += 1
         ws.cell(row=row_num, column=2, value="使用量(kg)")
@@ -492,6 +540,8 @@ for rm_code, entries in bom_by_rm.items():
             wc = mdetail_week_col(w)
             ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                     value=f"=$C{row_num}*{wc}{batches_row}")
+        ws.cell(row=row_num, column=PINNED_COL_MD,
+                value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計使用量(kg)/週")
@@ -499,6 +549,10 @@ for rm_code, entries in bom_by_rm.items():
     for w in range(1, N_WEEKS + 1):
         wc = mdetail_week_col(w)
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Requirement'!{week_col(w)}{grow}")
+    ws.cell(row=row_num, column=PINNED_COL_MD,
+            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
+    ws.cell(row=row_num, column=PINNED_COL_MD).font = Font(bold=True)
+    ws.cell(row=row_num, column=PINNED_COL_MD).fill = PatternFill("solid", fgColor="FFF9DB")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="（在庫・入荷予定はDashboard参照）")
@@ -510,12 +564,18 @@ last_row = row_num
 ws.column_dimensions["A"].width = 12
 ws.column_dimensions["B"].width = 22
 ws.column_dimensions["C"].width = 14
+ws.column_dimensions[get_column_letter(PINNED_COL_MD)].width = 12
 for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[mdetail_week_col(w)].width = 9
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL)}{MD_TABLE_ROW+1}"
-print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "rows")
 
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
+
+# 注: DashboardにあるD列ハイライト(選択週の列を条件付き書式で強調)はここでは追加していません。
+# Material_Detailは行数が約1,660行と多く、週列全体(104週)に条件付き書式を適用すると
+# 対象セル数がDashboardの約16倍(17万セル超)になり、まさに今回のパフォーマンス問題と
+# 同種のリスクを新たに持ち込むことになるため。ピン留め列(D)の数値表示のみで十分実用的です。
+print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "rows")
 
 # ============================================================ Dashboard
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
@@ -813,7 +873,8 @@ readme_lines = [
     "                        C1に'W23'のように入力すると（現在年の週Noとして検索）、",
     "                        Statusのすぐ隣のI列にその週の在庫が常時表示され、",
     "                        該当する週の列も黄色くハイライトされます（マクロ不要・スクロール不要）。",
-    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）",
+    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）。",
+    "                        Dashboardと同様にC1に'W23'のように入力すると、D列に選択週の数値が常時表示されます。",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments/T_OpeningStock/T_StockCount/T_SelfStock/T_TTAFStock : 入力用",
     "",

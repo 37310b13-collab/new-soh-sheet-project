@@ -20,6 +20,13 @@ Option Explicit
 ' いずれも、それぞれ対応するシートだけを更新します。T_Shipments・T_OpeningStock・
 ' T_StockCount・SafetyStock_Qty等、運用中に手入力した内容には一切触れません。
 '
+' 【パフォーマンスについて】どのRefresh*マクロも、外部ファイルのシートを1セルずつ.Cells(r,c).Value
+' で読む代わりに、対象範囲を1回だけ配列として読み込み(Range.Value)、以降はメモリ上の配列だけを
+' 参照する設計にしています。また、T_SelfStock/T_TTAFStockへの書き込みも、毎回テーブル全行を
+' セル単位でスキャンする代わりに(RM_Code,WeekIndex)->行番号のDictionaryを1回だけ作って参照する
+' 設計です。これは実際にExcelが強制終了する不具合(1セルずつの読み書きがCOM通信の積み重ねで
+' 極めて遅くなることが原因)が2件報告されたことを受けての対策です。
+'
 ' 【注意: 完全に新しいsubstrate/Catコードが増えた場合】
 '   RefreshWeeklyBatchesはPP_GridとM_BOMには自動で行を追加しますが、
 '   M_RawMaterials(原材料マスタ)への新規substrateコードの追加はVBAでは行いません。
@@ -471,17 +478,21 @@ Sub RefreshSelfStock()
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock").ListObjects("T_SelfStock")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
+    Dim selfIdx As Object: Set selfIdx = BuildStockRowIndex(selfTbl)
 
     Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock")
+    ' シートを1セルずつ読むと遅くなるため、対象範囲(9〜200行, A〜J列)を1回だけ配列で読み込む
+    Dim data As Variant
+    data = sh.Range(sh.Cells(9, 1), sh.Cells(200, 10)).Value
     Dim r As Long, added As Long, updated As Long
     added = 0: updated = 0
-    For r = 9 To 200
+    For r = 1 To (200 - 9 + 1)
         Dim code As String
-        code = Trim(CStr(sh.Cells(r, 3).Value))
+        code = Trim(CStr(data(r, 3)))
         If Left(code, 4) = "CHEM" Then
-            Dim v As Variant: v = sh.Cells(r, 10).Value
+            Dim v As Variant: v = data(r, 10)
             If IsNumeric(v) Then
-                Call UpsertStockRow(selfTbl, code, wIdx, reportDate, CDbl(v), added, updated)
+                Call UpsertStockRowIndexed(selfTbl, selfIdx, code, wIdx, reportDate, CDbl(v), added, updated)
             End If
         End If
     Next r
@@ -518,23 +529,27 @@ Sub RefreshTTAFStock()
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock").ListObjects("T_TTAFStock")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
+    Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
     Dim sh As Worksheet: Set sh = srcWb.Sheets("PIVOT SOH TTAF")
+    ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する
+    Const MAX_PIVOT_ROWS As Long = 2000
+    Dim data As Variant
+    data = sh.Range(sh.Cells(5, 1), sh.Cells(MAX_PIVOT_ROWS, 4)).Value
+
     Dim r As Long, added As Long, updated As Long
     added = 0: updated = 0
-    r = 5
-    Do While True
+    For r = 1 To (MAX_PIVOT_ROWS - 5 + 1)
         Dim code As Variant
-        code = sh.Cells(r, 1).Value
-        If IsEmpty(code) Or CStr(code) = "Grand Total" Then Exit Do
+        code = data(r, 1)
+        If IsEmpty(code) Or CStr(code) = "Grand Total" Then Exit For
         If Left(CStr(code), 4) = "CHEM" Then
-            Dim v As Variant: v = sh.Cells(r, 4).Value
+            Dim v As Variant: v = data(r, 4)
             If IsNumeric(v) Then
-                Call UpsertStockRow(ttafTbl, CStr(code), wIdx, reportDate, CDbl(v), added, updated)
+                Call UpsertStockRowIndexed(ttafTbl, ttafIdx, CStr(code), wIdx, reportDate, CDbl(v), added, updated)
             End If
         End If
-        r = r + 1
-    Loop
+    Next r
 
     srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
@@ -578,22 +593,38 @@ Private Function WeekIndexForDate(wb As Workbook, d As Date) As Long
     WeekIndexForDate = 1 ' 見つからない場合はWeek1にフォールバック
 End Function
 
-Private Sub UpsertStockRow(tbl As ListObject, code As String, wIdx As Long, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
-    Dim i As Long
-    For i = 1 To tbl.ListRows.Count
-        If tbl.ListColumns(1).DataBodyRange.Cells(i, 1).Value = code And _
-           tbl.ListColumns(2).DataBodyRange.Cells(i, 1).Value = wIdx Then
-            tbl.ListColumns(3).DataBodyRange.Cells(i, 1).Value = d
-            tbl.ListColumns(4).DataBodyRange.Cells(i, 1).Value = v
-            updated = updated + 1
-            Exit Sub
-        End If
-    Next i
-    Dim newRow As ListRow
-    Set newRow = tbl.ListRows.Add
-    newRow.Range.Cells(1, 1).Value = code
-    newRow.Range.Cells(1, 2).Value = wIdx
-    newRow.Range.Cells(1, 3).Value = d
-    newRow.Range.Cells(1, 4).Value = v
-    added = added + 1
+' tbl(T_SelfStock/T_TTAFStock)の(RM_Code, WeekIndex)->行番号のインデックスを1回だけ作る。
+' UpsertStockRowが呼ばれるたびに全行をセル単位でスキャンしていたのを避けるため、
+' 事前に1回のRange読み込みでDictionaryを構築しておく（テーブルが月々増えるほど効果が大きい）。
+Private Function BuildStockRowIndex(tbl As ListObject) As Object
+    Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
+    Dim n As Long: n = tbl.ListRows.Count
+    If n > 0 Then
+        Dim data As Variant
+        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' 1,2列目(RM_Code,WeekIndex)をまとめて読む
+        Dim i As Long
+        For i = 1 To n
+            idx(CStr(data(i, 1)) & "|" & CStr(data(i, 2))) = i
+        Next i
+    End If
+    Set BuildStockRowIndex = idx
+End Function
+
+Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As String, wIdx As Long, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
+    Dim key As String: key = code & "|" & CStr(wIdx)
+    If idx.Exists(key) Then
+        Dim rowN As Long: rowN = idx(key)
+        tbl.ListColumns(3).DataBodyRange.Cells(rowN, 1).Value = d
+        tbl.ListColumns(4).DataBodyRange.Cells(rowN, 1).Value = v
+        updated = updated + 1
+    Else
+        Dim newRow As ListRow
+        Set newRow = tbl.ListRows.Add
+        newRow.Range.Cells(1, 1).Value = code
+        newRow.Range.Cells(1, 2).Value = wIdx
+        newRow.Range.Cells(1, 3).Value = d
+        newRow.Range.Cells(1, 4).Value = v
+        idx(key) = newRow.Index
+        added = added + 1
+    End If
 End Sub
