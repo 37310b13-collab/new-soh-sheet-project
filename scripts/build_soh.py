@@ -392,12 +392,17 @@ for i, r in enumerate(rm_master):
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[RM_Code],$A{rr},T_Shipments[Effective_Week],{w})"
         )
-        has_count = f"SUMPRODUCT((T_StockCount[RM_Code]=$A{rr})*(T_StockCount[WeekIndex]={w}))"
-        count_val = f"SUMPRODUCT((T_StockCount[RM_Code]=$A{rr})*(T_StockCount[WeekIndex]={w})*T_StockCount[CountedQty])"
-        has_self = f"SUMPRODUCT((T_SelfStock[RM_Code]=$A{rr})*(T_SelfStock[WeekIndex]={w}))"
-        self_val = f"SUMPRODUCT((T_SelfStock[RM_Code]=$A{rr})*(T_SelfStock[WeekIndex]={w})*T_SelfStock[Self_Qty])"
-        has_ttaf = f"SUMPRODUCT((T_TTAFStock[RM_Code]=$A{rr})*(T_TTAFStock[WeekIndex]={w}))"
-        ttaf_val = f"SUMPRODUCT((T_TTAFStock[RM_Code]=$A{rr})*(T_TTAFStock[WeekIndex]={w})*T_TTAFStock[TTAF_Qty])"
+        # T_StockCount/T_SelfStock/T_TTAFStockは、RefreshSelfStock/RefreshTTAFStockの実行を
+        # 重ねるたびに行数が増え続ける(週次実行なら1年で数千行規模になりうる)。SUMPRODUCTの
+        # ブール配列積(旧実装)は表が育つほど遅くなり、実際に強制終了の原因になったパターンと
+        # 同種のリスクがあったため、ネイティブ関数のCOUNTIFS/SUMIFS(この環境で構造化参照との
+        # 組み合わせが正しく動作することを確認済み)に置き換えている。
+        has_count = f"COUNTIFS(T_StockCount[RM_Code],$A{rr},T_StockCount[WeekIndex],{w})"
+        count_val = f"SUMIFS(T_StockCount[CountedQty],T_StockCount[RM_Code],$A{rr},T_StockCount[WeekIndex],{w})"
+        has_self = f"COUNTIFS(T_SelfStock[RM_Code],$A{rr},T_SelfStock[WeekIndex],{w})"
+        self_val = f"SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[RM_Code],$A{rr},T_SelfStock[WeekIndex],{w})"
+        has_ttaf = f"COUNTIFS(T_TTAFStock[RM_Code],$A{rr},T_TTAFStock[WeekIndex],{w})"
+        ttaf_val = f"SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[RM_Code],$A{rr},T_TTAFStock[WeekIndex],{w})"
         if w == 1:
             prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[RM_Code],0)),0)'
         else:
@@ -430,6 +435,11 @@ PINNED_COL_MD = 4  # column D: 選択週の数値をここに常時ピン留め�
 WEEK_START_COL = 5  # column E
 def mdetail_week_col(w):
     return get_column_letter(WEEK_START_COL + w - 1)
+# 週データ列の1つ右: 「No. of batches」行がPP_Grid内の何行目に対応するかを1回だけMATCHして
+# キャッシュしておく内部ヘルパー列(M_BOMのPPGridRowと同じ考え方)。週ごとに毎回MATCHし直すと
+# 711(BOMペア数)×104週分のMATCHが発生し重くなるため、行位置は1回だけ求めてINDEXで使い回す
+# （列位置はPP_Gridの列並びが固定のため、週番号からそのままw+1として直接指定できる）。
+HELPER_COL_MD = WEEK_START_COL + N_WEEKS
 
 MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 3, 4, 5, 6
 
@@ -523,11 +533,14 @@ for rm_code, entries in bom_by_rm.items():
         batches_row = row_num
         ws.cell(row=row_num, column=2, value=inter)
         ws.cell(row=row_num, column=3, value="No. of batches")
+        helper_col_letter = get_column_letter(HELPER_COL_MD)
+        ws.cell(row=row_num, column=HELPER_COL_MD,
+                value=f'=IFERROR(MATCH($B{row_num},PP_Grid[Intermediate],0),99999)')
+        ws.cell(row=row_num, column=HELPER_COL_MD).font = Font(size=8, color="808080")
         for w in range(1, N_WEEKS + 1):
             cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1)
             cell.value = (
-                f'=IFERROR(INDEX(PP_Grid[#Data],MATCH($B{row_num},PP_Grid[Intermediate],0),'
-                f'MATCH("{week_labels[w]}",PP_Grid[#Headers],0)),0)'
+                f'=IFERROR(INDEX(PP_Grid[#Data],${helper_col_letter}{row_num},{w + 1}),0)'
             )
         ws.cell(row=row_num, column=PINNED_COL_MD,
                 value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
@@ -567,6 +580,7 @@ ws.column_dimensions["C"].width = 14
 ws.column_dimensions[get_column_letter(PINNED_COL_MD)].width = 12
 for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[mdetail_week_col(w)].width = 9
+ws.column_dimensions[get_column_letter(HELPER_COL_MD)].width = 10
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL)}{MD_TABLE_ROW+1}"
 
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
@@ -581,6 +595,11 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
 # A〜H列(RM情報)+I列(選択週の在庫をStatusの隣に常時ピン留め表示)とヘッダー行(月-年/日付/週No)を
 # 固定して、右にスクロールしながら見る設計。
+#
+# T_SelfStock/T_TTAFStockは(RM_Code,WeekIndex)ごとに上書き更新される(重複行は増えない)ため、
+# 定常状態での行数上限は「原材料数×週数(101×104≈10,504)」程度に収まる想定。LOOKUP参照範囲は
+# それより十分大きい12,000行を確保しつつ、以前問題になった$100000のような過大な範囲は避ける。
+STOCK_LOOKUP_ROWS = 12000
 LEFT_COLS = ["RM_Code", "Description", "Category", "SafetyStock_Qty",
              "自社在庫(実績)", "TTAF在庫(実績)", "実績週", "Status"]
 PINNED_COL = len(LEFT_COLS) + 1  # I列: 選択週の在庫をStatusの隣に常時表示（ジャンプ・スクロール不要）
@@ -688,12 +707,12 @@ for i, r in enumerate(rm_master):
     ws.cell(row=rr, column=4,
             value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
     ws.cell(row=rr, column=5,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A$2000=$A{rr}),T_SelfStock!$D$2:$D$2000),"")'))
+            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_SelfStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
     ws.cell(row=rr, column=6,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A$2000=$A{rr}),T_TTAFStock!$D$2:$D$2000),"")'))
+            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_TTAFStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
     ws.cell(row=rr, column=7,
-            value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A$2000=$A{rr}),'
-                   f'T_SelfStock!$B$2:$B$2000)),"")'))
+            value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),'
+                   f'T_SelfStock!$B$2:$B${STOCK_LOOKUP_ROWS})),"")'))
     ws.cell(row=rr, column=8,
             value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
     ws.cell(row=rr, column=PINNED_COL,
