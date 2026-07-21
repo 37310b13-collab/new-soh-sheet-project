@@ -4,6 +4,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.comments import Comment
 
 import os
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -167,14 +168,17 @@ for col, w in zip("ABCDEFG", [10, 12, 8, 11, 12, 12, 14]):
 ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 
 # ============================================================ M_RawMaterials
+# 基準在庫は下限・上限の2つを持つ(Dashboardの週次の赤/緑/青のハイライトに使用)。
+# 以前の単一しきい値のSafetyStock_Qty_要入力を、下限・上限の2列に置き換えた。
 ws = wb.create_sheet("M_RawMaterials")
-ws.append(["RM_Code", "Description", "Supplier", "Category", "UOM", "SafetyStock_Qty_要入力", "LeadTime_Weeks_要入力"])
+ws.append(["RM_Code", "Description", "Supplier", "Category", "UOM",
+           "基準在庫下限_要入力", "基準在庫上限_要入力", "LeadTime_Weeks_要入力"])
 for r in rm_master:
-    ws.append([r["RM_Code"], r["Description"], r["Supplier"], r["Category"], "kg", 0, 4])
+    ws.append([r["RM_Code"], r["Description"], r["Supplier"], r["Category"], "kg", 0, 0, 4])
 n = len(rm_master) + 1
-style_header(ws, 7)
-add_table(ws, "M_RawMaterials", f"A1:G{n}")
-for col, w in zip("ABCDEFG", [14, 34, 14, 16, 8, 20, 18]):
+style_header(ws, 8)
+add_table(ws, "M_RawMaterials", f"A1:H{n}")
+for col, w in zip("ABCDEFGH", [14, 34, 14, 16, 8, 18, 18, 18]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 
@@ -555,6 +559,11 @@ for rm_code, entries in bom_by_rm.items():
     for c in range(1, last_col_md + 1):
         ws.cell(row=row_num, column=c).fill = PatternFill("solid", fgColor="FFE699")
         ws.cell(row=row_num, column=c).font = Font(bold=True)
+    # MOQ(最小発注量)は数式化せず、手入力用のセルとして空けておく
+    moq_cell = ws.cell(row=row_num, column=3, value=None)
+    moq_cell.fill = INPUT_FILL
+    moq_cell.font = Font(bold=False)
+    moq_cell.comment = Comment("MOQ(最小発注量)を入力してください（手書きでOK）", "SOH")
 
     for entry in entries:
         inter = entry["Intermediate"]
@@ -597,8 +606,41 @@ for rm_code, entries in bom_by_rm.items():
     ws.cell(row=row_num, column=PINNED_COL_MD).font = Font(bold=True)
     ws.cell(row=row_num, column=PINNED_COL_MD).fill = PatternFill("solid", fgColor="FFF9DB")
 
+    # TTAF在庫(実績)/自社在庫(実績)/合計在庫(週末時点) の3行を追加。
+    # 合計在庫は「前週在庫-使用量+TTAF+自社+入庫」を再度ここで組み立てるのではなく、
+    # 既にDashboardで検証済みの優先順位ロジック(手動棚卸 > 自社+TTAF実績 > ロールフォワード)
+    # を持つGrid_Stockをそのまま参照する(Dashboardと数字が食い違うのを防ぐため)。
     row_num += 1
-    ws.cell(row=row_num, column=2, value="（在庫・入荷予定はDashboard参照）")
+    ws.cell(row=row_num, column=2, value="TTAF在庫(実績,kg)")
+    for w in range(1, N_WEEKS + 1):
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
+                value=(f'=IFERROR(SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[RM_Code],$A{mat_header_row},'
+                       f'T_TTAFStock[WeekIndex],{w}),"")'))
+    ws.cell(row=row_num, column=PINNED_COL_MD,
+            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
+
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="自社在庫(実績,kg)")
+    for w in range(1, N_WEEKS + 1):
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
+                value=(f'=IFERROR(SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[RM_Code],$A{mat_header_row},'
+                       f'T_SelfStock[WeekIndex],{w}),"")'))
+    ws.cell(row=row_num, column=PINNED_COL_MD,
+            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
+
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
+    ws.cell(row=row_num, column=2).font = Font(bold=True)
+    for w in range(1, N_WEEKS + 1):
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
+                value=f"='Grid_Stock'!{week_col(w)}{grow}")
+    ws.cell(row=row_num, column=PINNED_COL_MD,
+            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
+    ws.cell(row=row_num, column=PINNED_COL_MD).font = Font(bold=True)
+    ws.cell(row=row_num, column=PINNED_COL_MD).fill = PatternFill("solid", fgColor="D9EAD3")
+
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="（発注の目安はDashboardの基準在庫[下限/上限]と色分けを参照）")
     ws.cell(row=row_num, column=2).font = Font(italic=True, color="808080")
 
     row_num += 1  # blank separator row
@@ -623,16 +665,18 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 
 # ============================================================ Dashboard
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
-# A〜H列(RM情報)+I列(選択週の在庫をStatusの隣に常時ピン留め表示)とヘッダー行(月-年/日付/週No)を
-# 固定して、右にスクロールしながら見る設計。
+# A〜H列(RM情報。基準在庫の下限・上限を含む)+I列(選択週の在庫を常時ピン留め表示)と
+# ヘッダー行(月-年/日付/週No)を固定して、右にスクロールしながら見る設計。
+# Statusのテキスト列は廃止し、各週のセル自体を基準在庫の下限/上限に対して
+# 赤(下限未満)/緑(範囲内)/青(上限超)に色分けする方式にした。
 #
 # T_SelfStock/T_TTAFStockは(RM_Code,WeekIndex)ごとに上書き更新される(重複行は増えない)ため、
 # 定常状態での行数上限は「原材料数×週数(101×104≈10,504)」程度に収まる想定。LOOKUP参照範囲は
 # それより十分大きい12,000行を確保しつつ、以前問題になった$100000のような過大な範囲は避ける。
 STOCK_LOOKUP_ROWS = 12000
-LEFT_COLS = ["RM_Code", "Description", "Category", "SafetyStock_Qty",
-             "自社在庫(実績)", "TTAF在庫(実績)", "実績週", "Status"]
-PINNED_COL = len(LEFT_COLS) + 1  # I列: 選択週の在庫をStatusの隣に常時表示（ジャンプ・スクロール不要）
+LEFT_COLS = ["RM_Code", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
+             "自社在庫(実績)", "TTAF在庫(実績)", "実績週"]
+PINNED_COL = len(LEFT_COLS) + 1  # I列: 選択週の在庫を常時表示（ジャンプ・スクロール不要）
 WEEK_START_COL_DASH = PINNED_COL + 1  # J列から週データ
 HDR_MONTHYEAR_ROW = 3
 HDR_DATE_ROW = 4
@@ -721,7 +765,7 @@ for row_i in (HDR_MONTHYEAR_ROW, HDR_DATE_ROW, HDR_WEEKNO_ROW):
         ws.cell(row=row_i, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=row_i, column=c).font = Font(bold=(row_i == HDR_MONTHYEAR_ROW))
 
-for col, w in zip("ABCDEFGH", [14, 32, 16, 14, 14, 12, 12, 10]):
+for col, w in zip("ABCDEFGH", [14, 32, 16, 12, 12, 12, 12, 10]):
     ws.column_dimensions[col].width = w
 
 last_col_dash = get_column_letter(WEEK_START_COL_DASH + N_WEEKS - 1)
@@ -735,16 +779,16 @@ for i, r in enumerate(rm_master):
     ws.cell(row=rr, column=3,
             value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")')
     ws.cell(row=rr, column=4,
-            value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
+            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
     ws.cell(row=rr, column=5,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_SelfStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
+            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
     ws.cell(row=rr, column=6,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_TTAFStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
+            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_SelfStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
     ws.cell(row=rr, column=7,
+            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_TTAFStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
+    ws.cell(row=rr, column=8,
             value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),'
                    f'T_SelfStock!$C$2:$C${STOCK_LOOKUP_ROWS})),"")'))
-    ws.cell(row=rr, column=8,
-            value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
     ws.cell(row=rr, column=PINNED_COL,
             value=(f'=IFERROR(INDEX({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr},$F$1),"")'))
     for w in range(1, N_WEEKS + 1):
@@ -769,24 +813,34 @@ for rr2 in range(HDR_TABLE_ROW, n_last_row + 1):
             cell.fill = PatternFill("solid", fgColor="F2F2F2")
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}"
 
-# 安全在庫を下回った週を赤く強調（I列のピン留めセルも対象）
+# 基準在庫の下限・上限に対して、各週のセルを赤(下限未満)/緑(範囲内)/青(上限超)に色分け
+# （I列のピン留めセルも対象。$D=基準在庫_下限、$E=基準在庫_上限）
+stock_band_range = f"{pinned_letter}{DATA_START_ROW}:{last_col_dash}{n_last_row}"
 ws.conditional_formatting.add(
-    f"{pinned_letter}{DATA_START_ROW}:{last_col_dash}{n_last_row}",
+    stock_band_range,
     FormulaRule(formula=[f"{pinned_letter}{DATA_START_ROW}<$D{DATA_START_ROW}"],
-                fill=PatternFill("solid", fgColor="FFC7CE"))
+                fill=PatternFill("solid", fgColor="FFC7CE"))  # 赤: 基準在庫の下限未満
 )
-# Statusが「要発注」の行を強調
 ws.conditional_formatting.add(
-    f"H{DATA_START_ROW}:H{n_last_row}",
-    CellIsRule(operator="equal", formula=['"要発注"'], fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(color="9C0006"))
+    stock_band_range,
+    FormulaRule(formula=[f"AND({pinned_letter}{DATA_START_ROW}>=$D{DATA_START_ROW},"
+                          f"{pinned_letter}{DATA_START_ROW}<=$E{DATA_START_ROW})"],
+                fill=PatternFill("solid", fgColor="C6EFCE"))  # 緑: 基準在庫の範囲内
 )
-# 選択中の週(F1のWeekIndex)に該当する列(週No行)をハイライト（COLUMN()の自己参照なので
-# テーブル構造化参照やLOOKUP配列を使わずに済み、本環境で確認済みの不具合を回避できる）
+ws.conditional_formatting.add(
+    stock_band_range,
+    FormulaRule(formula=[f"{pinned_letter}{DATA_START_ROW}>$E{DATA_START_ROW}"],
+                fill=PatternFill("solid", fgColor="BDD7EE"))  # 青: 基準在庫の上限超
+)
+# 選択中の週(F1のWeekIndex)に該当する列を太枠で強調（COLUMN()の自己参照なので
+# テーブル構造化参照やLOOKUP配列を使わずに済み、本環境で確認済みの不具合を回避できる）。
+# 上の赤/緑/青の塗りつぶしと競合しないよう、塗りつぶしではなく罫線でハイライトする。
+week_select_border = Border(left=Side(style="thick", color="BF8F00"), right=Side(style="thick", color="BF8F00"))
 ws.conditional_formatting.add(
     f"{get_column_letter(WEEK_START_COL_DASH)}{HDR_TABLE_ROW}:{last_col_dash}{n_last_row}",
     FormulaRule(
         formula=[f'(COLUMN()-COLUMN(${get_column_letter(WEEK_START_COL_DASH)}$1)+1)=$F$1'],
-        fill=PatternFill("solid", fgColor="FFEB9C"),
+        border=week_select_border,
     )
 )
 print("Dashboard: week-by-week grid for", len(rm_master), "materials x", N_WEEKS, "weeks")
@@ -869,7 +923,7 @@ def build_po_draft(sheet_name, category, title):
         ws.cell(row=data_row, column=3, value=r.get("TTAF_Code", ""))
         ws.cell(row=data_row, column=4, value=rm)
         ws.cell(row=data_row, column=5, value="kg")
-        ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStock_Qty_要入力],MATCH("{rm}",M_RawMaterials[RM_Code],0)),0)')
+        ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[RM_Code],0)),0)')
         ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_rel},$P$7)")
         for w in range(1, PO_N_WEEKS + 1):
             col = PO_FIRST_WEEK_COL + w - 1
@@ -919,11 +973,17 @@ readme_lines = [
     "【普段見るシート】",
     "  Dashboard           : 原材料×週の在庫を2年分、横軸で見渡せるメイン画面（まずここ）。",
     "                        自社在庫(実績)・TTAF在庫(実績)・実績週の列で内訳も確認できます。",
+    "                        基準在庫(下限/上限)を入力すると、各週のセルが赤(下限未満)/",
+    "                        緑(範囲内)/青(上限超)に自動で色分けされます。",
     "                        C1に'W23'のように入力すると（現在年の週Noとして検索）、",
-    "                        Statusのすぐ隣のI列にその週の在庫が常時表示され、",
-    "                        該当する週の列も黄色くハイライトされます（マクロ不要・スクロール不要）。",
+    "                        実績週のすぐ隣のI列にその週の在庫が常時表示され、",
+    "                        該当する週の列が太枠でハイライトされます（マクロ不要・スクロール不要）。",
     "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）。",
     "                        Dashboardと同様にC1に'W23'のように入力すると、D列に選択週の数値が常時表示されます。",
+    "                        材料名の右のC列にMOQ(最小発注量)を手入力できます。",
+    "                        合計使用量の下にTTAF在庫実績・自社在庫実績・合計在庫(週末時点)の週次推移も表示されます。",
+    "                        HideInactiveIntermediatesマクロ(要ボタン設定)で、指定期間ずっと生産予定の無い",
+    "                        中間体の行を折りたためます（在庫関連の行は常に表示されたままです）。",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments/T_OpeningStock/T_StockCount/T_SelfStock/T_TTAFStock : 入力用",
     "",
@@ -933,6 +993,8 @@ readme_lines = [
     "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
     "  RefreshTTAFStock を実行してください（対象ファイルを選ぶだけです。詳細はdocs/SOH_System_Guide.md、",
     "  未検証のため要動作確認）。T_Shipments・T_OpeningStock・T_StockCount等には一切触れません。",
+    "  Material_Detailの中間体の行を隠す/戻すHideInactiveIntermediates / ShowAllIntermediatesは、",
+    "  ボタンへの割り当てが必要な一度だけの手動設定です（詳細はdocs/SOH_System_Guide.md）。",
     "",
     "【毎月の運用】",
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
@@ -940,12 +1002,13 @@ readme_lines = [
     "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
     "  4. CSA Reportが届いたらRefreshTTAFStockを実行し、T_Shipments のETA/着荷日/PO番号/発注日も更新",
     "  5. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
-    "  6. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
+    "  6. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
     "  7. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
     "     Inventory Releasesの報告フォーマットに転記）",
     "",
     "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
-    "  - M_RawMaterials の SafetyStock_Qty と LeadTime_Weeks は仮値です。実際の安全在庫水準に置き換えてください。",
+    "  - M_RawMaterials の基準在庫(下限/上限)とLeadTime_Weeksは仮値(0)です。実際の水準に置き換えてください",
+    "    （Dashboardの週次セルの赤/緑/青の色分けに使われます）。",
     "  - Categoryの割り当て(Chemical/Hazardous Chemical/Substrate)は入手データから機械的に推定した部分があります。要レビュー。",
     "  - 週次バッチ数はPowder & Slurry & Pgm Planの実データ（約36材料シートから抽出）を使用しています。",
 ]
