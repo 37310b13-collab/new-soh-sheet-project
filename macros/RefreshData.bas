@@ -1,6 +1,9 @@
 Attribute VB_Name = "RefreshData"
 Option Explicit
 
+Public Const MD_HEADER_ROW As Long = 6       ' Material_Detail: ヘッダー行。build_soh.pyのMD_TABLE_ROWと対応
+Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開始列(D列)。build_soh.pyのWEEK_START_COLと対応
+
 ' ============================================================================
 ' RefreshData モジュール
 '
@@ -754,9 +757,6 @@ End Sub
 '      ShowAllIntermediates)を選択
 '   4. お好みでシート上部の空いている場所(A1付近など)に配置する
 ' ============================================================================
-
-Public Const MD_HEADER_ROW As Long = 6       ' Material_Detail: ヘッダー行。build_soh.pyのMD_TABLE_ROWと対応
-Public Const MD_WEEK_START_COL As Long = 5   ' Material_Detail: 週データ開始列(E列)。build_soh.pyのWEEK_START_COLと対応
 
 Sub HideInactiveIntermediates()
     Dim wb As Workbook: Set wb = ThisWorkbook

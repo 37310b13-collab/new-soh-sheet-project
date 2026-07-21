@@ -221,7 +221,7 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 **Material_Detailの週次在庫行**: 各材料ブロックの「合計使用量(kg)/週」行の下に、以下の3行を
 追加しました。
 
-- `TTAF在庫(実績,kg)`: `T_TTAFStock`から該当週・該当RM_Codeの実績値をSUMIFSで集計
+- `TTAF在庫(実績,kg)`: `T_TTAFStock`から該当週・該当Part Nameの実績値をSUMIFSで集計
 - `自社在庫(実績,kg)`: `T_SelfStock`から同様に集計
 - `合計在庫(週末時点,kg)`: `Grid_Stock`をそのまま参照（手動棚卸`T_StockCount` > 自社+TTAF実績の
   合計（両方揃っている週のみ） > 通常のロールフォワード、という優先順位で計算される値。
@@ -333,7 +333,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 **`RefreshSelfStock`実行時にも強制終了する不具合について**: 同じ理由（1セルずつの読み書き）が
 `RefreshSelfStock`にもありました。対象シート「Stock」の読み取りを同様に1回の配列読み込みに
 変更し、さらに`T_SelfStock`/`T_TTAFStock`への書き込み(`UpsertStockRow`)も、呼び出すたびに
-テーブル全行をセル単位でスキャンしていたのを、(RM_Code, WeekIndex)→行番号のDictionaryを
+テーブル全行をセル単位でスキャンしていたのを、(Part Name, WeekIndex)→行番号のDictionaryを
 1回だけ作って参照する方式に変更しました（`RefreshTTAFStock`も同様）。これらのテーブルは
 運用を重ねるほど行数が増えるため、この修正は将来的な速度低下の予防にもなります。
 
@@ -343,7 +343,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 
 - `Grid_Stock`の在庫ロールフォワード式: `T_StockCount`/`T_SelfStock`/`T_TTAFStock`の該当有無・
   値の取得に`SUMPRODUCT`のブール配列積を使っていましたが、これは対象表が育つほど遅くなる
-  上記と同じ性質を持っていました。`T_SelfStock`/`T_TTAFStock`は(RM_Code,WeekIndex)ごとに
+  上記と同じ性質を持っていました。`T_SelfStock`/`T_TTAFStock`は(Part Name,WeekIndex)ごとに
   上書き更新される設計のため、定常状態では行数が「原材料数×週数(101×104≈10,504)」程度で
   頭打ちになる見込みですが、それでも将来的な速度低下を避けるため、ネイティブ関数の
   `COUNTIFS`/`SUMIFS`（この環境で構造化参照との組み合わせが正しく動作することを確認済み）に
@@ -363,7 +363,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 M_BOMへの書き込みのたびに全711行以上をセル単位でスキャンする、`FindOrAddIntermediateRow`が
 中間体ごとに毎回`.Find()`を呼ぶ）が残っていると気づいていながら、そちらの修正を実装し忘れて
 いました。結果として`RefreshWeeklyBatches`実行時の強制終了が再発しました。`RefreshWeeklyBatches`
-の実行開始時に、PP_Grid(中間体名→行番号)とM_BOM(Intermediate|RM_Code→行番号)のDictionaryを
+の実行開始時に、PP_Grid(中間体名→行番号)とM_BOM(Intermediate|Part Name→行番号)のDictionaryを
 1回だけ作っておき（`BuildNameIndex`/`BuildPairIndex`）、以降はそれを参照する方式に修正しました。
 あわせて`RefreshBOM`のインデックス構築、`WeekIndexForDate`の週特定処理も同じ考え方で1回の
 配列読み込みにまとめています。

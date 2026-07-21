@@ -171,7 +171,7 @@ ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 # 基準在庫は下限・上限の2つを持つ(Dashboardの週次の赤/緑/青のハイライトに使用)。
 # 以前の単一しきい値のSafetyStock_Qty_要入力を、下限・上限の2列に置き換えた。
 ws = wb.create_sheet("M_RawMaterials")
-ws.append(["RM_Code", "Description", "Supplier", "Category", "UOM",
+ws.append(["Part Name", "Description", "Supplier", "Category", "UOM",
            "基準在庫下限_要入力", "基準在庫上限_要入力", "LeadTime_Weeks_要入力"])
 for r in rm_master:
     ws.append([r["RM_Code"], r["Description"], r["Supplier"], r["Category"], "kg", 0, 0, 4])
@@ -199,7 +199,7 @@ ws.freeze_panes = "A2"
 # 「このIntermediateがPP_Grid内の何行目か」を1回だけ計算しておく内部ヘルパー列。
 # VBAでM_BOMに行を追加しても、Excelのテーブル機能が数式列を自動で複製するため引き続き機能する。
 ws = wb.create_sheet("M_BOM")
-ws.append(["Intermediate", "RM_Code", "RM_Qty_Per_Batch", "PPGridRow"])
+ws.append(["Intermediate", "Part Name", "RM_Qty_Per_Batch", "PPGridRow"])
 for i, r in enumerate(bom):
     rr = i + 2
     ws.append([r["Intermediate"], r["RM_Code"], r["RM_Total_Per_Batch"],
@@ -254,7 +254,7 @@ ws.freeze_panes = "B2"
 
 # ============================================================ T_OpeningStock (INPUT)
 ws = wb.create_sheet("T_OpeningStock")
-ws.append(["RM_Code", "Opening_Qty_要入力", "AsOf"])
+ws.append(["Part Name", "Opening_Qty_要入力", "AsOf"])
 for r in rm_master:
     ws.append([r["RM_Code"], 0, START_MONDAY])
 n = len(rm_master) + 1
@@ -312,7 +312,7 @@ for row in raw_shipments:
     # ship_rows layout: RM_Code, PO_No, Order_Date(unknown from source, left blank for manual entry), Confirmed_Qty, Latest_ETA, Received_Date, Status
 
 ws = wb.create_sheet("T_Shipments")
-ws.append(["RM_Code", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status", "Effective_Week"])
+ws.append(["Part Name", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status", "Effective_Week"])
 if not ship_rows:
     # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないため、
     # 該当する発注が無い場合はダミー行を1行入れておく（要削除・上書き可）。
@@ -340,7 +340,7 @@ print("Shipment rows seeded:", len(ship_rows))
 # ============================================================ T_StockCount (INPUT, physical count overrides)
 # 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
 ws = wb.create_sheet("T_StockCount")
-ws.append(["RM_Code", "Date_棚卸実施日", "WeekIndex", "CountedQty", "Notes"])
+ws.append(["Part Name", "Date_棚卸実施日", "WeekIndex", "CountedQty", "Notes"])
 ws.append(["(例) CHEM-1010", START_MONDAY, None, 0, "棚卸実施時にこの行へ追記(Dateを入力するとWeekIndexは自動計算されます)"])
 ws.cell(row=2, column=3).value = week_index_formula_strict("$B2")
 style_header(ws, 5)
@@ -352,7 +352,7 @@ for col, w in zip("ABCDE", [16, 14, 10, 12, 30]):
 # ============================================================ T_SelfStock (自社倉庫の実績, VBA更新)
 # 列順: RM_Code, Date(VBAが記入), WeekIndex(Dateから自動計算), Self_Qty
 ws = wb.create_sheet("T_SelfStock")
-ws.append(["RM_Code", "Date", "WeekIndex", "Self_Qty"])
+ws.append(["Part Name", "Date", "WeekIndex", "Self_Qty"])
 self_rows_written = 0
 for r in self_stock_sample:
     d = datetime.date.fromisoformat(r["Date"])
@@ -374,7 +374,7 @@ print("T_SelfStock rows seeded:", self_rows_written)
 # ============================================================ T_TTAFStock (TTAF倉庫の実績, VBA更新)
 # 列順: RM_Code, Date(VBAが記入), WeekIndex(Dateから自動計算), TTAF_Qty
 ws = wb.create_sheet("T_TTAFStock")
-ws.append(["RM_Code", "Date", "WeekIndex", "TTAF_Qty"])
+ws.append(["Part Name", "Date", "WeekIndex", "TTAF_Qty"])
 ttaf_rows_written = 0
 for r in ttaf_stock_sample:
     d = datetime.date.fromisoformat(r["Date"])
@@ -403,7 +403,7 @@ ws_req = wb.create_sheet("Grid_Requirement")
 ws_in = wb.create_sheet("Grid_Incoming")
 ws_st = wb.create_sheet("Grid_Stock")
 
-header = ["RM_Code"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
+header = ["Part Name"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
 ws_req.append(header)
 ws_in.append(header)
 ws_st.append(header)
@@ -420,25 +420,25 @@ for i, r in enumerate(rm_master):
         # 週ごとのMATCHをせず直接INDEX)を合計する。PP_Grid内の列位置(w+1列目=Intermediate列の次)
         # は週ごとに固定できるため、MATCHは行位置(PPGridRow, M_BOM側で1回だけ計算済み)のみで済む。
         ws_req.cell(row=rr, column=1 + w).value = (
-            f"=SUMPRODUCT((M_BOM[RM_Code]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
+            f"=SUMPRODUCT((M_BOM[Part Name]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
             f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))"
         )
         ws_in.cell(row=rr, column=1 + w).value = (
-            f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[RM_Code],$A{rr},T_Shipments[Effective_Week],{w})"
+            f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"
         )
         # T_StockCount/T_SelfStock/T_TTAFStockは、RefreshSelfStock/RefreshTTAFStockの実行を
         # 重ねるたびに行数が増え続ける(週次実行なら1年で数千行規模になりうる)。SUMPRODUCTの
         # ブール配列積(旧実装)は表が育つほど遅くなり、実際に強制終了の原因になったパターンと
         # 同種のリスクがあったため、ネイティブ関数のCOUNTIFS/SUMIFS(この環境で構造化参照との
         # 組み合わせが正しく動作することを確認済み)に置き換えている。
-        has_count = f"COUNTIFS(T_StockCount[RM_Code],$A{rr},T_StockCount[WeekIndex],{w})"
-        count_val = f"SUMIFS(T_StockCount[CountedQty],T_StockCount[RM_Code],$A{rr},T_StockCount[WeekIndex],{w})"
-        has_self = f"COUNTIFS(T_SelfStock[RM_Code],$A{rr},T_SelfStock[WeekIndex],{w})"
-        self_val = f"SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[RM_Code],$A{rr},T_SelfStock[WeekIndex],{w})"
-        has_ttaf = f"COUNTIFS(T_TTAFStock[RM_Code],$A{rr},T_TTAFStock[WeekIndex],{w})"
-        ttaf_val = f"SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[RM_Code],$A{rr},T_TTAFStock[WeekIndex],{w})"
+        has_count = f"COUNTIFS(T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
+        count_val = f"SUMIFS(T_StockCount[CountedQty],T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
+        has_self = f"COUNTIFS(T_SelfStock[Part Name],$A{rr},T_SelfStock[WeekIndex],{w})"
+        self_val = f"SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[Part Name],$A{rr},T_SelfStock[WeekIndex],{w})"
+        has_ttaf = f"COUNTIFS(T_TTAFStock[Part Name],$A{rr},T_TTAFStock[WeekIndex],{w})"
+        ttaf_val = f"SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[Part Name],$A{rr},T_TTAFStock[WeekIndex],{w})"
         if w == 1:
-            prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[RM_Code],0)),0)'
+            prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             prior = f"{week_col(w-1)}{rr}"
         normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
@@ -534,7 +534,7 @@ for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
     for c in range(1, last_col_md + 1):
         ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=r, column=c).font = Font(bold=(r in (MD_MONTHYEAR_ROW, MD_TABLE_ROW)))
-ws.cell(row=MD_TABLE_ROW, column=1, value="RM_Code")
+ws.cell(row=MD_TABLE_ROW, column=1, value="Part Name")
 ws.cell(row=MD_TABLE_ROW, column=2, value="項目")
 ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
 
@@ -578,7 +578,7 @@ for rm_code, entries in bom_by_rm.items():
         row_num += 1
         ws.cell(row=row_num, column=2, value="使用量(kg)")
         ws.cell(row=row_num, column=3,
-                value=f'=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],$B{row_num-1},M_BOM[RM_Code],$A{mat_header_row})')
+                value=f'=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],$B{row_num-1},M_BOM[Part Name],$A{mat_header_row})')
         for w in range(1, N_WEEKS + 1):
             wc = mdetail_week_col(w)
             ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
@@ -599,14 +599,14 @@ for rm_code, entries in bom_by_rm.items():
     ws.cell(row=row_num, column=2, value="TTAF在庫(実績,kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=(f'=IFERROR(SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[RM_Code],$A{mat_header_row},'
+                value=(f'=IFERROR(SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[Part Name],$A{mat_header_row},'
                        f'T_TTAFStock[WeekIndex],{w}),"")'))
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="自社在庫(実績,kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=(f'=IFERROR(SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[RM_Code],$A{mat_header_row},'
+                value=(f'=IFERROR(SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[Part Name],$A{mat_header_row},'
                        f'T_SelfStock[WeekIndex],{w}),"")'))
 
     row_num += 1
@@ -654,7 +654,7 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # 定常状態での行数上限は「原材料数×週数(101×104≈10,504)」程度に収まる想定。LOOKUP参照範囲は
 # それより十分大きい12,000行を確保しつつ、以前問題になった$100000のような過大な範囲は避ける。
 STOCK_LOOKUP_ROWS = 12000
-LEFT_COLS = ["RM_Code", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
+LEFT_COLS = ["Part Name", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
              "自社在庫(実績)", "TTAF在庫(実績)", "実績週"]
 WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # I列から週データ
 HDR_MONTHYEAR_ROW = 3
@@ -739,13 +739,13 @@ for i, r in enumerate(rm_master):
     rm = r["RM_Code"]
     ws.cell(row=rr, column=1, value=rm)
     ws.cell(row=rr, column=2,
-            value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")')
+            value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
     ws.cell(row=rr, column=3,
-            value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[RM_Code],0)),"")')
+            value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
     ws.cell(row=rr, column=4,
-            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
+            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
     ws.cell(row=rr, column=5,
-            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[RM_Code],0)),0)')
+            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
     ws.cell(row=rr, column=6,
             value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_SelfStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
     ws.cell(row=rr, column=7,
@@ -878,11 +878,11 @@ def build_po_draft(sheet_name, category, title):
         rm = r["RM_Code"]
         grow = rm_row[rm]
         grow_rel = grow - 1  # Grid_Stock[#Data]内の相対行位置(1始まり)
-        ws.cell(row=data_row, column=2, value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH("{rm}",M_RawMaterials[RM_Code],0)),"")')
+        ws.cell(row=data_row, column=2, value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH("{rm}",M_RawMaterials[Part Name],0)),"")')
         ws.cell(row=data_row, column=3, value=r.get("TTAF_Code", ""))
         ws.cell(row=data_row, column=4, value=rm)
         ws.cell(row=data_row, column=5, value="kg")
-        ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[RM_Code],0)),0)')
+        ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[Part Name],0)),0)')
         ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_rel},$P$7)")
         for w in range(1, PO_N_WEEKS + 1):
             col = PO_FIRST_WEEK_COL + w - 1
