@@ -465,8 +465,12 @@ for r in bom:
     bom_by_rm.setdefault(r["RM_Code"], []).append(r)
 
 ws = wb.create_sheet("Material_Detail")
-PINNED_COL_MD = 4  # column D: 選択週の数値をここに常時ピン留め表示(Dashboardと同じ考え方)
-WEEK_START_COL = 5  # column E
+# 選択週の値をピン留め列に複製する方式は廃止。ピン留め列があった位置(旧D列)は削除し、
+# 週データの本物の列(D列〜)をそのままA〜C列の直後に配置。選択週(C1)を入力すると、
+# VBAのWorksheet_Change(macros/RefreshData.basのJumpToSelectedWeekを呼び出す。導入は
+# 任意・手動設定)がウィンドウを横スクロールし、本物の該当週列を固定ペインのすぐ右に
+# 表示する（複製データではないため、Dashboard等との数値の食い違いが原理的に起こらない）。
+WEEK_START_COL = 4  # column D
 def mdetail_week_col(w):
     return get_column_letter(WEEK_START_COL + w - 1)
 # 週データ列の1つ右: 「No. of batches」行がPP_Grid内の何行目に対応するかを1回だけMATCHして
@@ -505,7 +509,7 @@ ws["E1"].font = Font(size=8, color="808080")
 ws["D1"] = (
     f'=IF($C$1="","週Noを入力してください（例: W23）",'
     f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
-    f'INDEX({_md_cal_label_rng},$F$1)&" をD列に表示中"))'
+    f'INDEX({_md_cal_label_rng},$F$1)&" が該当週です（VBA導入時は自動でスクロールします）"))'
 )
 ws["D1"].font = Font(bold=True, color="0563C1")
 
@@ -533,17 +537,6 @@ for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
 ws.cell(row=MD_TABLE_ROW, column=1, value="RM_Code")
 ws.cell(row=MD_TABLE_ROW, column=2, value="項目")
 ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
-
-# 選択週ピン留め列(D)のヘッダー: 通常の週列と同じ3段見出し＋選択中の週Noを表示
-pin_fill_md = PatternFill("solid", fgColor="FFEB9C")
-ws.cell(row=MD_MONTHYEAR_ROW, column=PINNED_COL_MD, value=f'=IFERROR(INDEX({_md_cal_monthyear_rng},$F$1),"")')
-_pcell_md = ws.cell(row=MD_DATE_ROW, column=PINNED_COL_MD, value=f'=IFERROR(INDEX({_md_cal_weekstart_rng},$F$1),"")')
-_pcell_md.number_format = "m/d"
-ws.cell(row=MD_WEEKNO_ROW, column=PINNED_COL_MD, value=f'=IFERROR(INDEX({_md_cal_weekofyear_rng},$F$1),"")')
-ws.cell(row=MD_TABLE_ROW, column=PINNED_COL_MD, value='=IF($C$1="","選択週",$C$1)')
-for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
-    ws.cell(row=r, column=PINNED_COL_MD).fill = pin_fill_md
-ws.cell(row=MD_TABLE_ROW, column=PINNED_COL_MD).font = Font(bold=True)
 
 row_num = MD_TABLE_ROW
 for rm_code, entries in bom_by_rm.items():
@@ -581,8 +574,6 @@ for rm_code, entries in bom_by_rm.items():
             cell.value = (
                 f'=IFERROR(INDEX(PP_Grid[#Data],${helper_col_letter}{row_num},{w + 1}),0)'
             )
-        ws.cell(row=row_num, column=PINNED_COL_MD,
-                value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
 
         row_num += 1
         ws.cell(row=row_num, column=2, value="使用量(kg)")
@@ -592,8 +583,6 @@ for rm_code, entries in bom_by_rm.items():
             wc = mdetail_week_col(w)
             ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                     value=f"=$C{row_num}*{wc}{batches_row}")
-        ws.cell(row=row_num, column=PINNED_COL_MD,
-                value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計使用量(kg)/週")
@@ -601,10 +590,6 @@ for rm_code, entries in bom_by_rm.items():
     for w in range(1, N_WEEKS + 1):
         wc = mdetail_week_col(w)
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Requirement'!{week_col(w)}{grow}")
-    ws.cell(row=row_num, column=PINNED_COL_MD,
-            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
-    ws.cell(row=row_num, column=PINNED_COL_MD).font = Font(bold=True)
-    ws.cell(row=row_num, column=PINNED_COL_MD).fill = PatternFill("solid", fgColor="FFF9DB")
 
     # TTAF在庫(実績)/自社在庫(実績)/合計在庫(週末時点) の3行を追加。
     # 合計在庫は「前週在庫-使用量+TTAF+自社+入庫」を再度ここで組み立てるのではなく、
@@ -616,8 +601,6 @@ for rm_code, entries in bom_by_rm.items():
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=(f'=IFERROR(SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[RM_Code],$A{mat_header_row},'
                        f'T_TTAFStock[WeekIndex],{w}),"")'))
-    ws.cell(row=row_num, column=PINNED_COL_MD,
-            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="自社在庫(実績,kg)")
@@ -625,8 +608,6 @@ for rm_code, entries in bom_by_rm.items():
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=(f'=IFERROR(SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[RM_Code],$A{mat_header_row},'
                        f'T_SelfStock[WeekIndex],{w}),"")'))
-    ws.cell(row=row_num, column=PINNED_COL_MD,
-            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
@@ -634,10 +615,6 @@ for rm_code, entries in bom_by_rm.items():
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=f"='Grid_Stock'!{week_col(w)}{grow}")
-    ws.cell(row=row_num, column=PINNED_COL_MD,
-            value=f'=IFERROR(INDEX({mdetail_week_col(1)}{row_num}:{mdetail_week_col(N_WEEKS)}{row_num},$F$1),"")')
-    ws.cell(row=row_num, column=PINNED_COL_MD).font = Font(bold=True)
-    ws.cell(row=row_num, column=PINNED_COL_MD).fill = PatternFill("solid", fgColor="D9EAD3")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="（発注の目安はDashboardの基準在庫[下限/上限]と色分けを参照）")
@@ -649,7 +626,6 @@ last_row = row_num
 ws.column_dimensions["A"].width = 12
 ws.column_dimensions["B"].width = 22
 ws.column_dimensions["C"].width = 14
-ws.column_dimensions[get_column_letter(PINNED_COL_MD)].width = 12
 for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[mdetail_week_col(w)].width = 9
 ws.column_dimensions[get_column_letter(HELPER_COL_MD)].width = 10
@@ -657,16 +633,20 @@ ws.freeze_panes = f"{get_column_letter(WEEK_START_COL)}{MD_TABLE_ROW+1}"
 
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
 
-# 注: DashboardにあるD列ハイライト(選択週の列を条件付き書式で強調)はここでは追加していません。
+# 注: Dashboardにある選択週の列を条件付き書式で強調する仕組みはここでは追加していません。
 # Material_Detailは行数が約1,660行と多く、週列全体(104週)に条件付き書式を適用すると
 # 対象セル数がDashboardの約16倍(17万セル超)になり、まさに今回のパフォーマンス問題と
-# 同種のリスクを新たに持ち込むことになるため。ピン留め列(D)の数値表示のみで十分実用的です。
+# 同種のリスクを新たに持ち込むことになるため。C1入力→VBA(JumpToSelectedWeek)による
+# 自動横スクロールのみで十分実用的です。
 print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "rows")
 
 # ============================================================ Dashboard
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
-# A〜H列(RM情報。基準在庫の下限・上限を含む)+I列(選択週の在庫を常時ピン留め表示)と
-# ヘッダー行(月-年/日付/週No)を固定して、右にスクロールしながら見る設計。
+# A〜H列(RM情報。基準在庫の下限・上限を含む)を固定し、その右に本物の週データ列(I列〜)を
+# そのまま並べる（選択週の値を複製するピン留め列は廃止）。C1に週No(例:W23)を入力すると、
+# VBAのWorksheet_Change(macros/RefreshData.basのJumpToSelectedWeekを呼び出す。導入は
+# 任意・手動設定)がウィンドウを横スクロールし、本物の該当週列を固定ペインのすぐ右に
+# 表示する。複製データではないため、条件付き書式や数値がずれる余地がない。
 # Statusのテキスト列は廃止し、各週のセル自体を基準在庫の下限/上限に対して
 # 赤(下限未満)/緑(範囲内)/青(上限超)に色分けする方式にした。
 #
@@ -676,8 +656,7 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 STOCK_LOOKUP_ROWS = 12000
 LEFT_COLS = ["RM_Code", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
              "自社在庫(実績)", "TTAF在庫(実績)", "実績週"]
-PINNED_COL = len(LEFT_COLS) + 1  # I列: 選択週の在庫を常時表示（ジャンプ・スクロール不要）
-WEEK_START_COL_DASH = PINNED_COL + 1  # J列から週データ
+WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # I列から週データ
 HDR_MONTHYEAR_ROW = 3
 HDR_DATE_ROW = 4
 HDR_WEEKNO_ROW = 5
@@ -718,7 +697,7 @@ ws["E1"].font = Font(size=8, color="808080")
 ws["D1"] = (
     f'=IF($C$1="","週Noを入力してください（例: W23）",'
     f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
-    f'INDEX({cal_label_rng},$F$1)&" をI列に表示中"))'
+    f'INDEX({cal_label_rng},$F$1)&" が該当週です（VBA導入時は自動でスクロールします）"))'
 )
 ws["D1"].font = Font(bold=True, color="0563C1")
 
@@ -744,24 +723,9 @@ for w in range(1, N_WEEKS + 1):
 for c, name in enumerate(LEFT_COLS, start=1):
     ws.cell(row=HDR_TABLE_ROW, column=c, value=name)
 
-# I列(選択週ピン留め列): 通常の週列と同じ3段見出し＋選択中の週Noを表示
-pinned_letter = get_column_letter(PINNED_COL)
-ws.cell(row=HDR_MONTHYEAR_ROW, column=PINNED_COL, value=f'=IFERROR(INDEX({cal_monthyear_rng},$F$1),"")')
-pcell = ws.cell(row=HDR_DATE_ROW, column=PINNED_COL, value=f'=IFERROR(INDEX({cal_weekstart_rng},$F$1),"")')
-pcell.number_format = "m/d"
-ws.cell(row=HDR_WEEKNO_ROW, column=PINNED_COL, value=f'=IFERROR(INDEX({cal_weekofyear_rng},$F$1),"")')
-ws.cell(row=HDR_TABLE_ROW, column=PINNED_COL, value='=IF($C$1="","選択週",$C$1)')
-ws.column_dimensions[pinned_letter].width = 12
-
 style_header(ws, WEEK_START_COL_DASH + N_WEEKS - 1, row=HDR_TABLE_ROW)
-pin_fill = PatternFill("solid", fgColor="FFEB9C")
-ws.cell(row=HDR_TABLE_ROW, column=PINNED_COL).fill = pin_fill
-ws.cell(row=HDR_TABLE_ROW, column=PINNED_COL).font = Font(bold=True)
 for row_i in (HDR_MONTHYEAR_ROW, HDR_DATE_ROW, HDR_WEEKNO_ROW):
     for c in range(1, WEEK_START_COL_DASH + N_WEEKS):
-        if c == PINNED_COL:
-            ws.cell(row=row_i, column=c).fill = pin_fill
-            continue
         ws.cell(row=row_i, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=row_i, column=c).font = Font(bold=(row_i == HDR_MONTHYEAR_ROW))
 
@@ -789,8 +753,6 @@ for i, r in enumerate(rm_master):
     ws.cell(row=rr, column=8,
             value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),'
                    f'T_SelfStock!$C$2:$C${STOCK_LOOKUP_ROWS})),"")'))
-    ws.cell(row=rr, column=PINNED_COL,
-            value=(f'=IFERROR(INDEX({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr},$F$1),"")'))
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
         gs_col = week_col(w)
@@ -801,35 +763,32 @@ n_last_row = DATA_START_ROW + len(rm_master) - 1
 # 罫線・縞模様の手動書式で「テーブルらしい」見た目にする（テーブル見出しは文字列必須のため）。
 thin = Side(style="thin", color="BFBFBF")
 border = Border(left=thin, right=thin, top=thin, bottom=thin)
-pin_data_fill = PatternFill("solid", fgColor="FFF9DB")
 for rr2 in range(HDR_TABLE_ROW, n_last_row + 1):
     stripe = (rr2 - HDR_TABLE_ROW) % 2 == 1
     for c in range(1, WEEK_START_COL_DASH + N_WEEKS):
         cell = ws.cell(row=rr2, column=c)
         cell.border = border
-        if c == PINNED_COL and rr2 > HDR_TABLE_ROW:
-            cell.fill = pin_data_fill
-        elif rr2 > HDR_TABLE_ROW and stripe:
+        if rr2 > HDR_TABLE_ROW and stripe:
             cell.fill = PatternFill("solid", fgColor="F2F2F2")
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}"
 
 # 基準在庫の下限・上限に対して、各週のセルを赤(下限未満)/緑(範囲内)/青(上限超)に色分け
-# （I列のピン留めセルも対象。$D=基準在庫_下限、$E=基準在庫_上限）
-stock_band_range = f"{pinned_letter}{DATA_START_ROW}:{last_col_dash}{n_last_row}"
+# （$D=基準在庫_下限、$E=基準在庫_上限。行内の相対参照なのでどの週列でも自分の行の基準を見る）
+stock_band_range = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}:{last_col_dash}{n_last_row}"
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f"{pinned_letter}{DATA_START_ROW}<$D{DATA_START_ROW}"],
+    FormulaRule(formula=[f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<$D{DATA_START_ROW}"],
                 fill=PatternFill("solid", fgColor="FFC7CE"))  # 赤: 基準在庫の下限未満
 )
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f"AND({pinned_letter}{DATA_START_ROW}>=$D{DATA_START_ROW},"
-                          f"{pinned_letter}{DATA_START_ROW}<=$E{DATA_START_ROW})"],
+    FormulaRule(formula=[f"AND({get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>=$D{DATA_START_ROW},"
+                          f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<=$E{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="C6EFCE"))  # 緑: 基準在庫の範囲内
 )
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f"{pinned_letter}{DATA_START_ROW}>$E{DATA_START_ROW}"],
+    FormulaRule(formula=[f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>$E{DATA_START_ROW}"],
                 fill=PatternFill("solid", fgColor="BDD7EE"))  # 青: 基準在庫の上限超
 )
 # 選択中の週(F1のWeekIndex)に該当する列を太枠で強調（COLUMN()の自己参照なので
@@ -976,10 +935,12 @@ readme_lines = [
     "                        基準在庫(下限/上限)を入力すると、各週のセルが赤(下限未満)/",
     "                        緑(範囲内)/青(上限超)に自動で色分けされます。",
     "                        C1に'W23'のように入力すると（現在年の週Noとして検索）、",
-    "                        実績週のすぐ隣のI列にその週の在庫が常時表示され、",
-    "                        該当する週の列が太枠でハイライトされます（マクロ不要・スクロール不要）。",
+    "                        該当する週の列が太枠でハイライトされます。VBA(JumpToSelectedWeek、",
+    "                        要ボタン設定・詳細はdocs/SOH_System_Guide.md)を導入していれば、",
+    "                        実績週のすぐ右にその週の列が来るよう自動でスクロールもされます。",
     "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）。",
-    "                        Dashboardと同様にC1に'W23'のように入力すると、D列に選択週の数値が常時表示されます。",
+    "                        Dashboardと同様にC1に'W23'のように入力すると該当週が求まり、",
+    "                        VBA導入時はその週列のすぐ右に自動でスクロールします。",
     "                        材料名の右のC列にMOQ(最小発注量)を手入力できます。",
     "                        合計使用量の下にTTAF在庫実績・自社在庫実績・合計在庫(週末時点)の週次推移も表示されます。",
     "                        HideInactiveIntermediatesマクロ(要ボタン設定)で、指定期間ずっと生産予定の無い",

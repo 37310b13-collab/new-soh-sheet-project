@@ -20,6 +20,12 @@ Option Explicit
 '                          0の中間体の行をボタン一つで非表示にする（材料の在庫関連の行は
 '                          常に表示されたまま）。
 '   ShowAllIntermediates  : HideInactiveIntermediatesで非表示にした行を全て再表示する。
+'   JumpToSelectedWeek    : Dashboard/Material_DetailのC1(選択週)を入力したときに、実際の
+'                          週データ列(複製ではない本物の列)が固定ペインのすぐ右に来るよう
+'                          ウィンドウを横スクロールする。呼び出しにはDashboard/Material_Detail
+'                          それぞれのシートモジュールにWorksheet_Changeを1行ずつ設置する必要が
+'                          あります（下記【導入方法】参照。標準モジュールの機能だけでは
+'                          シートの変更を検知できないための対応です）。
 '
 ' いずれも、それぞれ対応するシートだけを更新します。T_Shipments・T_OpeningStock・
 ' T_StockCount・SafetyStock_Qty等、運用中に手入力した内容には一切触れません。
@@ -56,6 +62,24 @@ Option Explicit
 '       貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります）
 '   3. Alt+F8 でマクロ一覧から RefreshWeeklyBatches / RefreshBOM を実行、
 '      または任意のシートに図形を挿入して「マクロの登録」で割り当てる
+'
+' 【選択週の自動スクロール(JumpToSelectedWeek)を有効にする場合の追加手順（任意）】
+'   標準モジュール(このファイル)へのインポートだけでは動きません。以下のコードを
+'   「Dashboard」シート・「Material_Detail」シートそれぞれの“シート自身のコードモジュール”に
+'   直接貼り付けてください（VBEのプロジェクトエクスプローラーでシート名をダブルクリックすると
+'   開きます。標準モジュールに貼り付けても発火しません）。
+'
+'   ' --- Dashboardシートのコードモジュールに貼り付け ---
+'   Private Sub Worksheet_Change(ByVal Target As Range)
+'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
+'       Call JumpToSelectedWeek(Me, "F1", 9)   ' 9 = I列(週データ開始列)
+'   End Sub
+'
+'   ' --- Material_Detailシートのコードモジュールに貼り付け ---
+'   Private Sub Worksheet_Change(ByVal Target As Range)
+'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
+'       Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = D列(週データ開始列)
+'   End Sub
 ' ============================================================================
 
 Sub RefreshWeeklyBatches()
@@ -821,6 +845,24 @@ Sub HideInactiveIntermediates()
            "今週(week " & curWeek & ")から" & thresholdWeeks & "週間、全週バッチ数0の中間体を非表示にしました。" & vbCrLf & _
            "非表示: " & hiddenCount & " 件 / 表示中: " & shownCount & " 件" & vbCrLf & _
            "（材料名の行・在庫関連の行は常に表示されます）", vbInformation
+End Sub
+
+' Dashboard/Material_DetailのC1(選択週)を入力したときに呼ばれる想定の共通処理。
+' 選択週の値を別セルに複製する(ピン留め列)方式は廃止し、代わりに「本物の週データ列」が
+' 常にラベル列のすぐ右(固定ペインの直後)に見えるよう、ウィンドウを横スクロールするだけに
+' している。値の複製が一切ないため、Dashboard・Material_Detail・Grid_Stock等の間で
+' 数字が食い違う余地がない。
+' 呼び出し元のシート自身のWorksheet_Changeから、対象シート・週No解決済みセル(F1)・
+' 週データ開始列(Dashboardは9=I列、Material_Detailは4=D列)を渡して呼び出す。
+Public Sub JumpToSelectedWeek(sh As Worksheet, weekIndexCell As String, weekStartCol As Long)
+    Dim wIdx As Variant
+    wIdx = sh.Range(weekIndexCell).Value
+    If Not IsNumeric(wIdx) Then Exit Sub
+    Dim targetCol As Long
+    targetCol = weekStartCol + CLng(wIdx) - 1
+    On Error Resume Next
+    ActiveWindow.ScrollColumn = targetCol
+    On Error GoTo 0
 End Sub
 
 Sub ShowAllIntermediates()
