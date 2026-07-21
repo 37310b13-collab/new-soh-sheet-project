@@ -23,11 +23,17 @@ Option Explicit
 ' 【パフォーマンスについて】どのRefresh*マクロも、外部ファイルのシートを1セルずつ.Cells(r,c).Value
 ' で読む代わりに、対象範囲を1回だけ配列として読み込み(Range.Value)、以降はメモリ上の配列だけを
 ' 参照する設計にしています。また、PP_Grid(中間体名->行番号)・M_BOM(Intermediate|RM_Code->行番号)・
-' T_SelfStock/T_TTAFStock((RM_Code,WeekIndex)->行番号)への書き込みも、呼び出すたびに.Find()や
+' T_SelfStock/T_TTAFStock((RM_Code,Date)->行番号)への書き込みも、呼び出すたびに.Find()や
 ' 全行スキャンをする代わりに、実行の最初にDictionaryを1回だけ作って参照する設計です
 ' （BuildNameIndex/BuildPairIndex/BuildStockRowIndex）。これは実際にExcelが強制終了する不具合
 ' (1セルずつの読み書きや毎回の全行スキャンがCOM通信の積み重ねで極めて遅くなることが原因)が
 ' 複数回報告されたことを受けての対策です。
+'
+' 【T_SelfStock/T_TTAFStockのWeekIndexについて】WeekIndex列はDate列から自動計算される数式列
+' です（RefreshSelfStock/RefreshTTAFStockはDateだけを書き込み、WeekIndexは書き込みません）。
+' Cal_Weeks!B1(AnchorYear)を進めても、記録済みの実績データが「別の週のデータ」として
+' 誤表示されることがないようにするためです。BuildStockRowIndex/UpsertStockRowIndexedの
+' 突合キーも(RM_Code,WeekIndex)ではなく(RM_Code,Date)にしているのはこのためです。
 '
 ' 【注意: 完全に新しいsubstrate/Catコードが増えた場合】
 '   RefreshWeeklyBatchesはPP_GridとM_BOMには自動で行を追加しますが、
@@ -548,7 +554,7 @@ Sub RefreshSelfStock()
         If Left(code, 4) = "CHEM" Then
             Dim v As Variant: v = data(r, 10)
             If IsNumeric(v) Then
-                Call UpsertStockRowIndexed(selfTbl, selfIdx, code, wIdx, reportDate, CDbl(v), added, updated)
+                Call UpsertStockRowIndexed(selfTbl, selfIdx, code, reportDate, CDbl(v), added, updated)
             End If
         End If
     Next r
@@ -602,7 +608,7 @@ Sub RefreshTTAFStock()
         If Left(CStr(code), 4) = "CHEM" Then
             Dim v As Variant: v = data(r, 4)
             If IsNumeric(v) Then
-                Call UpsertStockRowIndexed(ttafTbl, ttafIdx, CStr(code), wIdx, reportDate, CDbl(v), added, updated)
+                Call UpsertStockRowIndexed(ttafTbl, ttafIdx, CStr(code), reportDate, CDbl(v), added, updated)
             End If
         End If
     Next r
@@ -652,36 +658,41 @@ Private Function WeekIndexForDate(wb As Workbook, d As Date) As Long
     WeekIndexForDate = 1 ' 見つからない場合はWeek1にフォールバック
 End Function
 
-' tbl(T_SelfStock/T_TTAFStock)の(RM_Code, WeekIndex)->行番号のインデックスを1回だけ作る。
+' tbl(T_SelfStock/T_TTAFStock)の(RM_Code, Date)->行番号のインデックスを1回だけ作る。
+' 列は RM_Code(1), Date(2), WeekIndex(3, Dateから自動計算される数式), Qty(4)。
+' キーをWeekIndexではなくDate(不変の実日付)にしているのは、AnchorYearを変更しても
+' 記録済みの実績データが「別の週のデータ」として誤表示されないようにするため
+' （WeekIndexはAnchorYearが変わると指す暦週が変わってしまうが、Dateは変わらない）。
 ' UpsertStockRowが呼ばれるたびに全行をセル単位でスキャンしていたのを避けるため、
 ' 事前に1回のRange読み込みでDictionaryを構築しておく（テーブルが月々増えるほど効果が大きい）。
+' 日付を文字列化する際はCLng(シリアル値)を経由し、地域の日付表示形式に左右されないようにする。
 Private Function BuildStockRowIndex(tbl As ListObject) As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     Dim n As Long: n = tbl.ListRows.Count
     If n > 0 Then
         Dim data As Variant
-        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' 1,2列目(RM_Code,WeekIndex)をまとめて読む
+        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' 1,2列目(RM_Code,Date)をまとめて読む
         Dim i As Long
         For i = 1 To n
-            idx(CStr(data(i, 1)) & "|" & CStr(data(i, 2))) = i
+            idx(CStr(data(i, 1)) & "|" & CStr(CLng(data(i, 2)))) = i
         Next i
     End If
     Set BuildStockRowIndex = idx
 End Function
 
-Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As String, wIdx As Long, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
-    Dim key As String: key = code & "|" & CStr(wIdx)
+' WeekIndex(3列目)は数式列のためここでは書き込まない(Dateが変われば自動的に再計算される)。
+' 新規行を追加した場合は、Excelのテーブル機能が既存行と同じ数式を自動的に複製する。
+Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As String, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
+    Dim key As String: key = code & "|" & CStr(CLng(d))
     If idx.Exists(key) Then
         Dim rowN As Long: rowN = idx(key)
-        tbl.ListColumns(3).DataBodyRange.Cells(rowN, 1).Value = d
         tbl.ListColumns(4).DataBodyRange.Cells(rowN, 1).Value = v
         updated = updated + 1
     Else
         Dim newRow As ListRow
         Set newRow = tbl.ListRows.Add
         newRow.Range.Cells(1, 1).Value = code
-        newRow.Range.Cells(1, 2).Value = wIdx
-        newRow.Range.Cells(1, 3).Value = d
+        newRow.Range.Cells(1, 2).Value = d
         newRow.Range.Cells(1, 4).Value = v
         idx(key) = newRow.Index
         added = added + 1

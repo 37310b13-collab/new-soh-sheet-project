@@ -262,6 +262,26 @@ for c in range(2, 4):
 for col, w in zip("ABC", [14, 16, 12]):
     ws.column_dimensions[col].width = w
 
+# WeekIndexを「日付から毎回ライブ計算する式」にするための共通部品。
+# Cal_Weeks!$B$1(AnchorYear)が変わっても、記録した日付から正しい週番号を再計算できるため、
+# AnchorYearを進めても過去の実績データ(T_Shipments/T_StockCount/T_SelfStock/T_TTAFStock)が
+# 別の週のものとして誤表示されることがなくなる。
+#
+# 2種類の式を使い分ける:
+#   week_index_formula_clamped: 表示ウィンドウの外側の日付は端の週(1 or N_WEEKS)に寄せる。
+#     T_Shipments(まだ着荷していない発注)用。古い発注でも「本来もう届いているはず」として
+#     week1に表示され続けてほしいため。
+#   week_index_formula_strict : 表示ウィンドウの外側の日付はどの週にも一致させず空欄にする。
+#     T_StockCount/T_SelfStock/T_TTAFStock(実績の記録)用。クランプしてしまうと、AnchorYearを
+#     進めた後にウィンドウ外へ出た古い実績データがweek1の集計に紛れ込み、直近の実績値が
+#     狂ってしまうため。
+ANCHOR_MONDAY_EXPR = "(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3))"
+def week_index_formula_clamped(date_cell_ref):
+    return f'=IFERROR(MAX(1,MIN({N_WEEKS},INT(({date_cell_ref}-{ANCHOR_MONDAY_EXPR})/7)+1)),"")'
+def week_index_formula_strict(date_cell_ref):
+    raw = f'(INT(({date_cell_ref}-{ANCHOR_MONDAY_EXPR})/7)+1)'
+    return f'=IFERROR(IF(AND({raw}>=1,{raw}<={N_WEEKS}),{raw},""),"")'
+
 # ============================================================ T_Shipments (INPUT, seeded from Shipping Schedule)
 raw_shipments = load_csv("shipments_all.csv")
 ship_rows = []
@@ -299,12 +319,11 @@ for i, r in enumerate(ship_rows):
     ws.append(r + [None])
     ws.cell(row=row_num, column=3).fill = INPUT_FILL  # Order_Date is not in the source file; input by hand
     # Effective_Week: use Received_Date if present else Latest_ETA; week index via anchor arithmetic, clamped to sheet horizon.
-    # 起点日はCal_Weeks!$B$1(AnchorYear)からその都度計算する(week1の起点と同じ式)。
+    # 起点日はCal_Weeks!$B$1(AnchorYear)からその都度計算する(week1の起点と同じ式、week_index_formula_clamped参照)。
     # 以前はビルド時点のAnchorYearを固定値としてDATE(...)に埋め込んでいたため、
     # AnchorYearをシート上で変更してもこの列だけ古い年のままズレる不具合があった。
-    anchor_monday_expr = "(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3))"
-    ws.cell(row=row_num, column=8).value = (
-        f'=MAX(1,MIN({N_WEEKS},INT((IF(F{row_num}="",E{row_num},F{row_num})-{anchor_monday_expr})/7)+1))'
+    ws.cell(row=row_num, column=8).value = week_index_formula_clamped(
+        f'IF(F{row_num}="",E{row_num},F{row_num})'
     )
 n = len(ship_rows) + 1
 style_header(ws, 8)
@@ -315,52 +334,59 @@ ws.freeze_panes = "A2"
 print("Shipment rows seeded:", len(ship_rows))
 
 # ============================================================ T_StockCount (INPUT, physical count overrides)
+# 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
 ws = wb.create_sheet("T_StockCount")
-ws.append(["RM_Code", "WeekIndex", "CountedQty", "Notes"])
-ws.append(["(例) CHEM-1010", 1, 0, "棚卸実施時にこの行へ追記"])
-style_header(ws, 4)
-add_table(ws, "T_StockCount", "A1:D2")
-for col, w in zip("ABCD", [16, 10, 12, 30]):
+ws.append(["RM_Code", "Date_棚卸実施日", "WeekIndex", "CountedQty", "Notes"])
+ws.append(["(例) CHEM-1010", START_MONDAY, None, 0, "棚卸実施時にこの行へ追記(Dateを入力するとWeekIndexは自動計算されます)"])
+ws.cell(row=2, column=3).value = week_index_formula_strict("$B2")
+style_header(ws, 5)
+add_table(ws, "T_StockCount", "A1:E2")
+ws.cell(row=2, column=2).number_format = "yyyy-mm-dd"
+for col, w in zip("ABCDE", [16, 14, 10, 12, 30]):
     ws.column_dimensions[col].width = w
 
 # ============================================================ T_SelfStock (自社倉庫の実績, VBA更新)
+# 列順: RM_Code, Date(VBAが記入), WeekIndex(Dateから自動計算), Self_Qty
 ws = wb.create_sheet("T_SelfStock")
-ws.append(["RM_Code", "WeekIndex", "Date", "Self_Qty"])
+ws.append(["RM_Code", "Date", "WeekIndex", "Self_Qty"])
 self_rows_written = 0
 for r in self_stock_sample:
     d = datetime.date.fromisoformat(r["Date"])
-    wi = date_to_week_index(d, N_WEEKS)
-    ws.append([r["RM_Code"], wi, d, to_float(r["Self_Qty"], 0)])
+    ws.append([r["RM_Code"], d, None, to_float(r["Self_Qty"], 0)])
     self_rows_written += 1
 if self_rows_written == 0:
-    ws.append(["(例) CHEM-1010", 1, START_MONDAY, 0])
+    ws.append(["(例) CHEM-1010", START_MONDAY, None, 0])
     self_rows_written = 1
+for row_i in range(2, self_rows_written + 2):
+    ws.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
 style_header(ws, 4)
 add_table(ws, "T_SelfStock", f"A1:D{self_rows_written+1}")
-for c, w in zip("ABCD", [16, 10, 12, 12]):
+for c, w in zip("ABCD", [16, 12, 10, 12]):
     ws.column_dimensions[c].width = w
 for row_i in range(2, self_rows_written + 2):
-    ws.cell(row=row_i, column=3).number_format = "yyyy-mm-dd"
+    ws.cell(row=row_i, column=2).number_format = "yyyy-mm-dd"
 print("T_SelfStock rows seeded:", self_rows_written)
 
 # ============================================================ T_TTAFStock (TTAF倉庫の実績, VBA更新)
+# 列順: RM_Code, Date(VBAが記入), WeekIndex(Dateから自動計算), TTAF_Qty
 ws = wb.create_sheet("T_TTAFStock")
-ws.append(["RM_Code", "WeekIndex", "Date", "TTAF_Qty"])
+ws.append(["RM_Code", "Date", "WeekIndex", "TTAF_Qty"])
 ttaf_rows_written = 0
 for r in ttaf_stock_sample:
     d = datetime.date.fromisoformat(r["Date"])
-    wi = date_to_week_index(d, N_WEEKS)
-    ws.append([r["RM_Code"], wi, d, to_float(r["TTAF_Qty"], 0)])
+    ws.append([r["RM_Code"], d, None, to_float(r["TTAF_Qty"], 0)])
     ttaf_rows_written += 1
 if ttaf_rows_written == 0:
-    ws.append(["(例) CHEM-1010", 1, START_MONDAY, 0])
+    ws.append(["(例) CHEM-1010", START_MONDAY, None, 0])
     ttaf_rows_written = 1
+for row_i in range(2, ttaf_rows_written + 2):
+    ws.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
 style_header(ws, 4)
 add_table(ws, "T_TTAFStock", f"A1:D{ttaf_rows_written+1}")
-for c, w in zip("ABCD", [16, 10, 12, 12]):
+for c, w in zip("ABCD", [16, 12, 10, 12]):
     ws.column_dimensions[c].width = w
 for row_i in range(2, ttaf_rows_written + 2):
-    ws.cell(row=row_i, column=3).number_format = "yyyy-mm-dd"
+    ws.cell(row=row_i, column=2).number_format = "yyyy-mm-dd"
 print("T_TTAFStock rows seeded:", ttaf_rows_written)
 
 # ============================================================ Grid_Requirement / Grid_Incoming / Grid_Stock
@@ -716,7 +742,7 @@ for i, r in enumerate(rm_master):
             value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_TTAFStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
     ws.cell(row=rr, column=7,
             value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),'
-                   f'T_SelfStock!$B$2:$B${STOCK_LOOKUP_ROWS})),"")'))
+                   f'T_SelfStock!$C$2:$C${STOCK_LOOKUP_ROWS})),"")'))
     ws.cell(row=rr, column=8,
             value=f'=IF(MIN({get_column_letter(WEEK_START_COL_DASH)}{rr}:{last_col_dash}{rr})<D{rr},"要発注","OK")')
     ws.cell(row=rr, column=PINNED_COL,
@@ -913,7 +939,7 @@ readme_lines = [
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
     "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
     "  4. CSA Reportが届いたらRefreshTTAFStockを実行し、T_Shipments のETA/着荷日/PO番号/発注日も更新",
-    "  5. 棚卸を実施したらT_StockCountに実測値を追記",
+    "  5. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
     "  6. Dashboardで「要発注」を確認し、PO_Draft_*から注文書を出力",
     "  7. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
     "     Inventory Releasesの報告フォーマットに転記）",
