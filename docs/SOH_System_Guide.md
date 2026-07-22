@@ -46,8 +46,8 @@
 |---|---|---|
 | `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid（+ substrate分のM_BOM） |
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
-| `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock |
-| `RefreshTTAFStock` | CSA Report（TTAF在庫、週次） | T_TTAFStock |
+| `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
+| `RefreshTTAFStock` | CSA Report（TTAF在庫、週次） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detailのウィンドウ表示位置のみ（数値は変更しない） |
@@ -60,9 +60,11 @@
 自動で読み取り**、その日付がどの週に該当するかをCal_Weeksと照合して記録します。ファイル名に日付が
 含まれていない場合はエラーになりますので、ファイル名は変更せずそのまま使ってください。
 
-**取り込みは必ず日付が新しい順に行ってください。** `Dashboard`の「直近実績」表示は「その原材料コードに
-ついて表の中で一番後ろにある行」を最新として扱う仕組みのため、古いファイルを後から取り込むと表示が
-古い値に戻ってしまう可能性があります。
+**同じ週内に複数回取り込んでも、自動的に1件にまとめられます。** 取り込んだ実施日から「その週の
+月曜日」を計算し、それをキーに記録するため、同じ週の中で日を分けて何度実行しても行が増え続ける
+ことはありません（後から実行した方の値で上書きされます）。`Dashboard`の「直近実績」表示は、
+週の列を右から見て最後に値がある週を最新として扱う仕組みのため、取り込みの順番が前後しても
+（週をまたいで古いファイルを後から取り込んだ場合を除き）表示が古い値に戻ることはありません。
 
 **導入方法**
 1. `SOH_Master.xlsx`を「名前を付けて保存」→ファイルの種類を「Excel マクロ有効ブック(*.xlsm)」にする
@@ -133,11 +135,12 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | T_Shipments | 入力 | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日） |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
 | T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
-| T_SelfStock | 入力（マクロ更新） | 自社倉庫の在庫実績。RefreshSelfStockで更新 |
-| T_TTAFStock | 入力（マクロ更新） | TTAF倉庫の在庫実績。RefreshTTAFStockで更新 |
+| T_SelfStock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_SelfStock_Log`が更新されると自動反映。手入力不可 |
+| T_TTAFStock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`T_TTAFStock_Log`が更新されると自動反映。手入力不可 |
 | M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定 |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
 | PP_Grid | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
+| (非表示) T_SelfStock_Log / T_TTAFStock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
 | (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / Grid_Requirement / Grid_Incoming | 内部計算 | 通常は開く必要なし |
 
 ## 4. 着荷予定(CSA Order)の入力方法
@@ -190,17 +193,20 @@ B1セル(AnchorYear)=2026を起点に、2026年〜2027年末あたりまでを�
    週番号の並びに合わせて自然に上書きされます（切り替え直後は空欄/0が見えることがありますが、
    次のRefresh実行で解消します）
 
-**過去の実績データ(`T_StockCount`/`T_SelfStock`/`T_TTAFStock`)は安全です**: これらのシートの
-`WeekIndex`列は、記録した`Date`(実際の暦日)から**毎回ライブ計算する数式**になっており、
-`AnchorYear`が変わっても記録済みのデータが「別の週のデータ」として誤表示されることはありません。
-表示中の2年間ウィンドウの外に出た日付は、`WeekIndex`が空欄になり、`Dashboard`等の集計から
-自動的に除外されます（クランプして直近週に混ざり込む、ということもありません）。そのため、
-**AnchorYearを変更する前に事前バックアップを取る必要はなく**、必要なタイミングでいつでも
-切り替えて構いません。ウィンドウの外に出た古い実績データも、セル自体は削除されずに残っている
-ため、後から見返したい場合はシートを直接開いて確認できます（Dashboard等の表示範囲だけが
-「現在の2年間」に絞られる、というイメージです）。
+**過去の実績データの生ログ(`T_StockCount`/非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`)は安全です**:
+これらのシートの`WeekIndex`列は、記録した`Date`(実際の暦日)から**毎回ライブ計算する数式**に
+なっており、`AnchorYear`が変わっても記録済みのデータが「別の週のデータ」として誤表示される
+ことはありません。**AnchorYearを変更する前に事前バックアップを取る必要はなく**、必要なタイミング
+でいつでも、どんな頻度でも切り替えて構いません。生ログのセル自体は削除されずに残っているため、
+後から見返したい場合はシートの表示を解除して直接開けば確認できます。
 
-（本項目は、`T_Shipments`のEffective_Week計算式および`T_StockCount`/`T_SelfStock`/`T_TTAFStock`の
+一方、**目に見える方の`T_SelfStock`/`T_TTAFStock`（材料×週のグリッド表示）は、`Dashboard`・
+`Grid_Stock`と同じく「現在の2年間ウィンドウ」に紐づいています**。これは生ログから毎回数式で
+計算し直す「見るための表」なので、AnchorYearを進めるとウィンドウの外に出た週の列がグリッド上
+からは見えなくなります（生ログ自体は上記の通り安全に残っているので、データが失われるわけでは
+ありません。あくまで「一覧表示の対象期間」が今の2年間に絞られる、というイメージです）。
+
+（本項目は、`T_Shipments`のEffective_Week計算式および`T_StockCount`/`T_SelfStock_Log`/`T_TTAFStock_Log`の
 WeekIndex計算式が、いずれもビルド時点のAnchorYearを固定値として埋め込んでいた不具合を修正した
 上で有効です。）
 
@@ -221,8 +227,8 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 **Material_Detailの週次在庫行**: 各材料ブロックの「合計使用量(kg)/週」行の下に、以下の3行を
 追加しました。
 
-- `TTAF在庫(実績,kg)`: `T_TTAFStock`から該当週・該当Part Nameの実績値をSUMIFSで集計
-- `自社在庫(実績,kg)`: `T_SelfStock`から同様に集計
+- `TTAF在庫(実績,kg)`: `T_TTAFStock`（材料×週のグリッド）の該当セルをそのまま参照
+- `自社在庫(実績,kg)`: `T_SelfStock`（同上）の該当セルをそのまま参照
 - `合計在庫(週末時点,kg)`: `Grid_Stock`をそのまま参照（手動棚卸`T_StockCount` > 自社+TTAF実績の
   合計（両方揃っている週のみ） > 通常のロールフォワード、という優先順位で計算される値。
   Dashboardの在庫グリッドと同じ値のため、両シートの数字は必ず一致します）
@@ -375,6 +381,24 @@ M_BOMへの書き込みのたびに全711行以上をセル単位でスキャン
 
 実際のExcelでの動作確認をお願いします。
 
+**`T_SelfStock`/`T_TTAFStock`が縦に積み上がり続ける不具合について**: 上記のAnchorYear対応
+（WeekIndexをDateからのライブ計算にした修正）の副作用として、日次で`RefreshSelfStock`を
+実行するたびに全材料分の行が新規追加され、Part Nameが何行も重複して積み上がっていく
+不具合がありました（以前はWeekIndexをキーにしていたため同じ週内なら自動的に上書きされて
+いましたが、Date自体をキーにしたことでこの「週単位でまとめる」効果が失われていました）。
+対策として、生データの保存先を「その週の月曜日（実際の暦日から計算。AnchorYearには依存
+しない）」をキーにする方式に変更し、同じ週内の複数回の取り込みが1行にまとまるようにしました。
+
+あわせて、目に見える`T_SelfStock`/`T_TTAFStock`シート自体も再設計しました。生データは
+非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`（実施日ベース、AnchorYearを何度・どんな頻度で
+進めても壊れない）に保存し、目に見える方は`Dashboard`と同じ「材料×週」のグリッド形式に
+変更、値はすべて生データからのSUMIFS数式で毎回計算し直す設計にしています。これにより、
+`Grid_Stock`・`Dashboard`・`Material_Detail`側の参照も、行数が育ち続ける表へのSUMIFS/COUNTIFS
+から、固定104列への直接セル参照に変更でき、以前の「表の成長に伴う速度低下」の懸念自体も
+なくなりました（`Grid_Stock`側の該当有無判定も、以前は「記録が無い週」と「0と記録された週」
+を区別するために別途COUNTIFSが必要でしたが、グリッド側で「記録が無い週は空欄」にする設計に
+したことで、単純な空欄判定だけで済むようになっています）。
+
 ## 8. 要確認・要入力の項目
 
 - **`M_RawMaterials`の`基準在庫下限_要入力` / `基準在庫上限_要入力` / `LeadTime_Weeks_要入力`**:
@@ -392,8 +416,9 @@ M_BOMへの書き込みのたびに全711行以上をセル単位でスキャン
 - **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください
   （`T_SelfStock`・`T_TTAFStock`に実績があれば、その週以降は自動でリセットされます）。
 - **`RefreshData.bas`・`Q_Shipments.pq`**: 未検証です。動作確認の結果を教えてください。
-- **`T_SelfStock`/`T_TTAFStock`の取り込み順**: 必ず日付が新しい順に`RefreshSelfStock`/
-  `RefreshTTAFStock`を実行してください（詳細は2章参照）。
+- **`T_SelfStock`/`T_TTAFStock`シートへの手入力はしないでください**: これらは数式のみのグリッド
+  表示です。値は非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`から自動計算されるため、直接
+  上書きしても`RefreshSelfStock`/`RefreshTTAFStock`を再実行すると数式に戻ります。
 
 ## 9. 今後の拡張候補
 

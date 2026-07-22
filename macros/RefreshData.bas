@@ -36,17 +36,23 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 ' 【パフォーマンスについて】どのRefresh*マクロも、外部ファイルのシートを1セルずつ.Cells(r,c).Value
 ' で読む代わりに、対象範囲を1回だけ配列として読み込み(Range.Value)、以降はメモリ上の配列だけを
 ' 参照する設計にしています。また、PP_Grid(中間体名->行番号)・M_BOM(Intermediate|RM_Code->行番号)・
-' T_SelfStock/T_TTAFStock((RM_Code,Date)->行番号)への書き込みも、呼び出すたびに.Find()や
-' 全行スキャンをする代わりに、実行の最初にDictionaryを1回だけ作って参照する設計です
+' T_SelfStock_Log/T_TTAFStock_Log((RM_Code,週の月曜日)->行番号)への書き込みも、呼び出すたびに
+' .Find()や全行スキャンをする代わりに、実行の最初にDictionaryを1回だけ作って参照する設計です
 ' （BuildNameIndex/BuildPairIndex/BuildStockRowIndex）。これは実際にExcelが強制終了する不具合
 ' (1セルずつの読み書きや毎回の全行スキャンがCOM通信の積み重ねで極めて遅くなることが原因)が
 ' 複数回報告されたことを受けての対策です。
 '
-' 【T_SelfStock/T_TTAFStockのWeekIndexについて】WeekIndex列はDate列から自動計算される数式列
-' です（RefreshSelfStock/RefreshTTAFStockはDateだけを書き込み、WeekIndexは書き込みません）。
-' Cal_Weeks!B1(AnchorYear)を進めても、記録済みの実績データが「別の週のデータ」として
-' 誤表示されることがないようにするためです。BuildStockRowIndex/UpsertStockRowIndexedの
-' 突合キーも(RM_Code,WeekIndex)ではなく(RM_Code,Date)にしているのはこのためです。
+' 【T_SelfStock/T_TTAFStockの二層構造について】RefreshSelfStock/RefreshTTAFStockは、目に
+' 見えるT_SelfStock/T_TTAFStockシートには一切書き込みません。書き込み先は非表示の
+' T_SelfStock_Log/T_TTAFStock_Log（実施日ベースの生ログ）で、目に見える方のシートは
+' そこから毎回計算し直す数式(材料×週のグリッド)だけで組み立てられています。
+' _Logシート側のWeekIndex列はDate列から自動計算される数式列です（RefreshSelfStock/
+' RefreshTTAFStockはDateだけを書き込み、WeekIndexは書き込みません）。Cal_Weeks!B1
+' (AnchorYear)を進めても、記録済みの実績データが「別の週のデータ」として誤表示される
+' ことがないようにするためです。BuildStockRowIndex/UpsertStockRowIndexedの突合キーは、
+' (RM_Code, その週の月曜日=MondayOfWeekで実日付から計算)です。月曜日をキーにしている
+' のは、同じ週内に複数回取り込んでも1行に上書きされるようにするためです（以前はDateその
+' ものをキーにしていたため、日次で取り込むたびに行が積み上がる不具合がありました）。
 '
 ' 【注意: 完全に新しいsubstrate/Catコードが増えた場合】
 '   RefreshWeeklyBatchesはPP_GridとM_BOMには自動で行を追加しますが、
@@ -569,7 +575,7 @@ Sub RefreshSelfStock()
     Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock").ListObjects("T_SelfStock")
+    Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock_Log").ListObjects("T_SelfStock_Log")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim selfIdx As Object: Set selfIdx = BuildStockRowIndex(selfTbl)
 
@@ -594,7 +600,8 @@ Sub RefreshSelfStock()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "T_SelfStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
-           "追加: " & added & " 件、更新: " & updated & " 件", vbInformation
+           "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
+           "（同じ週内の実績は1件にまとめられます。グリッド表示のT_SelfStockシートは自動で反映されます）", vbInformation
     Exit Sub
 
 ErrHandler:
@@ -620,7 +627,7 @@ Sub RefreshTTAFStock()
     Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock").ListObjects("T_TTAFStock")
+    Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock_Log").ListObjects("T_TTAFStock_Log")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
@@ -648,7 +655,8 @@ Sub RefreshTTAFStock()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
-           "追加: " & added & " 件、更新: " & updated & " 件", vbInformation
+           "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
+           "（同じ週内の実績は1件にまとめられます。グリッド表示のT_TTAFStockシートは自動で反映されます）", vbInformation
     Exit Sub
 
 ErrHandler:
@@ -689,11 +697,19 @@ Private Function WeekIndexForDate(wb As Workbook, d As Date) As Long
     WeekIndexForDate = 1 ' 見つからない場合はWeek1にフォールバック
 End Function
 
-' tbl(T_SelfStock/T_TTAFStock)の(RM_Code, Date)->行番号のインデックスを1回だけ作る。
-' 列は RM_Code(1), Date(2), WeekIndex(3, Dateから自動計算される数式), Qty(4)。
-' キーをWeekIndexではなくDate(不変の実日付)にしているのは、AnchorYearを変更しても
-' 記録済みの実績データが「別の週のデータ」として誤表示されないようにするため
-' （WeekIndexはAnchorYearが変わると指す暦週が変わってしまうが、Dateは変わらない）。
+' 日付から「その週の月曜日」を実際の暦計算で求める(Cal_Weeks!B1のAnchorYearには一切
+' 依存しない、純粋な日付演算)。T_SelfStock_Log/T_TTAFStock_Logの突合キーに使うことで、
+' 同じ週内に何度取り込んでも1行に上書きされるようにする(以前はDateそのものをキーに
+' していたため、日次で取り込むたびに行が積み上がっていた)。
+Private Function MondayOfWeek(d As Date) As Date
+    MondayOfWeek = d - Weekday(d, vbMonday) + 1
+End Function
+
+' tbl(T_SelfStock_Log/T_TTAFStock_Log)の(RM_Code, その週の月曜日)->行番号のインデックスを
+' 1回だけ作る。列は RM_Code(1), Date(2), WeekIndex(3, Dateから自動計算される数式), Qty(4)。
+' キーを「その週の月曜日」(実際の暦日から計算。AnchorYearには依存しない)にしているのは、
+' ①同じ週内の複数回の取り込みを1行にまとめるため、②AnchorYearを変更しても記録済みの
+' 実績データが「別の週のデータ」として誤表示されないようにするため、の両方を同時に満たす。
 ' UpsertStockRowが呼ばれるたびに全行をセル単位でスキャンしていたのを避けるため、
 ' 事前に1回のRange読み込みでDictionaryを構築しておく（テーブルが月々増えるほど効果が大きい）。
 ' 日付を文字列化する際はCLng(シリアル値)を経由し、地域の日付表示形式に左右されないようにする。
@@ -705,7 +721,7 @@ Private Function BuildStockRowIndex(tbl As ListObject) As Object
         data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' 1,2列目(RM_Code,Date)をまとめて読む
         Dim i As Long
         For i = 1 To n
-            idx(CStr(data(i, 1)) & "|" & CStr(CLng(data(i, 2)))) = i
+            idx(CStr(data(i, 1)) & "|" & CStr(CLng(MondayOfWeek(CDate(data(i, 2)))))) = i
         Next i
     End If
     Set BuildStockRowIndex = idx
@@ -713,10 +729,13 @@ End Function
 
 ' WeekIndex(3列目)は数式列のためここでは書き込まない(Dateが変われば自動的に再計算される)。
 ' 新規行を追加した場合は、Excelのテーブル機能が既存行と同じ数式を自動的に複製する。
+' 同じ週内で2回目以降の取り込みがあった場合は、Date・Qtyの両方を最新の値で上書きする
+' (その週内で一番新しい実施日の記録が残るようにするため)。
 Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As String, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
-    Dim key As String: key = code & "|" & CStr(CLng(d))
+    Dim key As String: key = code & "|" & CStr(CLng(MondayOfWeek(d)))
     If idx.Exists(key) Then
         Dim rowN As Long: rowN = idx(key)
+        tbl.ListColumns(2).DataBodyRange.Cells(rowN, 1).Value = d
         tbl.ListColumns(4).DataBodyRange.Cells(rowN, 1).Value = v
         updated = updated + 1
     Else

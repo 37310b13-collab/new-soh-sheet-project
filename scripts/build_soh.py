@@ -226,6 +226,12 @@ ws.freeze_panes = "A2"
 rm_row = {r["RM_Code"]: i + 2 for i, r in enumerate(rm_master)}          # Grid_* row for RM_Code (row1=header)
 inter_row = {r["Intermediate"]: i + 2 for i, r in enumerate(inter_master)}  # PP_Grid row for Intermediate
 
+# T_SelfStock/T_TTAFStock(材料×週のグリッド)の行位置。4段見出し(月-年/日付/週No/週ラベル)の
+# 下から材料が並ぶため、Grid_*(header 1行だけ)とは行オフセットが異なる。
+SS_MONTHYEAR_ROW, SS_DATE_ROW, SS_WEEKNO_ROW, SS_TABLE_ROW = 1, 2, 3, 4
+SS_DATA_START_ROW = SS_TABLE_ROW + 1
+ss_row_map = {r["RM_Code"]: i + SS_DATA_START_ROW for i, r in enumerate(rm_master)}  # T_SelfStock/T_TTAFStock row
+
 def week_col(week_idx):
     return get_column_letter(1 + week_idx)  # col A = label, col B = week1
 
@@ -349,49 +355,99 @@ ws.cell(row=2, column=2).number_format = "yyyy-mm-dd"
 for col, w in zip("ABCDE", [16, 14, 10, 12, 30]):
     ws.column_dimensions[col].width = w
 
-# ============================================================ T_SelfStock (自社倉庫の実績, VBA更新)
-# 列順: RM_Code, Date(VBAが記入), WeekIndex(Dateから自動計算), Self_Qty
-ws = wb.create_sheet("T_SelfStock")
-ws.append(["Part Name", "Date", "WeekIndex", "Self_Qty"])
-self_rows_written = 0
-for r in self_stock_sample:
-    d = datetime.date.fromisoformat(r["Date"])
-    ws.append([r["RM_Code"], d, None, to_float(r["Self_Qty"], 0)])
-    self_rows_written += 1
-if self_rows_written == 0:
-    ws.append(["(例) CHEM-1010", START_MONDAY, None, 0])
-    self_rows_written = 1
-for row_i in range(2, self_rows_written + 2):
-    ws.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
-style_header(ws, 4)
-add_table(ws, "T_SelfStock", f"A1:D{self_rows_written+1}")
-for c, w in zip("ABCD", [16, 12, 10, 12]):
-    ws.column_dimensions[c].width = w
-for row_i in range(2, self_rows_written + 2):
-    ws.cell(row=row_i, column=2).number_format = "yyyy-mm-dd"
-print("T_SelfStock rows seeded:", self_rows_written)
+# ============================================================ T_SelfStock / T_TTAFStock (自社/TTAF倉庫の実績)
+# 設計: VBAが書き込む生データは「実施日」をキーにした安全な形(_Logシート、非表示)に保存する。
+# WeekIndexは各行のDateから毎回ライブ計算されるため、AnchorYearを何度・どんな頻度で進めても
+# 実績データが「別の週のもの」として誤表示されることはない。
+# 目に見える方のT_SelfStock/T_TTAFStockシートは、Dashboardと同じ「材料×週」のグリッド形式にし、
+# 値は一切保存せず_Logシートを参照するSUMIFSだけで組み立てる(常に最新計算)。こうすることで、
+# グリッドの列(週)が現在のAnchorYearに紐づいていても、実データ自体は_Logシート側で安全に
+# 保たれたままなので、AnchorYearを何度動かしても実績の生データが壊れることはない。
+# （_Logシート側は、同じ週内に複数回VBAで取り込んでも1行に上書きされる。以前は実施日そのもの
+# をキーにしていたため、日次で取り込むたびに行が積み上がっていたが、それをその週の月曜日
+# （実際の暦日から計算。AnchorYearには依存しない）をキーにする方式に変更して解消している）。
+def build_actual_stock_sheets(name, qty_col, sample_rows):
+    log_name = f"{name}_Log"
 
-# ============================================================ T_TTAFStock (TTAF倉庫の実績, VBA更新)
-# 列順: RM_Code, Date(VBAが記入), WeekIndex(Dateから自動計算), TTAF_Qty
-ws = wb.create_sheet("T_TTAFStock")
-ws.append(["Part Name", "Date", "WeekIndex", "TTAF_Qty"])
-ttaf_rows_written = 0
-for r in ttaf_stock_sample:
-    d = datetime.date.fromisoformat(r["Date"])
-    ws.append([r["RM_Code"], d, None, to_float(r["TTAF_Qty"], 0)])
-    ttaf_rows_written += 1
-if ttaf_rows_written == 0:
-    ws.append(["(例) CHEM-1010", START_MONDAY, None, 0])
-    ttaf_rows_written = 1
-for row_i in range(2, ttaf_rows_written + 2):
-    ws.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
-style_header(ws, 4)
-add_table(ws, "T_TTAFStock", f"A1:D{ttaf_rows_written+1}")
-for c, w in zip("ABCD", [16, 12, 10, 12]):
-    ws.column_dimensions[c].width = w
-for row_i in range(2, ttaf_rows_written + 2):
-    ws.cell(row=row_i, column=2).number_format = "yyyy-mm-dd"
-print("T_TTAFStock rows seeded:", ttaf_rows_written)
+    # ---- 非表示の生ログ(VBAがここに書き込む。実施日ベースで安全) ----
+    ws_log = wb.create_sheet(log_name)
+    ws_log.append(["Part Name", "Date", "WeekIndex", qty_col])
+    rows_written = 0
+    for r in sample_rows:
+        d = datetime.date.fromisoformat(r["Date"])
+        ws_log.append([r["RM_Code"], d, None, to_float(r[qty_col], 0)])
+        rows_written += 1
+    if rows_written == 0:
+        ws_log.append(["(例) CHEM-1010", START_MONDAY, None, 0])
+        rows_written = 1
+    for row_i in range(2, rows_written + 2):
+        ws_log.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
+        ws_log.cell(row=row_i, column=2).number_format = "yyyy-mm-dd"
+    style_header(ws_log, 4)
+    add_table(ws_log, log_name, f"A1:D{rows_written+1}")
+    for c, w in zip("ABCD", [16, 12, 10, 12]):
+        ws_log.column_dimensions[c].width = w
+    print(f"{log_name} rows seeded:", rows_written)
+
+    # ---- 目に見えるグリッド(材料×週。すべて数式で_Logシートから毎回計算、値は保存しない) ----
+    ws_grid = wb.create_sheet(name)
+    for w in range(1, N_WEEKS + 1):
+        col = 1 + w
+        cal_row = CAL_HEADER_ROW + w
+        if w == 1:
+            my_formula = f"='Cal_Weeks'!G{cal_row}"
+        else:
+            prev_cal_row = CAL_HEADER_ROW + w - 1
+            my_formula = (
+                f'=IF(TEXT(\'Cal_Weeks\'!B{cal_row},"mmm-yy")<>TEXT(\'Cal_Weeks\'!B{prev_cal_row},"mmm-yy"),'
+                f"'Cal_Weeks'!G{cal_row},\"\")"
+            )
+        ws_grid.cell(row=SS_MONTHYEAR_ROW, column=col, value=my_formula)
+        dcell = ws_grid.cell(row=SS_DATE_ROW, column=col, value=f"='Cal_Weeks'!B{cal_row}")
+        dcell.number_format = "m/d"
+        ws_grid.cell(row=SS_WEEKNO_ROW, column=col, value=f"='Cal_Weeks'!D{cal_row}")
+        ws_grid.cell(row=SS_TABLE_ROW, column=col, value=week_labels[w])
+    for r in (SS_MONTHYEAR_ROW, SS_DATE_ROW, SS_WEEKNO_ROW):
+        for c in range(1, N_WEEKS + 2):
+            ws_grid.cell(row=r, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
+            ws_grid.cell(row=r, column=c).font = Font(bold=(r == SS_MONTHYEAR_ROW))
+    ws_grid.cell(row=SS_TABLE_ROW, column=1, value="Part Name")
+
+    for i, r in enumerate(rm_master):
+        rr = SS_DATA_START_ROW + i
+        rm = r["RM_Code"]
+        ws_grid.cell(row=rr, column=1, value=rm)
+        for w in range(1, N_WEEKS + 1):
+            # 記録が無い週は(SUMIFSの0ではなく)空欄"" にする。0という実績が記録された週と
+            # 「記録自体が無い」週を区別できるようにするため(Grid_Stockの手動棚卸>実績>
+            # ロールフォワードという優先順位判定が、記録の有無を見て動いているため)。
+            has_record = f"COUNTIFS({log_name}[Part Name],$A{rr},{log_name}[WeekIndex],{w})"
+            ws_grid.cell(row=rr, column=1 + w, value=(
+                f'=IF({has_record}=0,"",SUMIFS({log_name}[{qty_col}],{log_name}[Part Name],$A{rr},'
+                f'{log_name}[WeekIndex],{w}))'
+            ))
+    n_last_row = SS_DATA_START_ROW + len(rm_master) - 1
+    style_header(ws_grid, N_WEEKS + 1, row=SS_TABLE_ROW)
+    # ヘッダーが数式/複数行(月-年・日付・週No)のため、Dashboardと同様にExcelのテーブル機能は
+    # 使わず、罫線・縞模様の手動書式で「テーブルらしい」見た目にする。
+    thin_ss = Side(style="thin", color="BFBFBF")
+    border_ss = Border(left=thin_ss, right=thin_ss, top=thin_ss, bottom=thin_ss)
+    for rr2 in range(SS_TABLE_ROW, n_last_row + 1):
+        stripe = (rr2 - SS_TABLE_ROW) % 2 == 1
+        for c in range(1, N_WEEKS + 2):
+            cell = ws_grid.cell(row=rr2, column=c)
+            cell.border = border_ss
+            if rr2 > SS_TABLE_ROW and stripe:
+                cell.fill = PatternFill("solid", fgColor="F2F2F2")
+    ws_grid.column_dimensions["A"].width = 14
+    for w in range(1, N_WEEKS + 1):
+        ws_grid.column_dimensions[week_col(w)].width = 9
+    ws_grid.freeze_panes = f"B{SS_DATA_START_ROW}"
+    print(f"{name} grid built:", len(rm_master), "materials x", N_WEEKS, "weeks")
+    return n_last_row
+
+build_actual_stock_sheets("T_SelfStock", "Self_Qty", self_stock_sample)
+build_actual_stock_sheets("T_TTAFStock", "TTAF_Qty", ttaf_stock_sample)
 
 # ============================================================ Grid_Requirement / Grid_Incoming / Grid_Stock
 # Grid_Requirementは、以前は「BOM行×週」を1行ずつ展開した中間表(Calc_Demand, 73,944行)を
@@ -426,17 +482,16 @@ for i, r in enumerate(rm_master):
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"
         )
-        # T_StockCount/T_SelfStock/T_TTAFStockは、RefreshSelfStock/RefreshTTAFStockの実行を
-        # 重ねるたびに行数が増え続ける(週次実行なら1年で数千行規模になりうる)。SUMPRODUCTの
-        # ブール配列積(旧実装)は表が育つほど遅くなり、実際に強制終了の原因になったパターンと
-        # 同種のリスクがあったため、ネイティブ関数のCOUNTIFS/SUMIFS(この環境で構造化参照との
-        # 組み合わせが正しく動作することを確認済み)に置き換えている。
+        # T_StockCountは棚卸(手動・低頻度)のためCOUNTIFS/SUMIFSのままでよい。
+        # T_SelfStock/T_TTAFStockは「材料×週」のグリッド形式(直接セル参照)になったため、
+        # SUMIFS不要でGrid_Requirement/Incomingと同じ直接参照で済む(高速・行数増加の心配もない)。
         has_count = f"COUNTIFS(T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
         count_val = f"SUMIFS(T_StockCount[CountedQty],T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
-        has_self = f"COUNTIFS(T_SelfStock[Part Name],$A{rr},T_SelfStock[WeekIndex],{w})"
-        self_val = f"SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[Part Name],$A{rr},T_SelfStock[WeekIndex],{w})"
-        has_ttaf = f"COUNTIFS(T_TTAFStock[Part Name],$A{rr},T_TTAFStock[WeekIndex],{w})"
-        ttaf_val = f"SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[Part Name],$A{rr},T_TTAFStock[WeekIndex],{w})"
+        ss_row = ss_row_map[rm]
+        has_self = f"('T_SelfStock'!{cl}{ss_row}<>\"\")"
+        self_val = f"'T_SelfStock'!{cl}{ss_row}"
+        has_ttaf = f"('T_TTAFStock'!{cl}{ss_row}<>\"\")"
+        ttaf_val = f"'T_TTAFStock'!{cl}{ss_row}"
         if w == 1:
             prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
@@ -445,7 +500,7 @@ for i, r in enumerate(rm_master):
         # 優先順位: 手動棚卸(T_StockCount) > 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
         ws_st.cell(row=rr, column=1 + w).value = (
             f"=IF({has_count}>0,{count_val},"
-            f"IF(({has_self}>0)*({has_ttaf}>0)>0,{self_val}+{ttaf_val},{normal}))"
+            f"IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal}))"
         )
 
 n = len(rm_master) + 1
@@ -595,19 +650,18 @@ for rm_code, entries in bom_by_rm.items():
     # 合計在庫は「前週在庫-使用量+TTAF+自社+入庫」を再度ここで組み立てるのではなく、
     # 既にDashboardで検証済みの優先順位ロジック(手動棚卸 > 自社+TTAF実績 > ロールフォワード)
     # を持つGrid_Stockをそのまま参照する(Dashboardと数字が食い違うのを防ぐため)。
+    ss_row = ss_row_map[rm_code]
     row_num += 1
     ws.cell(row=row_num, column=2, value="TTAF在庫(実績,kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=(f'=IFERROR(SUMIFS(T_TTAFStock[TTAF_Qty],T_TTAFStock[Part Name],$A{mat_header_row},'
-                       f'T_TTAFStock[WeekIndex],{w}),"")'))
+                value=f"='T_TTAFStock'!{week_col(w)}{ss_row}")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="自社在庫(実績,kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=(f'=IFERROR(SUMIFS(T_SelfStock[Self_Qty],T_SelfStock[Part Name],$A{mat_header_row},'
-                       f'T_SelfStock[WeekIndex],{w}),"")'))
+                value=f"='T_SelfStock'!{week_col(w)}{ss_row}")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
@@ -650,10 +704,9 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # Statusのテキスト列は廃止し、各週のセル自体を基準在庫の下限/上限に対して
 # 赤(下限未満)/緑(範囲内)/青(上限超)に色分けする方式にした。
 #
-# T_SelfStock/T_TTAFStockは(RM_Code,WeekIndex)ごとに上書き更新される(重複行は増えない)ため、
-# 定常状態での行数上限は「原材料数×週数(101×104≈10,504)」程度に収まる想定。LOOKUP参照範囲は
-# それより十分大きい12,000行を確保しつつ、以前問題になった$100000のような過大な範囲は避ける。
-STOCK_LOOKUP_ROWS = 12000
+# T_SelfStock/T_TTAFStockが「材料×週」のグリッド形式になったため、直近実績の検索は
+# 「その材料の行(週1〜週104)の中で一番右にある空欄でないセル」をLOOKUPの最終一致トリックで
+# 探すだけで済む(以前のような、行数が育つ長い列を毎回$12000行スキャンする必要がなくなった)。
 LEFT_COLS = ["Part Name", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
              "自社在庫(実績)", "TTAF在庫(実績)", "実績週"]
 WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # I列から週データ
@@ -746,13 +799,18 @@ for i, r in enumerate(rm_master):
             value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
     ws.cell(row=rr, column=5,
             value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
+    ss_row = ss_row_map[r["RM_Code"]]
+    ss_first_col = week_col(1)
+    ss_last_col = week_col(N_WEEKS)
+    ss_self_rng = f"'T_SelfStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
+    ss_ttaf_rng = f"'T_TTAFStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
+    ss_label_rng = f"'T_SelfStock'!${ss_first_col}${SS_TABLE_ROW}:${ss_last_col}${SS_TABLE_ROW}"
     ws.cell(row=rr, column=6,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_SelfStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
+            value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_self_rng}),"")')
     ws.cell(row=rr, column=7,
-            value=(f'=IFERROR(LOOKUP(2,1/(T_TTAFStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),T_TTAFStock!$D$2:$D${STOCK_LOOKUP_ROWS}),"")'))
+            value=f'=IFERROR(LOOKUP(2,1/({ss_ttaf_rng}<>""),{ss_ttaf_rng}),"")')
     ws.cell(row=rr, column=8,
-            value=(f'=IFERROR(INDEX(Cal_Weeks[Label],LOOKUP(2,1/(T_SelfStock!$A$2:$A${STOCK_LOOKUP_ROWS}=$A{rr}),'
-                   f'T_SelfStock!$C$2:$C${STOCK_LOOKUP_ROWS})),"")'))
+            value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_label_rng}),"")')
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
         gs_col = week_col(w)
@@ -946,7 +1004,10 @@ readme_lines = [
     "                        HideInactiveIntermediatesマクロ(要ボタン設定)で、指定期間ずっと生産予定の無い",
     "                        中間体の行を折りたためます（在庫関連の行は常に表示されたままです）。",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
-    "  T_Shipments/T_OpeningStock/T_StockCount/T_SelfStock/T_TTAFStock : 入力用",
+    "  T_Shipments/T_OpeningStock/T_StockCount : 入力用",
+    "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
+    "                        RefreshSelfStock/RefreshTTAFStockで更新されます。手入力はしないでください",
+    "                        （生データは非表示のT_SelfStock_Log/T_TTAFStock_Logに安全に保存されています）。",
     "",
     "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
     "",
@@ -988,6 +1049,8 @@ nav_targets = [
     ("T_Shipments", "発注・着荷の入力"),
     ("T_OpeningStock", "期首在庫の入力"),
     ("T_StockCount", "棚卸実績の入力"),
+    ("T_SelfStock", "自社倉庫の在庫実績（材料×週。RefreshSelfStockで自動更新）"),
+    ("T_TTAFStock", "TTAF倉庫の在庫実績（材料×週。RefreshTTAFStockで自動更新）"),
 ]
 ws.insert_rows(2, amount=len(nav_targets) + 2)
 ws["A2"] = "【ジャンプ】クリックで各シートへ移動"
@@ -997,8 +1060,11 @@ for i, (target, label) in enumerate(nav_targets, start=3):
     cell.hyperlink = f"#'{target}'!A1"
     cell.font = Font(color="0563C1", underline="single")
 
-# ---- 内部処理用シートは非表示にして視認性を上げる（Dashboardが週次在庫の表示を兼ねるためGrid_Stockも非表示） ----
-for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming", "Grid_Stock"]:
+# ---- 内部処理用シートは非表示にして視認性を上げる（Dashboardが週次在庫の表示を兼ねるためGrid_Stockも非表示。
+#      T_SelfStock_Log/T_TTAFStock_LogはVBAが書き込む生ログで、目に見えるT_SelfStock/T_TTAFStock
+#      （材料×週のグリッド）はそこから数式で計算するだけなので、生ログ自体は非表示にする） ----
+for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming",
+                    "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]:
     if sheet_name in wb.sheetnames:
         wb[sheet_name].sheet_state = "hidden"
 
@@ -1008,7 +1074,7 @@ order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draf
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
-         "Grid_Incoming", "Grid_Stock"]
+         "Grid_Incoming", "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
 # ---- 保存前チェック: テーブルがヘッダー行のみ(データ0行)になっていないか ----
