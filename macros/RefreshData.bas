@@ -23,12 +23,12 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 '                          0の中間体の行をボタン一つで非表示にする（材料の在庫関連の行は
 '                          常に表示されたまま）。
 '   ShowAllIntermediates  : HideInactiveIntermediatesで非表示にした行を全て再表示する。
-'   JumpToSelectedWeek    : Dashboard/Material_DetailのC1(選択週)を入力したときに、実際の
-'                          週データ列(複製ではない本物の列)が固定ペインのすぐ右に来るよう
-'                          ウィンドウを横スクロールする。呼び出しにはDashboard/Material_Detail
-'                          それぞれのシートモジュールにWorksheet_Changeを1行ずつ設置する必要が
-'                          あります（下記【導入方法】参照。標準モジュールの機能だけでは
-'                          シートの変更を検知できないための対応です）。
+'   JumpToSelectedWeek    : Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのC1(選択週)を
+'                          入力したときに、実際の週データ列(複製ではない本物の列)が固定ペイン
+'                          のすぐ右に来るようウィンドウを横スクロールする。呼び出しには
+'                          対象の4シートそれぞれのシートモジュールにWorksheet_Changeを1行ずつ
+'                          設置する必要があります（下記【導入方法】参照。標準モジュールの
+'                          機能だけではシートの変更を検知できないための対応です）。
 '
 ' いずれも、それぞれ対応するシートだけを更新します。T_Shipments・T_OpeningStock・
 ' T_StockCount・SafetyStock_Qty等、運用中に手入力した内容には一切触れません。
@@ -88,6 +88,18 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 '   Private Sub Worksheet_Change(ByVal Target As Range)
 '       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
 '       Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = D列(週データ開始列)
+'   End Sub
+'
+'   ' --- T_SelfStockシートのコードモジュールに貼り付け ---
+'   Private Sub Worksheet_Change(ByVal Target As Range)
+'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
+'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = B列(週データ開始列)
+'   End Sub
+'
+'   ' --- T_TTAFStockシートのコードモジュールに貼り付け ---
+'   Private Sub Worksheet_Change(ByVal Target As Range)
+'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
+'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = B列(週データ開始列)
 '   End Sub
 ' ============================================================================
 
@@ -866,13 +878,14 @@ Sub HideInactiveIntermediates()
            "（材料名の行・在庫関連の行は常に表示されます）", vbInformation
 End Sub
 
-' Dashboard/Material_DetailのC1(選択週)を入力したときに呼ばれる想定の共通処理。
-' 選択週の値を別セルに複製する(ピン留め列)方式は廃止し、代わりに「本物の週データ列」が
-' 常にラベル列のすぐ右(固定ペインの直後)に見えるよう、ウィンドウを横スクロールするだけに
-' している。値の複製が一切ないため、Dashboard・Material_Detail・Grid_Stock等の間で
+' Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのC1(選択週)を入力したときに呼ばれる
+' 想定の共通処理。選択週の値を別セルに複製する(ピン留め列)方式は廃止し、代わりに
+' 「本物の週データ列」が常にラベル列のすぐ右(固定ペインの直後)に見えるよう、ウィンドウを
+' 横スクロールするだけにしている。値の複製が一切ないため、各シート・Grid_Stock等の間で
 ' 数字が食い違う余地がない。
 ' 呼び出し元のシート自身のWorksheet_Changeから、対象シート・週No解決済みセル(F1)・
-' 週データ開始列(Dashboardは9=I列、Material_Detailは4=D列)を渡して呼び出す。
+' 週データ開始列(Dashboardは9=I列、Material_Detailは4=D列、T_SelfStock/T_TTAFStockは
+' 2=B列)を渡して呼び出す。
 Public Sub JumpToSelectedWeek(sh As Worksheet, weekIndexCell As String, weekStartCol As Long)
     Dim wIdx As Variant
     wIdx = sh.Range(weekIndexCell).Value

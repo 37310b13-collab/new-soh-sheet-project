@@ -5,6 +5,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.comments import Comment
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
 
 import os
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -224,9 +225,10 @@ ws.freeze_panes = "A2"
 rm_row = {r["RM_Code"]: i + 2 for i, r in enumerate(rm_master)}          # Grid_* row for RM_Code (row1=header)
 inter_row = {r["Intermediate"]: i + 2 for i, r in enumerate(inter_master)}  # PP_Grid row for Intermediate
 
-# T_SelfStock/T_TTAFStock(材料×週のグリッド)の行位置。4段見出し(月-年/日付/週No/週ラベル)の
-# 下から材料が並ぶため、Grid_*(header 1行だけ)とは行オフセットが異なる。
-SS_MONTHYEAR_ROW, SS_DATE_ROW, SS_WEEKNO_ROW, SS_TABLE_ROW = 1, 2, 3, 4
+# T_SelfStock/T_TTAFStock(材料×週のグリッド)の行位置。1行目はDashboard/Material_Detailと
+# 同様に選択週の入力欄(C1)用に空けておき、4段見出し(月-年/日付/週No/週ラベル)はその下から、
+# 材料はさらにその下から並ぶ。
+SS_MONTHYEAR_ROW, SS_DATE_ROW, SS_WEEKNO_ROW, SS_TABLE_ROW = 2, 3, 4, 5
 SS_DATA_START_ROW = SS_TABLE_ROW + 1
 ss_row_map = {r["RM_Code"]: i + SS_DATA_START_ROW for i, r in enumerate(rm_master)}  # T_SelfStock/T_TTAFStock row
 
@@ -393,6 +395,36 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
 
     # ---- 目に見えるグリッド(材料×週。すべて数式で_Logシートから毎回計算、値は保存しない) ----
     ws_grid = wb.create_sheet(name)
+
+    # 選択週の入力欄(C1)。Dashboard/Material_Detailと全く同じ仕組み(SUMPRODUCTで
+    # 「現在年×入力した週No」に一致するWeekIndexを求める)。VBAのJumpToSelectedWeekを
+    # 導入していれば、入力するとその週列のすぐ右(B列側)に自動でスクロールする。
+    ws_grid["A1"] = "選択週を入力（例: W23。現在年の週Noで検索します）"
+    ws_grid["A1"].font = Font(bold=True)
+    ws_grid["C1"] = ""
+    ws_grid["C1"].fill = INPUT_FILL
+    ws_grid["C1"].font = Font(bold=True, size=12)
+    _ss_cal_first = CAL_HEADER_ROW + 1
+    _ss_cal_last = CAL_HEADER_ROW + N_WEEKS
+    _ss_cal_year_rng = f"Cal_Weeks!$C${_ss_cal_first}:$C${_ss_cal_last}"
+    _ss_cal_weekofyear_rng = f"Cal_Weeks!$D${_ss_cal_first}:$D${_ss_cal_last}"
+    _ss_cal_weekindex_rng = f"Cal_Weeks!$A${_ss_cal_first}:$A${_ss_cal_last}"
+    _ss_cal_label_rng = f"Cal_Weeks!$E${_ss_cal_first}:$E${_ss_cal_last}"
+    _ss_wk_match = (f"({_ss_cal_year_rng}=Cal_Weeks!$B$1)*"
+                    f'({_ss_cal_weekofyear_rng}=VALUE(SUBSTITUTE(UPPER(TRIM($C$1)),"W","")))')
+    ws_grid["F1"] = (
+        f'=IFERROR(IF(SUMPRODUCT({_ss_wk_match})=0,"",SUMPRODUCT({_ss_wk_match}*({_ss_cal_weekindex_rng}))),"")'
+    )
+    ws_grid["F1"].font = Font(size=8, color="808080")
+    ws_grid["E1"] = "→WeekIndex"
+    ws_grid["E1"].font = Font(size=8, color="808080")
+    ws_grid["D1"] = (
+        f'=IF($C$1="","週Noを入力してください（例: W23）",'
+        f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
+        f'INDEX({_ss_cal_label_rng},$F$1)&" が該当週です（VBA導入時は自動でスクロールします）"))'
+    )
+    ws_grid["D1"].font = Font(bold=True, color="0563C1")
+
     for w in range(1, N_WEEKS + 1):
         col = 1 + w
         cal_row = CAL_HEADER_ROW + w
@@ -445,6 +477,19 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     for w in range(1, N_WEEKS + 1):
         ws_grid.column_dimensions[week_col(w)].width = 9
     ws_grid.freeze_panes = f"B{SS_DATA_START_ROW}"
+
+    # 選択中の週(F1のWeekIndex)に該当する列を太枠で強調。行数がDashboardと同程度(材料数のみ、
+    # Material_Detailのような数千行にはならない)なので、条件付き書式を付けてもパフォーマンス
+    # 上の懸念はない。
+    ss_week_select_border = Border(left=Side(style="thick", color="BF8F00"),
+                                    right=Side(style="thick", color="BF8F00"))
+    ws_grid.conditional_formatting.add(
+        f"B{SS_TABLE_ROW}:{week_col(N_WEEKS)}{n_last_row}",
+        FormulaRule(
+            formula=[f'(COLUMN()-COLUMN($B$1)+1)=$F$1'],
+            border=ss_week_select_border,
+        )
+    )
     print(f"{name} grid built:", len(rm_master), "materials x", N_WEEKS, "weeks")
     return n_last_row
 
@@ -686,8 +731,6 @@ for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[mdetail_week_col(w)].width = 9
 ws.column_dimensions[get_column_letter(HELPER_COL_MD)].width = 10
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL)}{MD_TABLE_ROW+1}"
-
-from openpyxl.formatting.rule import CellIsRule, FormulaRule
 
 # 注: Dashboardにある選択週の列を条件付き書式で強調する仕組みはここでは追加していません。
 # Material_Detailは行数が約1,660行と多く、週列全体(104週)に条件付き書式を適用すると

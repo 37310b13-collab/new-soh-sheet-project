@@ -50,7 +50,7 @@
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、週次） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
-| `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detailのウィンドウ表示位置のみ（数値は変更しない） |
+| `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 
 `HideInactiveIntermediates`/`ShowAllIntermediates`/`JumpToSelectedWeek`はいずれもデータを
 更新するマクロではなく、見た目（行の表示/非表示、ウィンドウのスクロール位置）だけを
@@ -263,10 +263,11 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 
 **選択週へのウィンドウ自動スクロール（`JumpToSelectedWeek`、任意・要手動設定）**: 以前の
 「選択週の値を別列に複製して常時表示する」方式（ピン留め列）は廃止し、`Dashboard`の`実績週`列
-・`Material_Detail`の`項目`列のすぐ右に、複製ではない本物の週データ列（週1・週2…）をそのまま
-並べる構成に変更しました。C1に週No(`W23`等)を入力したときにその該当週列が固定ペインの直後に
-くるよう自動でウィンドウを横スクロールしたい場合は、以下を一度だけ設定してください（設定しない
-場合も、該当週の列は太枠でハイライトされるため、手動でスクロールして探すことは可能です）。
+・`Material_Detail`の`項目`列・`T_SelfStock`/`T_TTAFStock`の`Part Name`列のすぐ右に、複製では
+ない本物の週データ列（週1・週2…）をそのまま並べる構成にしています。C1に週No(`W23`等)を入力
+したときにその該当週列が固定ペインの直後にくるよう自動でウィンドウを横スクロールしたい場合は、
+以下を一度だけ設定してください（設定しない場合も、該当週の列は太枠でハイライトされるため、
+手動でスクロールして探すことは可能です）。
 
 1. Alt+F11でVBEを開く
 2. プロジェクトエクスプローラーで「Dashboard」シートをダブルクリックし、そのシート専用の
@@ -284,9 +285,17 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
        Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = D列(週データ開始列)
    End Sub
    ```
+4. 「T_SelfStock」「T_TTAFStock」シートにも、それぞれのコードモジュールに以下を貼り付ける
+   （2つとも同じ内容です）
+   ```vba
+   Private Sub Worksheet_Change(ByVal Target As Range)
+       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
+       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = B列(週データ開始列)
+   End Sub
+   ```
 
 呼び出し先の`JumpToSelectedWeek`本体は`macros/RefreshData.bas`（標準モジュール）側に実装済み
-のため、通常どおりRefreshData.basをインポートしていれば追加の作業は不要です。上記2つの
+のため、通常どおりRefreshData.basをインポートしていれば追加の作業は不要です。上記4つの
 `Worksheet_Change`だけを、対応するシート自身のコードモジュールに貼り付けてください。
 
 ## 6. 自動反映の仕組み
