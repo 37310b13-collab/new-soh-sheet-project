@@ -54,8 +54,6 @@ def load_csv_optional(name):
     return load_csv(name)
 
 
-self_stock_sample = load_csv_optional("self_stock_sample.csv")
-ttaf_stock_sample = load_csv_optional("ttaf_stock_sample.csv")
 weekly_batches = load_csv("weekly_batches.csv")
 
 # clean numeric fields, drop rows with missing numeric qty
@@ -378,7 +376,11 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
         ws_log.append([r["RM_Code"], d, None, to_float(r[qty_col], 0)])
         rows_written += 1
     if rows_written == 0:
-        ws_log.append(["(例) CHEM-1010", START_MONDAY, None, 0])
+        # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないための構造上の
+        # ダミー行。表示中の104週ウィンドウから確実に外れる日付(WeekIndexが空欄になる)を
+        # 使うことで、グリッド側には一切表示されないようにしている(サンプルデータに
+        # 見えてしまわないように)。
+        ws_log.append(["(ダミー行、削除不可)", datetime.date(2000, 1, 3), None, 0])
         rows_written = 1
     for row_i in range(2, rows_written + 2):
         ws_log.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
@@ -446,8 +448,8 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     print(f"{name} grid built:", len(rm_master), "materials x", N_WEEKS, "weeks")
     return n_last_row
 
-build_actual_stock_sheets("T_SelfStock", "Self_Qty", self_stock_sample)
-build_actual_stock_sheets("T_TTAFStock", "TTAF_Qty", ttaf_stock_sample)
+build_actual_stock_sheets("T_SelfStock", "Self_Qty", [])
+build_actual_stock_sheets("T_TTAFStock", "TTAF_Qty", [])
 
 # ============================================================ Grid_Requirement / Grid_Incoming / Grid_Stock
 # Grid_Requirementは、以前は「BOM行×週」を1行ずつ展開した中間表(Calc_Demand, 73,944行)を

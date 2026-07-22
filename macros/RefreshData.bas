@@ -430,7 +430,7 @@ Sub RefreshBOM()
     Dim rmN As Long: rmN = rmTbl.ListRows.Count
     If rmN > 0 Then
         Dim rmData As Variant
-        rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' RM_Code, Description
+        rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' Part Name, Description
         Dim i As Long
         For i = 1 To rmN
             Dim key As String: key = NormalizeText(CStr(rmData(i, 2)))
