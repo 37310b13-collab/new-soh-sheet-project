@@ -201,11 +201,17 @@ NextSheet:
     Exit Sub
 
 ErrHandler:
+    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
+    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
+    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
+    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
+    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
 Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As Long, ppGrid As ListObject, ppIdx As Object, _
@@ -479,11 +485,17 @@ Sub RefreshBOM()
     Exit Sub
 
 ErrHandler:
+    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
+    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
+    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
+    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
+    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
 Private Sub ProcessBomSheet(sh As Worksheet, bomTbl As ListObject, descIndex As Object, _
@@ -617,11 +629,17 @@ Sub RefreshSelfStock()
     Exit Sub
 
 ErrHandler:
+    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
+    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
+    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
+    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
+    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
 Sub RefreshTTAFStock()
@@ -672,11 +690,17 @@ Sub RefreshTTAFStock()
     Exit Sub
 
 ErrHandler:
+    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
+    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
+    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
+    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "更新処理でエラーが発生しました: " & Err.Description, vbCritical
+    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
 Private Function ExtractDateFromName(path As String) As Date
