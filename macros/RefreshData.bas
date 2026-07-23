@@ -42,6 +42,15 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 ' (1セルずつの読み書きや毎回の全行スキャンがCOM通信の積み重ねで極めて遅くなることが原因)が
 ' 複数回報告されたことを受けての対策です。
 '
+' 【既存行の更新に.DataBodyRangeを使わない理由】RefreshBOM/RefreshWeeklyBatchesの実行時に
+' 「(91) オブジェクト変数または With ブロック変数が設定されていません」というエラーが報告され
+' ました。原因は、Excel/VBAの既知のクセとして、ListObject.DataBodyRangeが(特にListRows.Add
+' で新しい行を追加した直後など)不安定にNothingを返すことがあるためです。新規行の追加時は元々
+' 各Sub内で.ListRows.Add後の戻り値(newRow.Range)を使っておりこの問題を回避できていましたが、
+' 既存行の値を更新する側だけ.DataBodyRange.Cells(...)という不安定な書き方が残っていました。
+' すべて.ListRows(行番号).Range.Cells(...)という、行追加直後でも安定して動く書き方に統一
+' しています。
+'
 ' 【T_SelfStock/T_TTAFStockの二層構造について】RefreshSelfStock/RefreshTTAFStockは、目に
 ' 見えるT_SelfStock/T_TTAFStockシートには一切書き込みません。書き込み先は非表示の
 ' T_SelfStock_Log/T_TTAFStock_Log（実施日ベースの生ログ）で、目に見える方のシートは
@@ -257,7 +266,7 @@ Private Sub ProcessMaterialSheet(sh As Worksheet, usedRows As Long, usedCols As 
                         Dim v As Double
                         v = 0
                         If IsNumeric(data(r, keyVariant)) Then v = data(r, keyVariant)
-                        ppGrid.DataBodyRange.Cells(ppRowIndex, colIdx).Value = v
+                        ppGrid.ListRows(ppRowIndex).Range.Cells(1, colIdx).Value = v
                         updatedCells = updatedCells + 1
                     End If
                 Next keyVariant
@@ -309,7 +318,8 @@ Private Function BuildNameIndex(tbl As ListObject, colName As String) As Object
     idx.CompareMode = vbTextCompare
     Dim n As Long: n = tbl.ListRows.Count
     If n = 1 Then
-        idx(CStr(tbl.ListColumns(colName).DataBodyRange.Cells(1, 1).Value)) = 1
+        Dim colPos As Long: colPos = tbl.ListColumns(colName).Index
+        idx(CStr(tbl.ListRows(1).Range.Cells(1, colPos).Value)) = 1
     ElseIf n > 1 Then
         Dim data As Variant
         data = tbl.ListColumns(colName).DataBodyRange.Value
@@ -382,7 +392,7 @@ Private Sub ProcessSubstrateSheet(sh As Worksheet, usedRows As Long, usedCols As
                                 Dim colIdx As Long: colIdx = weekColByDate(dateCols(keyVariant))
                                 Dim v As Double: v = 0
                                 If IsNumeric(data(r, keyVariant)) Then v = data(r, keyVariant)
-                                ppGrid.DataBodyRange.Cells(ppRowIndex, colIdx).Value = v
+                                ppGrid.ListRows(ppRowIndex).Range.Cells(1, colIdx).Value = v
                                 updatedCells = updatedCells + 1
                             End If
                         Next keyVariant
@@ -412,7 +422,7 @@ Private Sub UpsertBomRow(bomTbl As ListObject, bomIdx As Object, interName As St
     Dim key As String: key = interName & "|" & rmCode
     If bomIdx.Exists(key) Then
         Dim rowN As Long: rowN = bomIdx(key)
-        bomTbl.ListColumns("RM_Qty_Per_Batch").DataBodyRange.Cells(rowN, 1).Value = rate
+        bomTbl.ListRows(rowN).Range.Cells(1, 3).Value = rate
         bomUpdated = bomUpdated + 1
     Else
         Dim newRow As ListRow
@@ -527,7 +537,7 @@ Private Sub ProcessBomSheet(sh As Worksheet, bomTbl As ListObject, descIndex As 
                             Dim pk As String: pk = interName & "|" & rmCode
                             If pairIndex.Exists(pk) Then
                                 Dim rowN As Long: rowN = pairIndex(pk)
-                                bomTbl.ListColumns("RM_Qty_Per_Batch").DataBodyRange.Cells(rowN, 1).Value = CDbl(v)
+                                bomTbl.ListRows(rowN).Range.Cells(1, 3).Value = CDbl(v)
                                 updated = updated + 1
                             Else
                                 Dim newRow As ListRow
@@ -771,8 +781,8 @@ Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As Stri
     Dim key As String: key = code & "|" & CStr(CLng(MondayOfWeek(d)))
     If idx.Exists(key) Then
         Dim rowN As Long: rowN = idx(key)
-        tbl.ListColumns(2).DataBodyRange.Cells(rowN, 1).Value = d
-        tbl.ListColumns(4).DataBodyRange.Cells(rowN, 1).Value = v
+        tbl.ListRows(rowN).Range.Cells(1, 2).Value = d
+        tbl.ListRows(rowN).Range.Cells(1, 4).Value = v
         updated = updated + 1
     Else
         Dim newRow As ListRow
