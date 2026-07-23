@@ -98,8 +98,8 @@ inter_master = inter_dedup
 # 以降のシート生成コードは一切変更せずに連動して絞り込まれる。
 if SUPPLIER_FILTER:
     rm_master = [r for r in rm_master if r["Supplier"].strip() == SUPPLIER_FILTER]
-    _filt_codes = {r["RM_Code"] for r in rm_master}
-    bom = [r for r in bom if r["RM_Code"] in _filt_codes]
+    _filt_codes = {r["RM_Code"].upper() for r in rm_master}
+    bom = [r for r in bom if r["RM_Code"].upper() in _filt_codes]
     _filt_inter_names = {r["Intermediate"] for r in bom}
     inter_master = [r for r in inter_master if r["Intermediate"] in _filt_inter_names]
     prodmap = [r for r in prodmap if r["Intermediate"] in _filt_inter_names]
@@ -240,6 +240,15 @@ for col, w in zip("AB", [14, 16]):
 ws.freeze_panes = "A2"
 
 rm_row = {r["RM_Code"]: i + 2 for i, r in enumerate(rm_master)}          # Grid_* row for RM_Code (row1=header)
+# 外部データ(shipments_all.csv等)がRM_Codeを大文字/小文字違いで記載している場合があるため、
+# 「このRM_Codeがrm_masterに存在するか」の判定は大文字小文字を区別せずに行う
+# (Excelの数式側の比較はもともと大文字小文字を区別しないため、Python側もそれに合わせる)。
+# 一致したら、rm_master側の正しい表記(canonical case)に揃えて使う。
+rm_code_canonical = {code.upper(): code for code in rm_row}
+def normalize_rm_code(code):
+    if not code:
+        return None
+    return rm_code_canonical.get(code.upper())
 inter_row = {r["Intermediate"]: i + 2 for i, r in enumerate(inter_master)}  # PP_Grid row for Intermediate
 
 # T_SelfStock/T_TTAFStock(材料×週のグリッド)の行位置。1行目はDashboard/Material_Detailと
@@ -313,8 +322,8 @@ def week_index_formula_strict(date_cell_ref):
 raw_shipments = load_csv("shipments_all.csv")
 ship_rows = []
 for row in raw_shipments:
-    rm_code = row["RM_Code"]
-    if rm_code is None or rm_code not in rm_row:
+    rm_code = normalize_rm_code(row["RM_Code"])
+    if rm_code is None:
         continue
     eta_str = row["Latest_ETA"]
     if not eta_str:
@@ -659,7 +668,8 @@ ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
 
 row_num = MD_TABLE_ROW
 for rm_code, entries in bom_by_rm.items():
-    if rm_code not in rm_row:
+    rm_code = normalize_rm_code(rm_code)
+    if rm_code is None:
         continue
     grow = rm_row[rm_code]
     desc = next((r["Description"] for r in rm_master if r["RM_Code"] == rm_code), "")

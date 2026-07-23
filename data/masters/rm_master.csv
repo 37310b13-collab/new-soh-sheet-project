@@ -26,7 +26,6 @@ CHEM-1240,83988008101,Alumina SOL(AS200),TTAF,Chemical
 CHEM-1760,713880079,Pigment(TC RED FD(A)),TTAF,Chemical
 Original Towel,859882220,Towel Paper,TTAF,Chemical
 0LJ,N60H39R08-JP,9R-08) N126-103-105 ,Japan,Chemical
-PP FILM,83988405701,PP FILM,Japan,Chemical
 CHEM-1200,839880012,Oxalic Acid,TTAF,Chemical
 ABN,18465F3050Z,N20S/9-11R-11-WF10,China,Chemical
 YAN,18465F2100Z,N20S/9-13R-11-WF10,China,Chemical
@@ -60,7 +59,7 @@ CHEM-1780,New,Diamonium Citrate,,Chemical
 CHEM-1020,,Sodium Nitrite,TTAF,Chemical
 CSA Code,,PART NAME,Supplier,Chemical
 Ester Film,,Ester Film,TTAF,Substrate
-PP Film,,PP Film,TTAF,Substrate
+PP Film,83988405701,PP Film,TTAF,Substrate
 5SN,,5SN,TTAF,Substrate
 1JN,,1JN,TTAF,Chemical
 V03,,V03,TTAF,Chemical
@@ -74,13 +73,8 @@ CHEM-1750,,Alumax WDB-5,PIDC,Chemical
 OLJ,,OLJ,NGK Japan,Chemical
 CHEM-1500,,TMAH,Sachem,Chemical
 CHEM-1810,,TEAH,Sachem,Chemical
-Chem-1220,,Actalys Lisa,Rhodia / Solvay,Chemical
-Chem-1610,,Optalys 138,Rhodia / Solvay,Chemical
-Chem-1490,,Optalys 227,Rhodia / Solvay,Chemical
-Chem-1790,,Optalys 466,Rhodia / Solvay,Chemical
-Chem-1800,,Stabylis 392,Rhodia / Solvay,Chemical
 A043,,TDJ,TTAF,Chemical
-CHEM-1220,,Actalys Lisa,,Chemical
+CHEM-1220,,Actalys Lisa,Rhodia / Solvay,Chemical
 CHEM-1260,,Acetic Acid 90% (25L),Merck,Chemical
 CHEM-1790,,Optalys 466,SOLVAY,Chemical
 TSZ-616,,TSZ-616 Slurry - NO PGM,,Chemical
