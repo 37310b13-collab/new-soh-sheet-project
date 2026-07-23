@@ -14,6 +14,9 @@ EXTRACTED = os.path.join(REPO_ROOT, "data", "masters") + os.sep
 N_WEEKS = int(sys.argv[1]) if len(sys.argv) > 1 else 104
 OUT_PATH = sys.argv[2] if len(sys.argv) > 2 else os.path.join(REPO_ROOT, "SOH_Master.xlsx")
 ANCHOR_YEAR = int(sys.argv[3]) if len(sys.argv) > 3 else 2026
+# サプライヤー別ファイル(例: TTAF専用)を作る場合に指定。M_RawMaterials[Supplier]がこの値と
+# 一致する原材料だけに絞り込み、それを1つでも使う中間体だけを連動して残す。
+SUPPLIER_FILTER = sys.argv[4] if len(sys.argv) > 4 else None
 
 
 def monday_containing_jan1(year):
@@ -88,6 +91,20 @@ for r in inter_master:
     seen.add(r["Intermediate"])
     inter_dedup.append(r)
 inter_master = inter_dedup
+
+# サプライヤー別ファイル用のフィルタ。M_RawMaterials・M_BOM・M_Intermediates・M_ProductMap・
+# PP_Grid・T_Shipments(rm_rowで自動的に絞られる)・Dashboard・Material_Detail・Grid_*・
+# PO_Draft_*まで、すべてこの3つのリストを起点に生成されるため、ここで絞り込むだけで
+# 以降のシート生成コードは一切変更せずに連動して絞り込まれる。
+if SUPPLIER_FILTER:
+    rm_master = [r for r in rm_master if r["Supplier"].strip() == SUPPLIER_FILTER]
+    _filt_codes = {r["RM_Code"] for r in rm_master}
+    bom = [r for r in bom if r["RM_Code"] in _filt_codes]
+    _filt_inter_names = {r["Intermediate"] for r in bom}
+    inter_master = [r for r in inter_master if r["Intermediate"] in _filt_inter_names]
+    prodmap = [r for r in prodmap if r["Intermediate"] in _filt_inter_names]
+    print(f"[SUPPLIER_FILTER={SUPPLIER_FILTER}] RM: {len(rm_master)}, "
+          f"Intermediates: {len(inter_master)}, BOM rows: {len(bom)}")
 
 # weekly batch counts, source: Powder & Slurry & Pgm Plan ("No. of batches" rows, one entry
 # per intermediate per week, extracted from ~36 per-material sheets). Keyed by actual calendar
