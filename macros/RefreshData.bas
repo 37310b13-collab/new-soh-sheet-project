@@ -195,7 +195,10 @@ Sub RefreshWeeklyBatches()
 NextSheet:
     Next sh
 
-    srcWb.Close SaveChanges:=False
+    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
+    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
+    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
@@ -481,7 +484,10 @@ Sub RefreshBOM()
         End If
     Next sIdx
 
-    srcWb.Close SaveChanges:=False
+    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
+    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
+    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
@@ -630,7 +636,10 @@ Sub RefreshSelfStock()
         End If
     Next r
 
-    srcWb.Close SaveChanges:=False
+    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
+    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
+    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "T_SelfStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
@@ -691,7 +700,10 @@ Sub RefreshTTAFStock()
         End If
     Next r
 
-    srcWb.Close SaveChanges:=False
+    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
+    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
+    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
