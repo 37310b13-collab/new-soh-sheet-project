@@ -819,8 +819,15 @@ Private Function BuildStockRowIndex(tbl As ListObject) As Object
     Set BuildStockRowIndex = idx
 End Function
 
-' WeekIndex(3列目)は数式列のためここでは書き込まない(Dateが変われば自動的に再計算される)。
-' 新規行を追加した場合は、Excelのテーブル機能が既存行と同じ数式を自動的に複製する。
+' WeekIndex(3列目)は数式列のためここでは値を書き込まない(Dateが変われば自動的に再計算される)。
+' 【重要】以前は「新規行を追加すればExcelのテーブル機能が既存行と同じ数式を自動的に複製する」
+' という前提だったが、これはUI上でテーブルの下に手で行を追加した場合の挙動であり、
+' VBAのListRows.Addで追加した行には自動複製されないことがある(実際に報告された不具合:
+' T_SelfStock_Log/T_TTAFStock_LogにVBAで追加した行のWeekIndex列が数式ごと空欄のままになり、
+' グリッド側のSUMIFS/COUNTIFSが該当行を見つけられず、T_SelfStock/T_TTAFStockに何も
+' 表示されなくなっていた)。そのため、新規行では直前行のWeekIndexの数式を明示的にコピーする
+' (FormulaR1C1でコピーすることで、相対参照(自分自身のDateセルを指す部分)はコピー先の行に
+' 合わせて自動調整される)。
 ' 同じ週内で2回目以降の取り込みがあった場合は、Date・Qtyの両方を最新の値で上書きする
 ' (その週内で一番新しい実施日の記録が残るようにするため)。
 Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As String, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
@@ -836,6 +843,9 @@ Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As Stri
         newRow.Range.Cells(1, 1).Value = code
         newRow.Range.Cells(1, 2).Value = d
         newRow.Range.Cells(1, 4).Value = v
+        If newRow.Index > 1 Then
+            newRow.Range.Cells(1, 3).FormulaR1C1 = tbl.ListRows(newRow.Index - 1).Range.Cells(1, 3).FormulaR1C1
+        End If
         idx(key) = newRow.Index
         added = added + 1
     End If
