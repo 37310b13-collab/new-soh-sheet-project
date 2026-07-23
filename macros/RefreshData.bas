@@ -51,6 +51,16 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 ' すべて.ListRows(行番号).Range.Cells(...)という、行追加直後でも安定して動く書き方に統一
 ' しています。
 '
+' 【DisplayAlertsを抑制している理由】.DataBodyRangeの修正後も、取込元ファイルを開いた直後の
+' srcWbが「Nothing」になり、後始末のsrcWb.Closeで同じ(91)エラーが再発するケースが報告されま
+' した。取込元ファイル(Powder & Slurry & Pgm Plan、Usage from Production Engineering等)は
+' 手動で開く際に「読み取り専用を推奨」の確認ダイアログが出るファイルであることが確認できて
+' おり、Application.DisplayAlerts=Trueのままだと、VBAのWorkbooks.Open実行時にもこのダイアログ
+' が表示されて処理が止まる(応答待ちのまま次の行に進めない、または想定外の状態でオブジェクトが
+' 返る)ことが原因と考えられます。Workbooks.Open前にApplication.DisplayAlerts=Falseを設定して
+' このようなダイアログを抑制し、後始末時にTrueへ戻すようにしました。念のため、srcWb.Close自体
+' も引き続きIf Not srcWb Is Nothing Thenでガードしています。
+'
 ' 【T_SelfStock/T_TTAFStockの二層構造について】RefreshSelfStock/RefreshTTAFStockは、目に
 ' 見えるT_SelfStock/T_TTAFStockシートには一切書き込みません。書き込み先は非表示の
 ' T_SelfStock_Log/T_TTAFStock_Log（実施日ベースの生ログ）で、目に見える方のシートは
@@ -121,6 +131,10 @@ Sub RefreshWeeklyBatches()
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
+    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
+    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
+    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    Application.DisplayAlerts = False
 
     Dim srcWb As Workbook
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
@@ -201,6 +215,7 @@ NextSheet:
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
 
     MsgBox "PP_Grid / M_BOM を更新しました。" & vbCrLf & _
            "更新セル数(PP_Grid): " & updatedCells & vbCrLf & _
@@ -223,6 +238,7 @@ ErrHandler:
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
@@ -447,6 +463,10 @@ Sub RefreshBOM()
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
+    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
+    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
+    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    Application.DisplayAlerts = False
 
     Dim srcWb As Workbook
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
@@ -490,6 +510,7 @@ Sub RefreshBOM()
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
 
     Dim msg As String
     msg = "M_BOM を更新しました。" & vbCrLf & "更新: " & updated & " 件、新規追加: " & added & " 件"
@@ -511,6 +532,7 @@ ErrHandler:
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
@@ -610,6 +632,10 @@ Sub RefreshSelfStock()
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
+    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
+    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
+    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
     Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
@@ -642,6 +668,7 @@ Sub RefreshSelfStock()
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
     MsgBox "T_SelfStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
            "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
            "（同じ週内の実績は1件にまとめられます。グリッド表示のT_SelfStockシートは自動で反映されます）", vbInformation
@@ -658,6 +685,7 @@ ErrHandler:
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
@@ -671,6 +699,10 @@ Sub RefreshTTAFStock()
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
+    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
+    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
+    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
     Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
@@ -706,6 +738,7 @@ Sub RefreshTTAFStock()
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
     MsgBox "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
            "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
            "（同じ週内の実績は1件にまとめられます。グリッド表示のT_TTAFStockシートは自動で反映されます）", vbInformation
@@ -722,6 +755,7 @@ ErrHandler:
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
