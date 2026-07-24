@@ -18,7 +18,9 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 '                          M_BOM（化学原料の原単位）を更新する。
 '   RefreshSelfStock      : 「Raw materials daily check」(自社倉庫の現物確認)を選択すると、
 '                          T_SelfStock（自社在庫実績）を更新する。
-'   RefreshTTAFStock      : 「CSA Report」を選択すると、T_TTAFStock（TTAF在庫実績）を更新する。
+'   RefreshTTAFStock      : 「CSA Report」を選択すると、その中の「 COUNT SHEET SOH」シートから
+'                          T_TTAFStock（TTAF在庫実績）を更新する。TTAF_Code優先、見つからなければ
+'                          Description(材料名)で照合する。
 '   RefreshTTAFCallOff    : Call Off依頼書(1ファイル=1回分の依頼)を選択すると、T_TTAFCallOff
 '                          （TTAFからの出庫依頼実績）を更新する。TTAF_Code優先、見つからなければ
 '                          Cataler Part名(Description)で照合する。同じ(材料,お届け予定日)なら
@@ -615,15 +617,16 @@ End Function
 '
 '   RefreshSelfStock : 「Raw materials daily check」(自社倉庫の現物確認シート、ファイル名に
 '                      DD.MM.YYYY形式の日付を含む)を選択すると、T_SelfStockにその週の実績を
-'                      追加/更新する。
-'   RefreshTTAFStock : 「CSA Report」(ファイル名に日付を含む)を選択すると、その中の
-'                      "PIVOT SOH TTAF"シートからT_TTAFStockにその週の実績を追加/更新する。
+'                      追加/更新する。対象週はファイル名から読み取った日付で判定する。
+'   RefreshTTAFStock : 「CSA Report」を選択すると、その中の「 COUNT SHEET SOH」シート
+'                      (先頭に半角スペースあり。A列=TTAF PART NUMBER、D列=Description、
+'                      H列1行目=対象日、H列2行目以降=Total SOH)からT_TTAFStockにその週の
+'                      実績を追加/更新する。対象週はH1セルの日付で判定する(ファイル名には
+'                      依存しない)。材料の照合はTTAF_Codeを優先し、見つからなければ
+'                      Descriptionの正規化テキストで照合する(RefreshTTAFCallOffと同じ方式)。
 '
-' どちらも対象週は、ファイル名から読み取った日付をCal_Weeksと照合して自動判定します。
-' 既存の(原材料コード, 週)の組み合わせがあれば値を上書き、無ければ新しい行として末尾に追加します
-' （Dashboardの「直近実績」表示は、各原材料コードについてテーブル内で最後に見つかった行を
-' 採用する仕組みのため、必ず日付が新しい順に取り込んでください。過去のファイルを後から
-' 取り込むと最新表示がずれる可能性があります）。
+' どちらも、既存の(原材料, 週)の組み合わせがあれば値を上書き、無ければ新しい行として追加する
+' (同じ週内に複数回取り込んでも1行にまとまる。取り込む順序は問わない)。
 ' ============================================================================
 
 Sub RefreshSelfStock()
@@ -709,31 +712,51 @@ Sub RefreshTTAFStock()
     Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
-    Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock_Log").ListObjects("T_TTAFStock_Log")
+    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+
+    ' 「 COUNT SHEET SOH」シート(先頭に半角スペースあり)を使う。A列2行目=TTAF PART NUMBER、
+    ' D列2行目=Description、H列1行目=対象日(DD.MM.YYYY)、H列2行目=Total SOH、データは3行目から。
+    ' 以前使っていた「PIVOT SOH TTAF」シートは、CHEM-で始まるコードしか拾えず(substrate等が
+    ' 漏れる)、日付もファイル名から読み取っていたため、こちらのシートの方が網羅的かつ確実。
+    Dim sh As Worksheet: Set sh = srcWb.Sheets(" COUNT SHEET SOH")
+    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(1, 8).Value))
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
-    Dim sh As Worksheet: Set sh = srcWb.Sheets("PIVOT SOH TTAF")
-    ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する
-    Const MAX_PIVOT_ROWS As Long = 2000
-    Dim data As Variant
-    data = sh.Range(sh.Cells(5, 1), sh.Cells(MAX_PIVOT_ROWS, 4)).Value
+    Dim ttafCodeIdx As Object: Set ttafCodeIdx = CreateObject("Scripting.Dictionary")
+    Dim descIdx As Object: Set descIdx = CreateObject("Scripting.Dictionary")
+    Call BuildTTAFCodeAndDescIndex(rmTbl, ttafCodeIdx, descIdx)
 
-    Dim r As Long, added As Long, updated As Long
-    added = 0: updated = 0
-    For r = 1 To (MAX_PIVOT_ROWS - 5 + 1)
-        Dim code As Variant
-        code = data(r, 1)
-        If IsEmpty(code) Or CStr(code) = "Grand Total" Then Exit For
-        If Left(CStr(code), 4) = "CHEM" Then
-            Dim v As Variant: v = data(r, 4)
-            If IsNumeric(v) Then
-                Call UpsertStockRowIndexed(ttafTbl, ttafIdx, CStr(code), reportDate, CDbl(v), added, updated)
+    ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する
+    ' (A列=TTAF PART NUMBER, D列=Description, H列=Total SOH)。
+    Const MAX_ROWS As Long = 2000
+    Dim data As Variant
+    data = sh.Range(sh.Cells(3, 1), sh.Cells(MAX_ROWS, 8)).Value
+
+    Dim r As Long, added As Long, updated As Long, unresolved As String
+    added = 0: updated = 0: unresolved = ""
+    For r = 1 To (MAX_ROWS - 3 + 1)
+        Dim ttafCodeRaw As String: ttafCodeRaw = Trim(CStr(data(r, 1)))
+        If Len(ttafCodeRaw) = 0 Then GoTo NextRow
+        Dim v As Variant: v = data(r, 8)
+        If Not IsNumeric(v) Then GoTo NextRow
+
+        Dim descRaw As String: descRaw = Trim(CStr(data(r, 4)))
+        Dim matchedPart As String
+        matchedPart = ResolveTTAFPart(ttafCodeIdx, descIdx, ttafCodeRaw, descRaw)
+
+        If Len(matchedPart) = 0 Then
+            If InStr(unresolved, ttafCodeRaw) = 0 Then
+                unresolved = unresolved & ttafCodeRaw & " (" & descRaw & "); "
             End If
+            GoTo NextRow
         End If
+
+        Call UpsertStockRowIndexed(ttafTbl, ttafIdx, matchedPart, reportDate, CDbl(v), added, updated)
+NextRow:
     Next r
 
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
@@ -743,9 +766,15 @@ Sub RefreshTTAFStock()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
-           "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
-           "（同じ週内の実績は1件にまとめられます。グリッド表示のT_TTAFStockシートは自動で反映されます）", vbInformation
+
+    Dim msg As String
+    msg = "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
+          "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
+          "（同じ週内の実績は1件にまとめられます。グリッド表示のT_TTAFStockシートは自動で反映されます）"
+    If Len(unresolved) > 0 Then
+        msg = msg & vbCrLf & vbCrLf & "TTAF_Code・材料名のどちらでも照合できず未反映の行:" & vbCrLf & unresolved
+    End If
+    MsgBox msg, vbInformation
     Exit Sub
 
 ErrHandler:
@@ -802,20 +831,7 @@ Sub RefreshTTAFCallOff()
     ' TTAF_Codeでの照合を優先し、見つからない場合だけDescriptionの正規化テキストで照合する。
     Dim ttafCodeIdx As Object: Set ttafCodeIdx = CreateObject("Scripting.Dictionary")
     Dim descIdx As Object: Set descIdx = CreateObject("Scripting.Dictionary")
-    Dim rmN As Long: rmN = rmTbl.ListRows.Count
-    If rmN > 0 Then
-        Dim rmNameDesc As Variant
-        rmNameDesc = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' Part Name, Description
-        Dim rmTtafCode As Variant
-        rmTtafCode = rmTbl.ListColumns(9).DataBodyRange.Value                 ' TTAF_Code
-        Dim i As Long
-        For i = 1 To rmN
-            Dim tKeyBuild As String: tKeyBuild = NormalizeText(CStr(rmTtafCode(i, 1)))
-            If Len(tKeyBuild) > 0 And Not ttafCodeIdx.Exists(tKeyBuild) Then ttafCodeIdx(tKeyBuild) = CStr(rmNameDesc(i, 1))
-            Dim dKeyBuild As String: dKeyBuild = NormalizeText(CStr(rmNameDesc(i, 2)))
-            If Len(dKeyBuild) > 0 And Not descIdx.Exists(dKeyBuild) Then descIdx(dKeyBuild) = CStr(rmNameDesc(i, 1))
-        Next i
-    End If
+    Call BuildTTAFCodeAndDescIndex(rmTbl, ttafCodeIdx, descIdx)
 
     Dim callIdx As Object: Set callIdx = BuildCallOffRowIndex(callTbl)
 
@@ -835,14 +851,8 @@ Sub RefreshTTAFCallOff()
         If CDbl(pcs) <= 0 Then GoTo NextRow  ' このCall Offでは依頼していない材料(テンプレートの残り行)
 
         Dim ttafCodeRaw As String: ttafCodeRaw = Trim(CStr(data(r, 2)))
-        Dim matchedPart As String: matchedPart = ""
-        Dim tKey As String: tKey = NormalizeText(ttafCodeRaw)
-        If Len(tKey) > 0 And ttafCodeIdx.Exists(tKey) Then
-            matchedPart = ttafCodeIdx(tKey)
-        Else
-            Dim dKey As String: dKey = NormalizeText(catalerPart)
-            If descIdx.Exists(dKey) Then matchedPart = descIdx(dKey)
-        End If
+        Dim matchedPart As String
+        matchedPart = ResolveTTAFPart(ttafCodeIdx, descIdx, ttafCodeRaw, catalerPart)
 
         If Len(matchedPart) = 0 Then
             If InStr(unresolved, catalerPart) = 0 Then
@@ -930,6 +940,43 @@ Private Sub UpsertCallOffRow(tbl As ListObject, idx As Object, partName As Strin
         added = added + 1
     End If
 End Sub
+
+' M_RawMaterialsから、TTAF_Code(正規化済み)->Part Name、Description(正規化済み)->Part Nameの
+' インデックスを1回だけ作る。RefreshTTAFCallOff/RefreshTTAFStockの両方で使う共通処理。
+' Dictionaryはオブジェクト(参照渡し)なので、ByRefを明示しなくても呼び出し元のtafCodeIdx/descIdxに
+' そのまま反映される。
+Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object, descIdx As Object)
+    Dim rmN As Long: rmN = rmTbl.ListRows.Count
+    If rmN > 0 Then
+        Dim rmNameDesc As Variant
+        rmNameDesc = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' Part Name, Description
+        Dim rmTtafCode As Variant
+        rmTtafCode = rmTbl.ListColumns(9).DataBodyRange.Value                 ' TTAF_Code
+        Dim i As Long
+        For i = 1 To rmN
+            Dim tKeyBuild As String: tKeyBuild = NormalizeText(CStr(rmTtafCode(i, 1)))
+            If Len(tKeyBuild) > 0 And Not ttafCodeIdx.Exists(tKeyBuild) Then ttafCodeIdx(tKeyBuild) = CStr(rmNameDesc(i, 1))
+            Dim dKeyBuild As String: dKeyBuild = NormalizeText(CStr(rmNameDesc(i, 2)))
+            If Len(dKeyBuild) > 0 And Not descIdx.Exists(dKeyBuild) Then descIdx(dKeyBuild) = CStr(rmNameDesc(i, 1))
+        Next i
+    End If
+End Sub
+
+' TTAF_Codeでの照合を優先し、見つからない場合だけDescription(材料名)の正規化テキストで照合する。
+' どちらでも見つからなければ空文字を返す。
+Private Function ResolveTTAFPart(ttafCodeIdx As Object, descIdx As Object, ttafCodeRaw As String, descRaw As String) As String
+    Dim tKey As String: tKey = NormalizeText(ttafCodeRaw)
+    If Len(tKey) > 0 And ttafCodeIdx.Exists(tKey) Then
+        ResolveTTAFPart = ttafCodeIdx(tKey)
+        Exit Function
+    End If
+    Dim dKey As String: dKey = NormalizeText(descRaw)
+    If descIdx.Exists(dKey) Then
+        ResolveTTAFPart = descIdx(dKey)
+        Exit Function
+    End If
+    ResolveTTAFPart = ""
+End Function
 
 Private Function ExtractDDMMYYYYFromText(text As String) As Date
     Dim re As Object
