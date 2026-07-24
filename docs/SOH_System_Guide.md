@@ -37,7 +37,7 @@
 
 ## 2. Python不要・Excel(VBA)だけで完結する更新の仕組み
 
-`macros/RefreshData.bas` に5つの更新マクロと、表示だけを操作する補助マクロ3つを
+`macros/RefreshData.bas` に4つの更新マクロと、表示だけを操作する補助マクロ3つを
 用意しています。更新マクロはいずれも、対象ファイルを選ぶだけで該当シートの値だけを更新し、
 **それ以外の入力済みデータ（T_Shipments・T_OpeningStock・T_StockCount・基準在庫の設定値など）
 には一切触れません。**
@@ -47,19 +47,18 @@
 | `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid（+ substrate分のM_BOM） |
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
-| `RefreshTTAFStock` | CSA Report（TTAF在庫、週次） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
-| `RefreshTTAFCallOff` | Call Off依頼書（TTAFへの出庫依頼、依頼・修正・キャンセルのたび） | T_TTAFCallOff（TTAFからの出庫実績。同じ材料・お届け予定日なら上書き） |
+| `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 
 **TTAF供給材料の在庫予測の考え方（重要）**: TTAFは仕入先であると同時に、原材料を預けている
-倉庫でもあります。`T_Shipments`（Status=TTAF Stock）は「TTAFへの入庫」実績を表し、
-`T_TTAFCallOff`は「TTAFからの出庫（＝弊社への入庫）」実績を表します。この2つを単純に
-合算すると、TTAF倉庫側で既にカウント済みの在庫を弊社への入庫のたびに二重計上してしまうため
-（発注タイミングを見誤る恐れがある）、`Grid_Stock`はTTAF供給材料に限り、自社側残高
-（`Grid_SelfBalance`）とTTAF側残高（`Grid_TTAFBalance`）を別々に繰り越し計算して合算する
-方式にしています。TTAF以外の通常仕入れ材料はこれまで通りの計算式のままです。
+倉庫でもあります。`T_Shipments`（Status=TTAF Stock）は「TTAFへの入庫」実績を表すため、これを
+そのまま「弊社への入庫」として合算すると、TTAF倉庫側で既にカウント済みの在庫を二重計上して
+しまいます（発注タイミングを見誤る恐れがある）。CSA Reportが毎週月曜に届き`T_TTAFStock`が
+毎週実績で上書きされる運用のため、`Grid_Stock`はTTAF供給材料に限り、まだ実績が届いていない
+直近の週だけ「前週在庫－消費」（入庫を見込まない）でつなぎ、実績が届き次第その週の値で
+正しく上書きされます。TTAF以外の通常仕入れ材料はこれまで通り「前週＋入庫－消費」のままです。
 
 `HideInactiveIntermediates`/`ShowAllIntermediates`/`JumpToSelectedWeek`はいずれもデータを
 更新するマクロではなく、見た目（行の表示/非表示、ウィンドウのスクロール位置）だけを
@@ -141,18 +140,16 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | Dashboard | 出力（最終確認画面） | 原材料×週の在庫を2年分・横軸で表示。基準在庫の下限/上限を入力すると各週が赤(下限未満)/緑(範囲内)/青(上限超)に自動色分け、C1入力で該当週を太枠ハイライト |
 | Material_Detail | 出力（トレーサビリティ） | 材料ごとに「使用中間体・バッチ数・使用量・週次合計・TTAF/自社在庫実績・週末時点の合計在庫」をブロック表示。材料名の右にMOQ手入力欄あり |
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | 要発注分を注文書ひな形へ自動転記 |
-| T_Shipments | 入力 | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日）。TTAF供給材料についてはTTAF倉庫への到着実績を表す（弊社への入庫実績はT_TTAFCallOffで別管理） |
+| T_Shipments | 入力 | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
 | T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
-| T_TTAFCallOff | 出力（閲覧用、マクロ更新） | TTAFからの出庫依頼(Call Off)実績の一覧。RefreshTTAFCallOffで更新。手入力不可 |
 | T_SelfStock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_SelfStock_Log`が更新されると自動反映。手入力不可 |
 | T_TTAFStock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`T_TTAFStock_Log`が更新されると自動反映。手入力不可 |
 | M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
 | PP_Grid | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
 | (非表示) T_SelfStock_Log / T_TTAFStock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
-| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / Grid_Requirement / Grid_Incoming | 内部計算 | 通常は開く必要なし |
-| (非表示) Grid_TTAFOutgoing / Grid_SelfBalance / Grid_TTAFBalance | 内部計算 | TTAF供給材料の在庫予測用ヘルパー（Grid_Stock参照）。通常は開く必要なし |
+| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / Grid_Requirement / Grid_Incoming / Grid_Stock | 内部計算 | 通常は開く必要なし |
 
 ## 4. 着荷予定(CSA Order)の入力方法
 
@@ -181,12 +178,11 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
 2. 「Usage from Production Engineering」が更新されていれば`RefreshBOM`を実行
 3. 自社倉庫の現物確認（daily check）を実施したら`RefreshSelfStock`を実行
-4. CSA Reportが週次で届いたら`RefreshTTAFStock`を実行し、あわせて`T_Shipments`もETA・着荷日・
+4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`を実行し、あわせて`T_Shipments`もETA・着荷日・
    PO番号・発注日で更新（早着・遅着はここに反映）
-5. TTAFへCall Offを依頼した（修正・キャンセルを含む）ら`RefreshTTAFCallOff`を実行
-6. 棚卸を実施した週は`T_StockCount`に追記
-7. `Dashboard`で赤色（基準在庫の下限未満）の週を確認し、`PO_Draft_*`から注文書を発行
-8. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
+5. 棚卸を実施した週は`T_StockCount`に追記
+6. `Dashboard`で赤色（基準在庫の下限未満）の週を確認し、`PO_Draft_*`から注文書を発行
+7. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
    Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
 ## 5.5 表示ウィンドウを先の年へ進める（年次作業・Dec-27以降の追加方法）
@@ -436,20 +432,24 @@ VBAで新規追加した行のWeekIndex(数式列)が数式ごと空欄のまま
 T_SelfStock/T_TTAFStockのグリッドに何も表示されない不具合が実際に報告されました。原因は、
 「新しい行を追加すればExcelのテーブル機能が既存行と同じ数式を自動的に複製する」という前提が、
 UI上で手動追加した場合の挙動であり、VBAの`ListRows.Add`経由では複製が保証されないためでした。
-新規行では直前行のWeekIndexの数式を`FormulaR1C1`で明示的にコピーするよう修正し(相対参照は
-コピー先の行に合わせて自動調整される)、T_TTAFCallOffの新規追加時にも同じ方式を最初から
-採用しています。
+新規行では直前行のWeekIndexの数式を`FormulaR1C1`で明示的にコピーするよう修正しています
+(相対参照はコピー先の行に合わせて自動調整される)。
 
 **TTAF供給材料の在庫予測における二重計上の修正について**: 当初、`Grid_Stock`は全材料共通で
 「前週在庫＋入庫(T_Shipments)－消費」というロールフォワード式でしたが、TTAF供給材料に
 限っては、TTAFが仕入先であると同時に倉庫でもあるため、この入庫は外部から新しい材料が
 供給されたのではなく、既にTTAF倉庫の実績としてカウント済みの在庫が場所を移しただけ、という
 指摘があり、実際その通りでした。これを放置すると将来週の予測在庫が実際より多く算出され、
-発注のタイミングを逃す実害につながります。対策として、TTAF供給材料に限り自社側残高
-（`Grid_SelfBalance`）とTTAF側残高（`Grid_TTAFBalance`）を別々にロールフォワードし、その合計を
-`Grid_Stock`とする方式に変更しました。TTAF側残高は「前週＋TTAFへの入庫(T_Shipments)－TTAFからの
-出庫(T_TTAFCallOff、Call Off依頼書から取込み)」、自社側残高は「前週－消費＋TTAFからの出庫」で
-計算します。TTAF以外の通常仕入れ材料の計算式は変更していません。
+発注のタイミングを逃す実害につながります。
+
+一時期は、TTAFへのCall Off依頼書を取り込む`T_TTAFCallOff`シートを新設し、TTAF供給材料の
+自社側残高・TTAF側残高を別々にロールフォワードして合算する方式を実装していましたが、
+CSA Reportが毎週月曜に届き`T_TTAFStock`が毎週実績で確実に上書きされる運用のため、そこまで
+精緻な予測は不要と判断し撤回しました。**現在の方式**は、TTAF供給材料に限り、まだ実績が
+届いていない直近の週だけ「前週在庫－消費」（入庫を見込まない）でつなぐという、最小限の
+変更にとどめています。実績が届けばその週の値で正しく上書きされるため、影響があるのは
+「まだ実績が届いていない先の週の見込みがやや保守的になる」程度です。TTAF以外の通常仕入れ
+材料の計算式は変更していません。
 
 ## 8. 要確認・要入力の項目
 
@@ -471,12 +471,6 @@ UI上で手動追加した場合の挙動であり、VBAの`ListRows.Add`経由�
 - **`T_SelfStock`/`T_TTAFStock`シートへの手入力はしないでください**: これらは数式のみのグリッド
   表示です。値は非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`から自動計算されるため、直接
   上書きしても`RefreshSelfStock`/`RefreshTTAFStock`を再実行すると数式に戻ります。
-- **`T_TTAFCallOff`の数量の単位**: Call Off依頼書の`PCS`列をそのまま取り込んでいます。材料に
-  よって単位(kg/Pcs/g等)が異なりますが、`T_Shipments`・`T_SelfStock`・`T_TTAFStock`との単位の
-  整合性はチェックしていません。単位が食い違う材料がある場合は教えてください。
-- **Call Offのお届け予定日が変更になった場合**: `T_TTAFCallOff`は「材料名＋お届け予定日」の
-  組み合わせをキーに上書きするため、日付自体が変わる修正の場合は古い日付の行がそのまま残って
-  しまいます。その場合は該当行のPCSを手動で0に直すか、教えていただければ対応します。
 
 ## 9. 今後の拡張候補
 

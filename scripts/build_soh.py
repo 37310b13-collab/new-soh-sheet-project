@@ -370,24 +370,6 @@ for col, w in zip("ABCDEFGH", [12, 14, 16, 14, 14, 14, 14, 14]):
 ws.freeze_panes = "A2"
 print("Shipment rows seeded:", len(ship_rows))
 
-# ============================================================ T_TTAFCallOff (VBA更新, TTAFからの出庫依頼)
-# TTAFは仕入先であると同時に、原材料を預けている倉庫でもある。TTAFから弊社への入庫は、外部から
-# 新しい材料が供給されたわけではなく、既にTTAF倉庫の実績としてカウント済みの在庫が場所を
-# 移しただけなので、Grid_Stockでは「TTAFからの出庫」として別扱いする(T_Shipmentsの入庫と
-# 単純に合算すると、TTAF倉庫側で既にカウント済みの在庫を二重計上してしまうため)。
-# データはCall Off依頼書(1ファイル=1回分の依頼)からRefreshTTAFCallOffマクロで取り込む。手入力はしない。
-# 同じ(材料, お届け予定日)の組み合わせで再取込みされた場合は上書きする(依頼の修正・キャンセルに対応)。
-ws = wb.create_sheet("T_TTAFCallOff")
-ws.append(["Part Name", "TTAF_Code", "Delivery_Date", "WeekIndex", "PCS"])
-ws.append(["(ダミー行、削除不可)", "", datetime.date(2000, 1, 3), None, 0])
-ws.cell(row=2, column=4).value = week_index_formula_clamped("$C2")
-ws.cell(row=2, column=3).number_format = "yyyy-mm-dd"
-style_header(ws, 5)
-add_table(ws, "T_TTAFCallOff", "A1:E2")
-for col, w in zip("ABCDE", [14, 16, 14, 10, 12]):
-    ws.column_dimensions[col].width = w
-ws.freeze_panes = "A2"
-
 # ============================================================ T_StockCount (INPUT, physical count overrides)
 # 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
 ws = wb.create_sheet("T_StockCount")
@@ -550,27 +532,11 @@ build_actual_stock_sheets("T_TTAFStock", "TTAF_Qty", [])
 ws_req = wb.create_sheet("Grid_Requirement")
 ws_in = wb.create_sheet("Grid_Incoming")
 ws_st = wb.create_sheet("Grid_Stock")
-# TTAF供給材料専用のヘルパー(TTAF供給材料のみ。他の材料の行はそもそも作らない)。
-# TTAFは仕入先であると同時に倉庫でもあるため、T_Shipments(=TTAFへの入庫実績)を素直に
-# Grid_Stockへ足すと、TTAF倉庫側で既にカウント済みの在庫を「弊社への入庫」のたびに
-# 二重計上してしまう。これを避けるため、TTAF供給材料だけは自社側とTTAF側の残高を別々に
-# 転がし(Grid_SelfBalance/Grid_TTAFBalance)、その合計をGrid_Stockとする。
-#   Grid_TTAFOutgoing : TTAFからの出庫=弊社への入庫(Call Off依頼、T_TTAFCallOffベース)
-#   Grid_Incoming      : TTAF供給材料に限っては「TTAFへの入庫」の意味になる(T_Shipmentsの
-#                        Status=TTAF StockはTTAF倉庫への到着を表すため)。非TTAF材料は
-#                        従来通り「自社への入庫」のまま(Grid_Requirement/Grid_Incomingは
-#                        全材料共通のシートなので、行番号はrm_row(全材料の行番号)を使う)。
-ws_ttafout = wb.create_sheet("Grid_TTAFOutgoing")
-ws_selfbal = wb.create_sheet("Grid_SelfBalance")
-ws_ttafbal = wb.create_sheet("Grid_TTAFBalance")
-ttaf_materials = [r for r in rm_master if r["Supplier"].strip().upper() == "TTAF"]
-ttaf_row_map = {r["RM_Code"]: i + 2 for i, r in enumerate(ttaf_materials)}
 
 header = ["Part Name"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
-for ws_ in (ws_req, ws_in, ws_st, ws_ttafout, ws_selfbal, ws_ttafbal):
+for ws_ in (ws_req, ws_in, ws_st):
     ws_.append(header)
 
-# ---- Grid_Requirement / Grid_Incoming / Grid_Stock: 全材料 ----
 for i, r in enumerate(rm_master):
     rr = i + 2
     rm = r["RM_Code"]
@@ -600,81 +566,28 @@ for i, r in enumerate(rm_master):
         has_ttaf = f"('T_TTAFStock'!{cl}{ss_row}<>\"\")"
         ttaf_val = f"'T_TTAFStock'!{cl}{ss_row}"
 
-        if is_ttaf_supplied:
-            # 自社側残高+TTAF側残高の合計(手動棚卸の優先処理は両ヘルパー側で既に反映済み)。
-            # Grid_SelfBalance/Grid_TTAFBalanceはTTAF供給材料だけの専用シート(行番号が違う)。
-            ttaf_rr = ttaf_row_map[rm]
-            ws_st.cell(row=rr, column=1 + w).value = (
-                f"='Grid_SelfBalance'!{cl}{ttaf_rr}+'Grid_TTAFBalance'!{cl}{ttaf_rr}"
-            )
+        if w == 1:
+            prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
-            # TTAF以外の通常仕入れ材料は従来通り: 手動棚卸 > 自社+TTAF実績の合計(両方揃っている週のみ)
-            # > 通常のロールフォワード(前週+入庫-消費)。
-            if w == 1:
-                prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
-            else:
-                prior = f"{week_col(w-1)}{rr}"
+            prior = f"{week_col(w-1)}{rr}"
+        if is_ttaf_supplied:
+            # TTAFは仕入先であると同時に倉庫でもあるため、T_Shipments(TTAF倉庫への入庫実績)を
+            # 入庫としてそのまま足すと、TTAF倉庫側で既にカウント済みの在庫を二重計上してしまう。
+            # CSA Reportが毎週届きTTAF実績(T_TTAFStock)で毎週上書きされる運用のため、実績が
+            # 無い週(=まだ実績が届いていない直近の週)は入庫を足さず「前週-消費」だけで繋ぐ。
+            normal = f"{prior}-'Grid_Requirement'!{cl}{rr}"
+        else:
             normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
-            ws_st.cell(row=rr, column=1 + w).value = (
-                f"=IF({has_count}>0,{count_val},"
-                f"IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal}))"
-            )
+        # 優先順位: 手動棚卸(T_StockCount) > 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
+        ws_st.cell(row=rr, column=1 + w).value = (
+            f"=IF({has_count}>0,{count_val},"
+            f"IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal}))"
+        )
 
 n = len(rm_master) + 1
 for ws_ in (ws_req, ws_in, ws_st):
     style_header(ws_, N_WEEKS + 1)
     add_table(ws_, ws_.title, f"A1:{week_col(N_WEEKS)}{n}", style="TableStyleMedium2")
-    ws_.column_dimensions["A"].width = 14
-    for w in range(1, N_WEEKS + 1):
-        ws_.column_dimensions[week_col(w)].width = 9
-    ws_.freeze_panes = "B2"
-
-# ---- Grid_TTAFOutgoing / Grid_SelfBalance / Grid_TTAFBalance: TTAF供給材料のみ ----
-for i, r in enumerate(ttaf_materials):
-    rr = i + 2
-    rm = r["RM_Code"]
-    req_rr = rm_row[rm]  # Grid_Requirement/Grid_Incomingは全材料共通シートなのでそちらの行番号を使う
-    for ws_ in (ws_ttafout, ws_selfbal, ws_ttafbal):
-        ws_.append([rm] + [None] * N_WEEKS)
-    for w in range(1, N_WEEKS + 1):
-        cl = week_col(w)
-        ws_ttafout.cell(row=rr, column=1 + w).value = (
-            f"=SUMIFS(T_TTAFCallOff[PCS],T_TTAFCallOff[Part Name],$A{rr},T_TTAFCallOff[WeekIndex],{w})"
-        )
-        has_count = f"COUNTIFS(T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
-        count_val = f"SUMIFS(T_StockCount[CountedQty],T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
-        ss_row = ss_row_map[rm]
-        has_self = f"('T_SelfStock'!{cl}{ss_row}<>\"\")"
-        self_val = f"'T_SelfStock'!{cl}{ss_row}"
-        has_ttaf = f"('T_TTAFStock'!{cl}{ss_row}<>\"\")"
-        ttaf_val = f"'T_TTAFStock'!{cl}{ss_row}"
-
-        # ---- Grid_SelfBalance: 自社倉庫側の残高。手動棚卸(全量を自社側とみなす)>自社実績>
-        #      ロールフォワード(前週-消費+TTAFからの出庫)。
-        if w == 1:
-            prior_self = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
-        else:
-            prior_self = f"{week_col(w-1)}{rr}"
-        normal_self = f"{prior_self}-'Grid_Requirement'!{cl}{req_rr}+'Grid_TTAFOutgoing'!{cl}{rr}"
-        ws_selfbal.cell(row=rr, column=1 + w).value = (
-            f"=IF({has_count}>0,{count_val},IF({has_self},{self_val},{normal_self}))"
-        )
-
-        # ---- Grid_TTAFBalance: TTAF倉庫側の残高。手動棚卸時は自社側に全量寄せるためここは0>
-        #      TTAF実績>ロールフォワード(前週+TTAFへの入庫-TTAFからの出庫)。
-        if w == 1:
-            prior_ttaf = "0"
-        else:
-            prior_ttaf = f"{week_col(w-1)}{rr}"
-        normal_ttaf = f"{prior_ttaf}+'Grid_Incoming'!{cl}{req_rr}-'Grid_TTAFOutgoing'!{cl}{rr}"
-        ws_ttafbal.cell(row=rr, column=1 + w).value = (
-            f"=IF({has_count}>0,0,IF({has_ttaf},{ttaf_val},{normal_ttaf}))"
-        )
-
-n_ttaf = len(ttaf_materials) + 1
-for ws_ in (ws_ttafout, ws_selfbal, ws_ttafbal):
-    style_header(ws_, N_WEEKS + 1)
-    add_table(ws_, ws_.title, f"A1:{week_col(N_WEEKS)}{n_ttaf}", style="TableStyleMedium2")
     ws_.column_dimensions["A"].width = 14
     for w in range(1, N_WEEKS + 1):
         ws_.column_dimensions[week_col(w)].width = 9
@@ -1172,24 +1085,23 @@ readme_lines = [
     "                        中間体の行を折りたためます（在庫関連の行は常に表示されたままです）。",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments         : 発注・着荷の入力。TTAF供給材料については「TTAF倉庫への到着実績」を",
-    "                        表します(TTAFは仕入先であり倉庫でもあるため。弊社への入庫実績は",
-    "                        T_TTAFCallOffで別管理)。TTAF以外の材料は従来通り弊社への入庫実績です。",
-    "  T_TTAFCallOff       : TTAFからの出庫依頼(Call Off)実績の一覧表示（出力・閲覧用）。",
-    "                        RefreshTTAFCallOffで更新されます。手入力はしないでください。",
+    "                        表します(TTAFは仕入先であり倉庫でもあるため)。TTAF以外の材料は",
+    "                        従来通り弊社への入庫実績です。",
     "  T_OpeningStock/T_StockCount : 入力用",
     "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
     "                        RefreshSelfStock/RefreshTTAFStockで更新されます。手入力はしないでください",
     "                        （生データは非表示のT_SelfStock_Log/T_TTAFStock_Logに安全に保存されています）。",
+    "                        TTAF在庫はCSA Reportが毎週届くたびに実績で上書きされる運用のため、",
+    "                        実績がまだ届いていない直近の週のGrid_Stockは、TTAF供給材料に限り",
+    "                        入庫を見込まず「前週-消費」だけで繋いでいます(TTAFへの入庫を",
+    "                        単純加算すると、TTAF倉庫側で既にカウント済みの在庫を二重計上して",
+    "                        しまうため)。",
     "",
     "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
-    "  Grid_Stockは、TTAF供給材料に限り「自社側残高(Grid_SelfBalance)+TTAF側残高(Grid_TTAFBalance)」の",
-    "  合計です。TTAFからの入庫を単純加算すると、TTAF倉庫側で既にカウント済みの在庫を二重計上して",
-    "  しまう(発注タイミングを見誤る恐れがある)ため、TTAFへの入庫(T_Shipments)とTTAFからの出庫",
-    "  (T_TTAFCallOff)を別々に転がして合算する方式にしています。",
     "",
-    "【重要】原単位・バッチ数・自社/TTAF在庫・Call OffはPythonを使わず、Excel(VBA)マクロだけで更新できます。",
+    "【重要】原単位・バッチ数・自社/TTAF在庫はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
     "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
-    "  RefreshTTAFStock / RefreshTTAFCallOff を実行してください（対象ファイルを選ぶだけです。",
+    "  RefreshTTAFStock を実行してください（対象ファイルを選ぶだけです。",
     "  詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
     "  T_Shipments・T_OpeningStock・T_StockCount等には一切触れません。",
     "  Material_Detailの中間体の行を隠す/戻すHideInactiveIntermediates / ShowAllIntermediatesは、",
@@ -1199,11 +1111,10 @@ readme_lines = [
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
     "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
-    "  4. CSA Reportが届いたらRefreshTTAFStockを実行し、T_Shipments のETA/着荷日/PO番号/発注日も更新",
-    "  5. TTAFへCall Offを依頼したら(修正・キャンセル含む)RefreshTTAFCallOffを実行",
-    "  6. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
-    "  7. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
-    "  8. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
+    "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockを実行し、T_Shipments のETA/着荷日/PO番号/発注日も更新",
+    "  5. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
+    "  6. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
+    "  7. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
     "     Inventory Releasesの報告フォーマットに転記）",
     "",
     "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
@@ -1225,7 +1136,6 @@ nav_targets = [
     ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
     ("PO_Draft_Substrate", "発注書ドラフト（Substrate）"),
     ("T_Shipments", "発注・着荷の入力（TTAF供給材料はTTAF倉庫への到着実績を表す）"),
-    ("T_TTAFCallOff", "TTAFへの出庫依頼(Call Off)実績。RefreshTTAFCallOffで自動更新"),
     ("T_OpeningStock", "期首在庫の入力"),
     ("T_StockCount", "棚卸実績の入力"),
     ("T_SelfStock", "自社倉庫の在庫実績（材料×週。RefreshSelfStockで自動更新）"),
@@ -1243,19 +1153,17 @@ for i, (target, label) in enumerate(nav_targets, start=3):
 #      T_SelfStock_Log/T_TTAFStock_LogはVBAが書き込む生ログで、目に見えるT_SelfStock/T_TTAFStock
 #      （材料×週のグリッド）はそこから数式で計算するだけなので、生ログ自体は非表示にする） ----
 for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming",
-                    "Grid_Stock", "Grid_TTAFOutgoing", "Grid_SelfBalance", "Grid_TTAFBalance",
-                    "T_SelfStock_Log", "T_TTAFStock_Log"]:
+                    "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]:
     if sheet_name in wb.sheetnames:
         wb[sheet_name].sheet_state = "hidden"
 
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
-         "PO_Draft_Substrate", "T_Shipments", "T_TTAFCallOff", "T_OpeningStock", "T_StockCount",
+         "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
-         "Grid_Incoming", "Grid_TTAFOutgoing", "Grid_SelfBalance", "Grid_TTAFBalance",
-         "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]
+         "Grid_Incoming", "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
 # ---- 保存前チェック: テーブルがヘッダー行のみ(データ0行)になっていないか ----
