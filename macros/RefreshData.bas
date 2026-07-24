@@ -19,6 +19,10 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 '   RefreshSelfStock      : 「Raw materials daily check」(自社倉庫の現物確認)を選択すると、
 '                          T_SelfStock（自社在庫実績）を更新する。
 '   RefreshTTAFStock      : 「CSA Report」を選択すると、T_TTAFStock（TTAF在庫実績）を更新する。
+'   RefreshTTAFCallOff    : Call Off依頼書(1ファイル=1回分の依頼)を選択すると、T_TTAFCallOff
+'                          （TTAFからの出庫依頼実績）を更新する。TTAF_Code優先、見つからなければ
+'                          Cataler Part名(Description)で照合する。同じ(材料,お届け予定日)なら
+'                          上書きするため、依頼の修正・キャンセルにも対応できる。
 '   HideInactiveIntermediates : Material_Detailで、指定した月数の間ずっと生産予定(バッチ数)が
 '                          0の中間体の行をボタン一つで非表示にする（材料の在庫関連の行は
 '                          常に表示されたまま）。
@@ -758,6 +762,186 @@ ErrHandler:
     Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
+
+' TTAFは仕入先であると同時に、原材料を預けている倉庫でもある。Call Off依頼書は、TTAFに対して
+' 「弊社への出庫(=弊社への入庫)」を依頼するための書類で、1ファイル=1回分の依頼を表す。
+' T_TTAFCallOffに取り込むことで、Grid_Stock(TTAF供給材料の在庫予測)がTTAFからの出庫分を
+' 正しく差し引けるようになる(T_Shipmentsの入庫実績と単純合算すると、TTAF倉庫側で既にカウント
+' 済みの在庫を二重計上してしまうため)。
+Sub RefreshTTAFCallOff()
+    Dim srcPath As Variant
+    srcPath = Application.GetOpenFilename("Excel ファイル (*.xls; *.xlsx),*.xls;*.xlsx", , _
+        "Call Off依頼書を選択してください")
+    If srcPath = False Then Exit Sub
+
+    Dim srcWb As Workbook
+    On Error GoTo ErrHandler
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
+    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
+    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    Application.DisplayAlerts = False
+
+    Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
+
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim callTbl As ListObject: Set callTbl = thisWb.Sheets("T_TTAFCallOff").ListObjects("T_TTAFCallOff")
+    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+
+    ' Call Off依頼書はシート名がバージョンによって異なる可能性があるため、先頭シートを使う
+    ' (CSA Report/Raw materials daily checkのような固定シート名には頼らない)。
+    Dim sh As Worksheet: Set sh = srcWb.Sheets(1)
+
+    ' お届け予定日(7行目C列、例:「13.07.2026 @ 12:00 pm」)からDD.MM.YYYYを読み取る。
+    ' 6行目の「依頼した日」ではなく、実際にTTAF倉庫から出る(弊社に届く)予定日を使う。
+    Dim deliveryDate As Date
+    deliveryDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(7, 3).Value))
+
+    ' TTAF_Code / Description(Cataler Part名に相当) -> Part Nameのインデックスを1回だけ作る。
+    ' TTAF_Codeでの照合を優先し、見つからない場合だけDescriptionの正規化テキストで照合する。
+    Dim ttafCodeIdx As Object: Set ttafCodeIdx = CreateObject("Scripting.Dictionary")
+    Dim descIdx As Object: Set descIdx = CreateObject("Scripting.Dictionary")
+    Dim rmN As Long: rmN = rmTbl.ListRows.Count
+    If rmN > 0 Then
+        Dim rmNameDesc As Variant
+        rmNameDesc = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' Part Name, Description
+        Dim rmTtafCode As Variant
+        rmTtafCode = rmTbl.ListColumns(9).DataBodyRange.Value                 ' TTAF_Code
+        Dim i As Long
+        For i = 1 To rmN
+            Dim tKeyBuild As String: tKeyBuild = NormalizeText(CStr(rmTtafCode(i, 1)))
+            If Len(tKeyBuild) > 0 And Not ttafCodeIdx.Exists(tKeyBuild) Then ttafCodeIdx(tKeyBuild) = CStr(rmNameDesc(i, 1))
+            Dim dKeyBuild As String: dKeyBuild = NormalizeText(CStr(rmNameDesc(i, 2)))
+            If Len(dKeyBuild) > 0 And Not descIdx.Exists(dKeyBuild) Then descIdx(dKeyBuild) = CStr(rmNameDesc(i, 1))
+        Next i
+    End If
+
+    Dim callIdx As Object: Set callIdx = BuildCallOffRowIndex(callTbl)
+
+    ' 10行目以降、B列=TTAF PART NUMBER、C列=CATALER PART、F列=PCS(依頼数量)。
+    ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する。
+    Const MAX_ROWS As Long = 500
+    Dim data As Variant
+    data = sh.Range(sh.Cells(10, 1), sh.Cells(MAX_ROWS, 6)).Value
+
+    Dim r As Long, added As Long, updated As Long, unresolved As String
+    added = 0: updated = 0: unresolved = ""
+    For r = 1 To (MAX_ROWS - 10 + 1)
+        Dim catalerPart As String: catalerPart = Trim(CStr(data(r, 3)))
+        If Len(catalerPart) = 0 Then GoTo NextRow
+        Dim pcs As Variant: pcs = data(r, 6)
+        If Not IsNumeric(pcs) Then GoTo NextRow
+        If CDbl(pcs) <= 0 Then GoTo NextRow  ' このCall Offでは依頼していない材料(テンプレートの残り行)
+
+        Dim ttafCodeRaw As String: ttafCodeRaw = Trim(CStr(data(r, 2)))
+        Dim matchedPart As String: matchedPart = ""
+        Dim tKey As String: tKey = NormalizeText(ttafCodeRaw)
+        If Len(tKey) > 0 And ttafCodeIdx.Exists(tKey) Then
+            matchedPart = ttafCodeIdx(tKey)
+        Else
+            Dim dKey As String: dKey = NormalizeText(catalerPart)
+            If descIdx.Exists(dKey) Then matchedPart = descIdx(dKey)
+        End If
+
+        If Len(matchedPart) = 0 Then
+            If InStr(unresolved, catalerPart) = 0 Then
+                unresolved = unresolved & catalerPart & " (TTAF#" & ttafCodeRaw & "); "
+            End If
+            GoTo NextRow
+        End If
+
+        Call UpsertCallOffRow(callTbl, callIdx, matchedPart, ttafCodeRaw, deliveryDate, CDbl(pcs), added, updated)
+NextRow:
+    Next r
+
+    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
+    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
+    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+
+    Dim msg As String
+    msg = "T_TTAFCallOff を更新しました。" & vbCrLf & "お届け予定日: " & Format(deliveryDate, "yyyy-mm-dd") & vbCrLf & _
+          "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
+          "（同じ材料・同じお届け予定日の行は上書きされます。依頼の修正・キャンセル時は修正後のファイルを再度取り込んでください）"
+    If Len(unresolved) > 0 Then
+        msg = msg & vbCrLf & vbCrLf & "TTAF_Code・材料名のどちらでも照合できず未反映の行:" & vbCrLf & unresolved
+    End If
+    MsgBox msg, vbInformation
+    Exit Sub
+
+ErrHandler:
+    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
+    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
+    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
+    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
+    On Error Resume Next
+    If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+End Sub
+
+' T_TTAFCallOffの(Part Name, お届け予定日の暦日)->行番号のインデックスを1回だけ作る。
+' 列は Part Name(1), TTAF_Code(2), Delivery_Date(3), WeekIndex(4, 数式), PCS(5)。
+' 同じ材料・同じお届け予定日の組み合わせをキーにすることで、Call Offの修正(数量変更)や
+' キャンセル(0で上書き)を、再取込みするだけで反映できるようにしている。
+Private Function BuildCallOffRowIndex(tbl As ListObject) As Object
+    Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
+    Dim n As Long: n = tbl.ListRows.Count
+    If n > 0 Then
+        Dim data As Variant
+        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 3).Value  ' Part Name, TTAF_Code, Delivery_Date
+        Dim i As Long
+        For i = 1 To n
+            idx(CStr(data(i, 1)) & "|" & CStr(CLng(CDate(data(i, 3))))) = i
+        Next i
+    End If
+    Set BuildCallOffRowIndex = idx
+End Function
+
+' WeekIndex(4列目)は数式列のためここでは値を書き込まない。新規行はT_SelfStock_Log等と同様、
+' 直前行の数式をFormulaR1C1でコピーする(VBAのListRows.Add経由では計算列の自動複製が
+' 効かないことがあるため)。
+Private Sub UpsertCallOffRow(tbl As ListObject, idx As Object, partName As String, ttafCode As String, d As Date, pcs As Double, ByRef added As Long, ByRef updated As Long)
+    Dim key As String: key = partName & "|" & CStr(CLng(d))
+    If idx.Exists(key) Then
+        Dim rowN As Long: rowN = idx(key)
+        tbl.ListRows(rowN).Range.Cells(1, 2).Value = ttafCode
+        tbl.ListRows(rowN).Range.Cells(1, 5).Value = pcs
+        updated = updated + 1
+    Else
+        Dim newRow As ListRow
+        Set newRow = tbl.ListRows.Add
+        newRow.Range.Cells(1, 1).Value = partName
+        newRow.Range.Cells(1, 2).Value = ttafCode
+        newRow.Range.Cells(1, 3).Value = d
+        newRow.Range.Cells(1, 5).Value = pcs
+        If newRow.Index > 1 Then
+            newRow.Range.Cells(1, 4).FormulaR1C1 = tbl.ListRows(newRow.Index - 1).Range.Cells(1, 4).FormulaR1C1
+        End If
+        idx(key) = newRow.Index
+        added = added + 1
+    End If
+End Sub
+
+Private Function ExtractDDMMYYYYFromText(text As String) As Date
+    Dim re As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Pattern = "(\d{2})\.(\d{2})\.(\d{4})"
+    Dim m As Object
+    Set m = re.Execute(text)
+    If m.Count = 0 Then
+        Err.Raise vbObjectError + 1, , "お届け予定日(DD.MM.YYYY)を読み取れませんでした: " & text
+    End If
+    ExtractDDMMYYYYFromText = DateSerial(CInt(m(0).SubMatches(2)), CInt(m(0).SubMatches(1)), CInt(m(0).SubMatches(0)))
+End Function
 
 Private Function ExtractDateFromName(path As String) As Date
     Dim re As Object
