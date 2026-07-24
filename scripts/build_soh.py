@@ -540,7 +540,6 @@ for ws_ in (ws_req, ws_in, ws_st):
 for i, r in enumerate(rm_master):
     rr = i + 2
     rm = r["RM_Code"]
-    is_ttaf_supplied = r["Supplier"].strip().upper() == "TTAF"
     for ws_ in (ws_req, ws_in, ws_st):
         ws_.append([rm] + [None] * N_WEEKS)
     for w in range(1, N_WEEKS + 1):
@@ -570,14 +569,11 @@ for i, r in enumerate(rm_master):
             prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             prior = f"{week_col(w-1)}{rr}"
-        if is_ttaf_supplied:
-            # TTAFは仕入先であると同時に倉庫でもあるため、T_Shipments(TTAF倉庫への入庫実績)を
-            # 入庫としてそのまま足すと、TTAF倉庫側で既にカウント済みの在庫を二重計上してしまう。
-            # CSA Reportが毎週届きTTAF実績(T_TTAFStock)で毎週上書きされる運用のため、実績が
-            # 無い週(=まだ実績が届いていない直近の週)は入庫を足さず「前週-消費」だけで繋ぐ。
-            normal = f"{prior}-'Grid_Requirement'!{cl}{rr}"
-        else:
-            normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
+        # T_Shipments(Grid_Incoming)は、TTAF供給材料については「TTAFが外部の仕入先から新しく
+        # 仕入れてTTAF倉庫に到着する」実績・予定を表す。これはTTAF倉庫内で場所を移しただけの
+        # 動きではなく、純粋に合計在庫へ新規に入ってくる量なので、TTAF供給材料かどうかで
+        # 特別扱いする必要はなく、他の材料と同じ「前週+入庫-消費」で計算してよい。
+        normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
         # 優先順位: 手動棚卸(T_StockCount) > 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
         ws_st.cell(row=rr, column=1 + w).value = (
             f"=IF({has_count}>0,{count_val},"

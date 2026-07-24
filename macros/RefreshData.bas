@@ -718,7 +718,10 @@ Sub RefreshTTAFStock()
     ' 以前使っていた「PIVOT SOH TTAF」シートは、CHEM-で始まるコードしか拾えず(substrate等が
     ' 漏れる)、日付もファイル名から読み取っていたため、こちらのシートの方が網羅的かつ確実。
     Dim sh As Worksheet: Set sh = srcWb.Sheets(" COUNT SHEET SOH")
-    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(1, 8).Value))
+    ' H1の日付は「レポートが届いた月曜日(祝日の場合は翌営業日)」だが、その数値は前週の
+    ' 在庫を表す。そのため7日引いてから週Noを判定する(祝日で月曜以外の日になっていても、
+    ' ちょうど1週間前にずらすだけなので、前週の範囲内に正しく収まる)。
+    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(1, 8).Value)) - 7
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
