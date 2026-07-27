@@ -1081,18 +1081,20 @@ def build_po_draft(sheet_name, category, title):
     for r in items:
         data_row += 1
         rm = r["RM_Code"]
-        grow = rm_row[rm]
-        grow_rel = grow - 1  # Grid_Stock[#Data]内の相対行位置(1始まり)
+        # Grid_Stock内の行位置は、固定の数値(grow_rel)ではなくMATCHで毎回動的に求める。
+        # 材料の追加・削除でGrid_Stockの行位置がずれても(AddMaterial/RemoveMaterialマクロ参照)、
+        # 数式側が自動的に正しい行を追従できるようにするため。
+        grow_match = f'MATCH($D{data_row},Grid_Stock[Part Name],0)'
         ws.cell(row=data_row, column=2, value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH("{rm}",M_RawMaterials[Part Name],0)),"")')
         ws.cell(row=data_row, column=3, value=r.get("TTAF_Code", ""))
         ws.cell(row=data_row, column=4, value=rm)
         ws.cell(row=data_row, column=5, value="kg")
         ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[Part Name],0)),0)')
-        ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_rel},$P$7)")
+        ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_match},$P$7)")
         for w in range(1, PO_N_WEEKS + 1):
             col = PO_FIRST_WEEK_COL + w - 1
             ws.cell(row=data_row, column=col,
-                    value=f"=MAX(0,$F{data_row}-INDEX(Grid_Stock[#Data],{grow_rel},$P$7+{w-1}))")
+                    value=f"=MAX(0,$F{data_row}-INDEX(Grid_Stock[#Data],{grow_match},$P$7+{w-1}))")
         rng_start = get_column_letter(PO_FIRST_WEEK_COL)
         rng_end = get_column_letter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)
         ws.cell(row=data_row, column=total_col, value=f"=SUM({rng_start}{data_row}:{rng_end}{data_row})")
