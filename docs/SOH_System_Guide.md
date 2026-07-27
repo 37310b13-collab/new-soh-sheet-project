@@ -48,6 +48,7 @@
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
+| `RefreshShipmentsFromCSA` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
@@ -139,7 +140,8 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | Dashboard | 出力（最終確認画面） | 原材料×週の在庫を2年分・横軸で表示。基準在庫の下限/上限を入力すると各週が赤(下限未満)/緑(範囲内)/青(上限超)に自動色分け、C1入力で該当週を太枠ハイライト |
 | Material_Detail | 出力（トレーサビリティ） | 材料ごとに「使用中間体・バッチ数・使用量・週次合計・TTAF/自社在庫実績・週末時点の合計在庫」をブロック表示。材料名の右にMOQ手入力欄あり |
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | 要発注分を注文書ひな形へ自動転記 |
-| T_Shipments | 入力 | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
+| T_Shipments | 入力（RefreshShipmentsFromCSAでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
+| T_PlannedOrders | 入力 | PO Noがまだ出ていない計画中の発注（材料名・数量・納品予定日・発注月）。Material_Detailの「Order」行に反映。実データが揃うと自動的に消える（二重計上防止） |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
 | T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
 | T_SelfStock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_SelfStock_Log`が更新されると自動反映。手入力不可 |
@@ -177,11 +179,13 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
 2. 「Usage from Production Engineering」が更新されていれば`RefreshBOM`を実行
 3. 自社倉庫の現物確認（daily check）を実施したら`RefreshSelfStock`を実行
-4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`を実行し、あわせて`T_Shipments`もETA・着荷日・
-   PO番号・発注日で更新（早着・遅着はここに反映）
-5. 棚卸を実施した週は`T_StockCount`に追記
-6. `Dashboard`で赤色（基準在庫の下限未満）の週を確認し、`PO_Draft_*`から注文書を発行
-7. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
+4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`と`RefreshShipmentsFromCSA`を実行
+   （`RefreshShipmentsFromCSA`はShipping Scheduleの全PO・全材料を一括で`T_Shipments`に反映）
+5. 新しく発注したら`T_PlannedOrders`に追記（材料名・数量・納品予定日・発注月）。実際にCSA Reportの
+   実データが揃えば自動的に消えるので、手動で削除する必要はない
+6. 棚卸を実施した週は`T_StockCount`に追記
+7. `Dashboard`で赤色（基準在庫の下限未満）の週を確認し、`PO_Draft_*`から注文書を発行
+8. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
    Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
 ## 5.5 表示ウィンドウを先の年へ進める（年次作業・Dec-27以降の追加方法）
@@ -455,6 +459,25 @@ TTAF倉庫に到着する」実績・予定であり、TTAF倉庫内で場所を
 月曜日の日付ですが、その数値は前週の在庫を表すため、そのままH1の日付で週Noを判定すると
 1週間ずれて記録されてしまう不具合がありました。`RefreshTTAFStock`はH1の日付から7日引いてから
 週Noを判定するよう修正しています。
+
+**計画中の発注（T_PlannedOrders）とMaterial_Detailの「Order」行について**: TTAF供給材料は
+発注から着荷まで4〜6ヶ月かかり、常に複数件の発注が並行して進みます。当初PO_Draftにボタンを
+設けて発注を確定する案も検討しましたが、TTAFが希望通りの数量を用意できるとは限らず後から
+数量を手直しする必要があること、また注文書のドラフト自体は編集したくないという要望から、
+`T_PlannedOrders`という完全手入力のシートに変更しました（材料名・数量・納品予定日・発注月）。
+`Material_Detail`の自社在庫実績と合計在庫の間に「Order」行を追加し、該当週にセル内テキストで
+「数量 (m月発注)」の形で表示します。
+
+二重計上の防止は、当初「実データが揃ったら手動で行を削除する」運用も検討しましたが、
+消し忘れによる二重計上を懸念する声があったため、完全に数式で自動化しました。同じ材料・
+同じ発注月（`Order_Month`）の実データが`T_Shipments`に現れるか、TTAFの実在庫が納品予定週に
+追いついたら、`T_PlannedOrders`側の`IsReconciled`/`EffectiveQty`列が自動的に0になり、
+Material_Detailの表示からも自動的に消えます。
+
+`T_Shipments`への実データ取込みは、CSA Reportの`Shipping Schedule`シートを丸ごと取り込む
+`RefreshShipmentsFromCSA`マクロで行います。当初はPO No単位で1件ずつ検索する案でしたが、
+発注が常に4〜6件並行するため毎回複数回実行するのは非現実的との指摘を受け、他のRefresh系
+マクロと同様「ファイルを選ぶだけで全件まとめて反映」する方式に変更しました。
 
 ## 8. 要確認・要入力の項目
 

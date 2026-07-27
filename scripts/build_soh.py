@@ -345,7 +345,8 @@ for row in raw_shipments:
     # ship_rows layout: RM_Code, PO_No, Order_Date(unknown from source, left blank for manual entry), Confirmed_Qty, Latest_ETA, Received_Date, Status
 
 ws = wb.create_sheet("T_Shipments")
-ws.append(["Part Name", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status", "Effective_Week"])
+ws.append(["Part Name", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status",
+           "Effective_Week", "Order_Month"])
 if not ship_rows:
     # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないため、
     # 該当する発注が無い場合はダミー行を1行入れておく（要削除・上書き可）。
@@ -353,7 +354,7 @@ if not ship_rows:
 start_row = 2
 for i, r in enumerate(ship_rows):
     row_num = start_row + i
-    ws.append(r + [None])
+    ws.append(r + [None, None])
     ws.cell(row=row_num, column=3).fill = INPUT_FILL  # Order_Date is not in the source file; input by hand
     # Effective_Week: use Received_Date if present else Latest_ETA; week index via anchor arithmetic, clamped to sheet horizon.
     # 起点日はCal_Weeks!$B$1(AnchorYear)からその都度計算する(week1の起点と同じ式、week_index_formula_clamped参照)。
@@ -362,13 +363,44 @@ for i, r in enumerate(ship_rows):
     ws.cell(row=row_num, column=8).value = week_index_formula_clamped(
         f'IF(F{row_num}="",E{row_num},F{row_num})'
     )
+    ws.cell(row=row_num, column=9).number_format = "yyyy-mm"
 n = len(ship_rows) + 1
-style_header(ws, 8)
-add_table(ws, "T_Shipments", f"A1:H{n}")
-for col, w in zip("ABCDEFGH", [12, 14, 16, 14, 14, 14, 14, 14]):
+style_header(ws, 9)
+add_table(ws, "T_Shipments", f"A1:I{n}")
+for col, w in zip("ABCDEFGHI", [12, 14, 16, 14, 14, 14, 14, 14, 12]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 print("Shipment rows seeded:", len(ship_rows))
+
+# ============================================================ T_PlannedOrders (INPUT, 手入力)
+# 発注してから実際にCSA Reportで確認できるようになるまで(TTAF供給材料は4〜6ヶ月かかる)の
+# 「計画中の発注」を記録する。T_Shipmentsとは別管理: 発注時点ではPO Noがまだ無く、また
+# TTAFが希望通りの数量を用意できるとは限らない(後から数量を手直しする前提)ため。
+# Material_Detailの「Order」行から参照される。
+# 同じ材料・同じ発注月(Order_Month)の実データがT_Shipmentsに現れた場合、またはTTAFの
+# 実在庫(T_TTAFStock)が納品予定週に追いついた場合は、二重計上を避けるため自動的に
+# 非表示(EffectiveQty=0)になる(IsReconciled/EffectiveQty列。手動での削除は不要)。
+ws = wb.create_sheet("T_PlannedOrders")
+ws.append(["Part Name", "Qty", "Target_Delivery_Date", "WeekIndex", "Order_Month", "IsReconciled", "EffectiveQty"])
+ws.append(["(例) CHEM-1010", 0, START_MONDAY, None, START_MONDAY.replace(day=1), None, None])
+po_row = 2
+ws.cell(row=po_row, column=4).value = week_index_formula_clamped(f"$C{po_row}")
+ws.cell(row=po_row, column=6).value = (
+    f'=OR(SUMPRODUCT((T_Shipments[Part Name]=$A{po_row})*(T_Shipments[Order_Month]<>"")*'
+    f'(TEXT(T_Shipments[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm")))>0,'
+    f'COUNTIFS(T_TTAFStock_Log[Part Name],$A{po_row},T_TTAFStock_Log[WeekIndex],">="&$D{po_row})>0)'
+)
+ws.cell(row=po_row, column=7).value = f'=IF($F{po_row},0,$B{po_row})'
+ws.cell(row=po_row, column=3).number_format = "yyyy-mm-dd"
+ws.cell(row=po_row, column=5).number_format = "yyyy-mm"
+for c in (1, 2, 3, 5):
+    ws.cell(row=po_row, column=c).fill = INPUT_FILL
+n = 2
+style_header(ws, 7)
+add_table(ws, "T_PlannedOrders", f"A1:G{n}")
+for col, w in zip("ABCDEFG", [14, 10, 16, 10, 12, 12, 12]):
+    ws.column_dimensions[col].width = w
+ws.freeze_panes = "A2"
 
 # ============================================================ T_StockCount (INPUT, physical count overrides)
 # 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
@@ -741,6 +773,26 @@ for rm_code, entries in bom_by_rm.items():
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=f"='T_SelfStock'!{week_col(w)}{ss_row}")
 
+    # Order行: T_PlannedOrdersに手入力した「計画中の発注」を材料×週で表示する。
+    # セル内に「数量 (m月発注)」の形でテキスト表示する(Excelのセルコメントは数式で動的に
+    # 制御できないため、コメントの代わりにセル内テキストとして発注月を出す)。
+    # T_PlannedOrders[EffectiveQty]は、同じ材料・同じ発注月の実データがT_Shipmentsに現れた場合、
+    # またはTTAFの実在庫が納品予定週に追いついた場合に自動的に0になる(IsReconciled列)ため、
+    # ここでの二重計上は数式側で自動的に防止される(手動削除は不要)。
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="Order(発注予定,kg)")
+    for w in range(1, N_WEEKS + 1):
+        qty_expr = (
+            f"SUMIFS(T_PlannedOrders[EffectiveQty],T_PlannedOrders[Part Name],$A{mat_header_row},"
+            f"T_PlannedOrders[WeekIndex],{w})"
+        )
+        month_expr = (
+            f"SUMPRODUCT(MAX((T_PlannedOrders[Part Name]=$A{mat_header_row})*"
+            f"(T_PlannedOrders[WeekIndex]={w})*(T_PlannedOrders[EffectiveQty]>0)*T_PlannedOrders[Order_Month]))"
+        )
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
+                value=f'=IF({qty_expr}=0,"",{qty_expr}&" ("&TEXT({month_expr},"m月")&"発注)")')
+
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
     ws.cell(row=row_num, column=2).font = Font(bold=True)
@@ -1076,30 +1128,32 @@ readme_lines = [
     "                        Dashboardと同様にC1に'W23'のように入力すると該当週が求まり、",
     "                        VBA導入時はその週列のすぐ右に自動でスクロールします。",
     "                        材料名の右のC列にMOQ(最小発注量)を手入力できます。",
-    "                        合計使用量の下にTTAF在庫実績・自社在庫実績・合計在庫(週末時点)の週次推移も表示されます。",
+    "                        合計使用量の下にTTAF在庫実績・自社在庫実績・Order(発注予定)・",
+    "                        合計在庫(週末時点)の週次推移も表示されます。",
     "                        HideInactiveIntermediatesマクロ(要ボタン設定)で、指定期間ずっと生産予定の無い",
     "                        中間体の行を折りたためます（在庫関連の行は常に表示されたままです）。",
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments         : 発注・着荷の入力。TTAF供給材料については「TTAF倉庫への到着実績」を",
     "                        表します(TTAFは仕入先であり倉庫でもあるため)。TTAF以外の材料は",
-    "                        従来通り弊社への入庫実績です。",
+    "                        従来通り弊社への入庫実績です。RefreshShipmentsFromCSAでCSA Reportの",
+    "                        Shipping Scheduleから一括更新できます（手入力も可）。",
+    "  T_PlannedOrders     : PO Noがまだ出ていない「計画中の発注」の入力（材料名・数量・納品予定日・",
+    "                        発注月）。Material_Detailの「Order」行に反映されます。同じ材料・発注月の",
+    "                        実データがT_Shipmentsに現れるか、TTAF実績が納品予定週に追いついたら",
+    "                        自動的に消え（二重計上防止）、手動削除は不要です。",
     "  T_OpeningStock/T_StockCount : 入力用",
     "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
     "                        RefreshSelfStock/RefreshTTAFStockで更新されます。手入力はしないでください",
     "                        （生データは非表示のT_SelfStock_Log/T_TTAFStock_Logに安全に保存されています）。",
-    "                        TTAF在庫はCSA Reportが毎週届くたびに実績で上書きされる運用のため、",
-    "                        実績がまだ届いていない直近の週のGrid_Stockは、TTAF供給材料に限り",
-    "                        入庫を見込まず「前週-消費」だけで繋いでいます(TTAFへの入庫を",
-    "                        単純加算すると、TTAF倉庫側で既にカウント済みの在庫を二重計上して",
-    "                        しまうため)。",
     "",
     "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
     "",
-    "【重要】原単位・バッチ数・自社/TTAF在庫はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
+    "【重要】原単位・バッチ数・自社/TTAF在庫・発注実績はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
     "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
-    "  RefreshTTAFStock を実行してください（対象ファイルを選ぶだけです。",
+    "  RefreshTTAFStock / RefreshShipmentsFromCSA を実行してください（対象ファイルを選ぶだけです。",
     "  詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
-    "  T_Shipments・T_OpeningStock・T_StockCount等には一切触れません。",
+    "  T_Shipments・T_OpeningStock・T_StockCount・T_PlannedOrders等の入力内容は上書きされません",
+    "  （T_ShipmentsはRefreshShipmentsFromCSAを実行した場合のみ更新されます）。",
     "  Material_Detailの中間体の行を隠す/戻すHideInactiveIntermediates / ShowAllIntermediatesは、",
     "  ボタンへの割り当てが必要な一度だけの手動設定です（詳細はdocs/SOH_System_Guide.md）。",
     "",
@@ -1107,10 +1161,11 @@ readme_lines = [
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
     "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
-    "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockを実行し、T_Shipments のETA/着荷日/PO番号/発注日も更新",
-    "  5. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
-    "  6. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
-    "  7. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
+    "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsFromCSAを実行",
+    "  5. 新しく発注したらT_PlannedOrdersに追記（材料名・数量・納品予定日・発注月）",
+    "  6. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
+    "  7. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
+    "  8. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
     "     Inventory Releasesの報告フォーマットに転記）",
     "",
     "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
@@ -1132,6 +1187,7 @@ nav_targets = [
     ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
     ("PO_Draft_Substrate", "発注書ドラフト（Substrate）"),
     ("T_Shipments", "発注・着荷の入力（TTAF供給材料はTTAF倉庫への到着実績を表す）"),
+    ("T_PlannedOrders", "計画中の発注の入力（PO Noが出る前の予定分。Material_DetailのOrder行に反映）"),
     ("T_OpeningStock", "期首在庫の入力"),
     ("T_StockCount", "棚卸実績の入力"),
     ("T_SelfStock", "自社倉庫の在庫実績（材料×週。RefreshSelfStockで自動更新）"),
@@ -1155,7 +1211,7 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
-         "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount",
+         "PO_Draft_Substrate", "T_Shipments", "T_PlannedOrders", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
