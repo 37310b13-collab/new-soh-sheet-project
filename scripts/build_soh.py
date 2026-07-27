@@ -388,15 +388,27 @@ print("Shipment rows seeded:", len(ship_rows))
 # まだ届いていないのに予定週超過だけでOrder欄から消えてしまい、見落としにつながる危険が
 # あったため、T_Shipmentsとの一致(=この注文の実データそのものが確認できた場合)のみを
 # 消込み条件とする。
+# 【重要】1つの発注が複数回に分けて納品される場合(例: 500kg注文がweek1に200kg、week3に
+# 200kg、week10に100kg、と3回に分かれて届く)、単純に「同じ材料・発注月の実データが1件でも
+# あれば全部消す」だと、week1分の実データが1件届いただけでweek3・week10分もまとめて消えて
+# しまう。これを避けるため、納品予定日が早い順の「累積計画数量」と、T_Shipments側の
+# 「累積確定数量」を比較し、確定数量でカバーされている行から順に(先入れ先出しで)消込む方式
+# にしている。
 ws = wb.create_sheet("T_PlannedOrders")
 ws.append(["Part Name", "Qty", "Target_Delivery_Date", "WeekIndex", "Order_Month", "IsReconciled", "EffectiveQty"])
 ws.append(["(例) CHEM-1010", 0, START_MONDAY, None, START_MONDAY.replace(day=1), None, None])
 po_row = 2
 ws.cell(row=po_row, column=4).value = week_index_formula_clamped(f"$C{po_row}")
-ws.cell(row=po_row, column=6).value = (
-    f'=SUMPRODUCT((T_Shipments[Part Name]=$A{po_row})*(T_Shipments[Order_Month]<>"")*'
-    f'(TEXT(T_Shipments[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm")))>0'
+cumulative_planned = (
+    f'SUMPRODUCT((T_PlannedOrders[Part Name]=$A{po_row})*(T_PlannedOrders[Order_Month]<>"")*'
+    f'(TEXT(T_PlannedOrders[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm"))*'
+    f'(T_PlannedOrders[Target_Delivery_Date]<=$C{po_row})*T_PlannedOrders[Qty])'
 )
+confirmed_total = (
+    f'SUMPRODUCT((T_Shipments[Part Name]=$A{po_row})*(T_Shipments[Order_Month]<>"")*'
+    f'(TEXT(T_Shipments[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm"))*T_Shipments[Confirmed_Qty])'
+)
+ws.cell(row=po_row, column=6).value = f'={cumulative_planned}<={confirmed_total}'
 ws.cell(row=po_row, column=7).value = f'=IF($F{po_row},0,$B{po_row})'
 ws.cell(row=po_row, column=3).number_format = "yyyy-mm-dd"
 ws.cell(row=po_row, column=5).number_format = "yyyy-mm"
