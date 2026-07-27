@@ -333,11 +333,11 @@ Excel(VBA)だけで完結できるようにしています。ブックの再生�
 
 追加直後はこの材料をまだどの中間体も使っていない（`M_BOM`に実績が無い）ため、
 `Material_Detail`のブロックは中間体の内訳行が無い簡易版（合計使用量・TTAF在庫・自社在庫・
-Order・合計在庫・注記の6行のみ）になります。その後`RefreshBOM`を実行し、実際にこの材料を
-使う中間体の使用実績が見つかれば、`Grid_Requirement`経由で「合計使用量」の行には自動的に
-反映されます（ただし中間体ごとの内訳行を`Material_Detail`に追加するには、このマクロの
-再実行[削除して追加し直す]か手動での行追加が必要です。内訳表示は任意の見た目の話であり、
-在庫計算そのものには影響しません）。
+Order・合計在庫・注記の6行のみ）になります。その後**通常どおり`RefreshBOM`を1回実行するだけで**、
+実際にこの材料を使う中間体の使用実績が見つかり次第、`Material_Detail`の該当ブロックに
+「No. of batches」「使用量(kg)」の内訳行が自動的に追加され、他の材料と同じ見た目になります
+（`AddMaterial`を2回実行する必要はありません）。既存の材料が新しい中間体で使われ始めた場合も
+同様に、`RefreshBOM`を実行するだけで内訳行が自動的に追加されます。
 
 **`RemoveMaterial`マクロ**: Part Name（RM_Code）を入力すると、`AddMaterial`が追加する全シートから
 該当行を削除します。**`T_Shipments`・`T_PlannedOrders`・`T_StockCount`・`T_SelfStock_Log`/
@@ -358,7 +358,9 @@ Order・合計在庫・注記の6行のみ）になります。その後`Refresh
   `Dashboard` → `PO_Draft_*` → `Material_Detail`まで自動的に再計算されます。
 - **原単位が変わったとき**: `RefreshBOM`実行後、同様に自動反映されます。`M_BOM`・`PP_Grid`は
   `Grid_Requirement`から直接参照されているため、全く新しい中間体×原材料の組み合わせが増えた
-  場合でも、ブックの再生成は不要です。
+  場合でも、ブックの再生成は不要です。さらに`RefreshBOM`は、`Material_Detail`の該当材料ブロックに
+  その中間体の内訳行（No. of batches／使用量(kg)）が無ければ自動的に追加します
+  （`SyncMaterialDetailIntermediates`）。
 - **輸入品が早着・遅着したとき**: `T_Shipments`のETA・着荷日を書き換えるだけで、入荷が計上される
   週が自動的にシフトします。
 - **棚卸で実測とズレがあったとき**: `T_StockCount`に1行追記すると、その週の在庫が上書きされ、
