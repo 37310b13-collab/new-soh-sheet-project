@@ -48,7 +48,7 @@
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
-| `RefreshShipmentsFromCSA` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映） |
+| `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
@@ -140,7 +140,7 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | Dashboard | 出力（最終確認画面） | 原材料×週の在庫を2年分・横軸で表示。基準在庫の下限/上限を入力すると各週が赤(下限未満)/緑(範囲内)/青(上限超)に自動色分け、C1入力で該当週を太枠ハイライト |
 | Material_Detail | 出力（トレーサビリティ） | 材料ごとに「使用中間体・バッチ数・使用量・週次合計・TTAF/自社在庫実績・週末時点の合計在庫」をブロック表示。材料名の右にMOQ手入力欄あり |
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | 要発注分を注文書ひな形へ自動転記 |
-| T_Shipments | 入力（RefreshShipmentsFromCSAでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
+| T_Shipments | 入力（RefreshShipmentsでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
 | T_PlannedOrders | 入力 | PO Noがまだ出ていない計画中の発注（材料名・数量・納品予定日・発注月）。Material_Detailの「Order」行に反映。実データが揃うと自動的に消える（二重計上防止） |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
 | T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
@@ -179,8 +179,8 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
 2. 「Usage from Production Engineering」が更新されていれば`RefreshBOM`を実行
 3. 自社倉庫の現物確認（daily check）を実施したら`RefreshSelfStock`を実行
-4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`と`RefreshShipmentsFromCSA`を実行
-   （`RefreshShipmentsFromCSA`はShipping Scheduleの全PO・全材料を一括で`T_Shipments`に反映）
+4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`と`RefreshShipments`を実行
+   （`RefreshShipments`はShipping Scheduleの全PO・全材料を一括で`T_Shipments`に反映）
 5. 新しく発注したら`T_PlannedOrders`に追記（材料名・数量・納品予定日・発注月）。実際にCSA Reportの
    実データが揃えば自動的に消えるので、手動で削除する必要はない
 6. 棚卸を実施した週は`T_StockCount`に追記
@@ -493,7 +493,7 @@ week3・week10分もまとめて消えてしまいます。これを避けるた
 （実際にテストデータで動作確認済みです。）
 
 `T_Shipments`への実データ取込みは、CSA Reportの`Shipping Schedule`シートを丸ごと取り込む
-`RefreshShipmentsFromCSA`マクロで行います。当初はPO No単位で1件ずつ検索する案でしたが、
+`RefreshShipments`マクロで行います。当初はPO No単位で1件ずつ検索する案でしたが、
 発注が常に4〜6件並行するため毎回複数回実行するのは非現実的との指摘を受け、他のRefresh系
 マクロと同様「ファイルを選ぶだけで全件まとめて反映」する方式に変更しました。
 

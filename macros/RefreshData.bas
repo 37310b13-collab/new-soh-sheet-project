@@ -21,7 +21,7 @@ Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開�
 '   RefreshTTAFStock      : 「CSA Report」を選択すると、その中の「 COUNT SHEET SOH」シートから
 '                          T_TTAFStock（TTAF在庫実績）を更新する。TTAF_Code優先、見つからなければ
 '                          Description(材料名)で照合する。
-'   RefreshShipmentsFromCSA : 「CSA Report」を選択すると、その中の「Shipping Schedule」シートを
+'   RefreshShipments : 「CSA Report」を選択すると、その中の「Shipping Schedule」シートを
 '                          丸ごと取り込み、T_Shipments（発注〜着荷の実績・予定）を更新する。
 '                          PO No単位ではなく全件まとめて取り込む(発注から着荷まで4〜6ヶ月かかり、
 '                          常に複数件のPOが並行して進むため)。
@@ -803,7 +803,7 @@ End Sub
 ' CSA Product CodeはTTAF PART NUMBERと異なり、既にこちらのRM_Codeとほぼ同じ表記のため、
 ' TTAF_Code/Description経由の照合(ResolveTTAFPart)ではなく、RM_Code同士を直接
 ' (大文字小文字・前後空白を無視して)照合する。
-Sub RefreshShipmentsFromCSA()
+Sub RefreshShipments()
     Dim srcPath As Variant
     srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
         "CSA Report（Shipping Schedule取込み）ファイルを選択してください")

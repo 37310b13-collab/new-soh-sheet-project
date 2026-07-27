@@ -377,7 +377,7 @@ print("Shipment rows seeded:", len(ship_rows))
 # 「計画中の発注」を記録する。T_Shipmentsとは別管理: 発注時点ではPO Noがまだ無く、また
 # TTAFが希望通りの数量を用意できるとは限らない(後から数量を手直しする前提)ため。
 # Material_Detailの「Order」行から参照される。
-# 同じ材料・同じ発注月(Order_Month)の実データがT_Shipments(RefreshShipmentsFromCSAで毎週
+# 同じ材料・同じ発注月(Order_Month)の実データがT_Shipments(RefreshShipmentsで毎週
 # 更新)に現れたら、二重計上を避けるため自動的に非表示(EffectiveQty=0)になる
 # (IsReconciled/EffectiveQty列。手動での削除は不要)。
 # 【重要】以前はTTAFの実在庫(T_TTAFStock)が納品予定週に追いついたことも消込みの条件に
@@ -1154,11 +1154,11 @@ readme_lines = [
     "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
     "  T_Shipments         : 発注・着荷の入力。TTAF供給材料については「TTAF倉庫への到着実績」を",
     "                        表します(TTAFは仕入先であり倉庫でもあるため)。TTAF以外の材料は",
-    "                        従来通り弊社への入庫実績です。RefreshShipmentsFromCSAでCSA Reportの",
+    "                        従来通り弊社への入庫実績です。RefreshShipmentsでCSA Reportの",
     "                        Shipping Scheduleから一括更新できます（手入力も可）。",
     "  T_PlannedOrders     : PO Noがまだ出ていない「計画中の発注」の入力（材料名・数量・納品予定日・",
     "                        発注月）。Material_Detailの「Order」行に反映されます。同じ材料・発注月の",
-    "                        実データがT_Shipments(RefreshShipmentsFromCSAで毎週更新)に現れたら",
+    "                        実データがT_Shipments(RefreshShipmentsで毎週更新)に現れたら",
     "                        自動的に消え（二重計上防止）、手動削除は不要です。",
     "  T_OpeningStock/T_StockCount : 入力用",
     "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
@@ -1169,10 +1169,10 @@ readme_lines = [
     "",
     "【重要】原単位・バッチ数・自社/TTAF在庫・発注実績はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
     "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
-    "  RefreshTTAFStock / RefreshShipmentsFromCSA を実行してください（対象ファイルを選ぶだけです。",
+    "  RefreshTTAFStock / RefreshShipments を実行してください（対象ファイルを選ぶだけです。",
     "  詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
     "  T_Shipments・T_OpeningStock・T_StockCount・T_PlannedOrders等の入力内容は上書きされません",
-    "  （T_ShipmentsはRefreshShipmentsFromCSAを実行した場合のみ更新されます）。",
+    "  （T_ShipmentsはRefreshShipmentsを実行した場合のみ更新されます）。",
     "  Material_Detailの中間体の行を隠す/戻すHideInactiveIntermediates / ShowAllIntermediatesは、",
     "  ボタンへの割り当てが必要な一度だけの手動設定です（詳細はdocs/SOH_System_Guide.md）。",
     "",
@@ -1180,7 +1180,7 @@ readme_lines = [
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
     "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
-    "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsFromCSAを実行",
+    "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsを実行",
     "  5. 新しく発注したらT_PlannedOrdersに追記（材料名・数量・納品予定日・発注月）",
     "  6. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
     "  7. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
