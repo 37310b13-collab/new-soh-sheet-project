@@ -377,18 +377,25 @@ print("Shipment rows seeded:", len(ship_rows))
 # 「計画中の発注」を記録する。T_Shipmentsとは別管理: 発注時点ではPO Noがまだ無く、また
 # TTAFが希望通りの数量を用意できるとは限らない(後から数量を手直しする前提)ため。
 # Material_Detailの「Order」行から参照される。
-# 同じ材料・同じ発注月(Order_Month)の実データがT_Shipmentsに現れた場合、またはTTAFの
-# 実在庫(T_TTAFStock)が納品予定週に追いついた場合は、二重計上を避けるため自動的に
-# 非表示(EffectiveQty=0)になる(IsReconciled/EffectiveQty列。手動での削除は不要)。
+# 同じ材料・同じ発注月(Order_Month)の実データがT_Shipments(RefreshShipmentsFromCSAで毎週
+# 更新)に現れたら、二重計上を避けるため自動的に非表示(EffectiveQty=0)になる
+# (IsReconciled/EffectiveQty列。手動での削除は不要)。
+# 【重要】以前はTTAFの実在庫(T_TTAFStock)が納品予定週に追いついたことも消込みの条件に
+# 含めていたが、これは誤りだった。CSA Reportは毎週「その材料の在庫」を(この注文と無関係に)
+# 更新し続けるため、「納品予定週以降に実績がある」は実質「予定週を過ぎて次のCSA Reportが
+# 来たかどうか」という時間経過の判定にしかならず、実際にこの注文が届いたかどうかとは無関係
+# だった。早着の場合は届いているのに予定週まで表示が残るだけで実害は小さいが、延着の場合は
+# まだ届いていないのに予定週超過だけでOrder欄から消えてしまい、見落としにつながる危険が
+# あったため、T_Shipmentsとの一致(=この注文の実データそのものが確認できた場合)のみを
+# 消込み条件とする。
 ws = wb.create_sheet("T_PlannedOrders")
 ws.append(["Part Name", "Qty", "Target_Delivery_Date", "WeekIndex", "Order_Month", "IsReconciled", "EffectiveQty"])
 ws.append(["(例) CHEM-1010", 0, START_MONDAY, None, START_MONDAY.replace(day=1), None, None])
 po_row = 2
 ws.cell(row=po_row, column=4).value = week_index_formula_clamped(f"$C{po_row}")
 ws.cell(row=po_row, column=6).value = (
-    f'=OR(SUMPRODUCT((T_Shipments[Part Name]=$A{po_row})*(T_Shipments[Order_Month]<>"")*'
-    f'(TEXT(T_Shipments[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm")))>0,'
-    f'COUNTIFS(T_TTAFStock_Log[Part Name],$A{po_row},T_TTAFStock_Log[WeekIndex],">="&$D{po_row})>0)'
+    f'=SUMPRODUCT((T_Shipments[Part Name]=$A{po_row})*(T_Shipments[Order_Month]<>"")*'
+    f'(TEXT(T_Shipments[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm")))>0'
 )
 ws.cell(row=po_row, column=7).value = f'=IF($F{po_row},0,$B{po_row})'
 ws.cell(row=po_row, column=3).number_format = "yyyy-mm-dd"
@@ -776,9 +783,9 @@ for rm_code, entries in bom_by_rm.items():
     # Order行: T_PlannedOrdersに手入力した「計画中の発注」を材料×週で表示する。
     # セル内に「数量 (m月発注)」の形でテキスト表示する(Excelのセルコメントは数式で動的に
     # 制御できないため、コメントの代わりにセル内テキストとして発注月を出す)。
-    # T_PlannedOrders[EffectiveQty]は、同じ材料・同じ発注月の実データがT_Shipmentsに現れた場合、
-    # またはTTAFの実在庫が納品予定週に追いついた場合に自動的に0になる(IsReconciled列)ため、
-    # ここでの二重計上は数式側で自動的に防止される(手動削除は不要)。
+    # T_PlannedOrders[EffectiveQty]は、同じ材料・同じ発注月の実データがT_Shipmentsに現れたら
+    # 自動的に0になる(IsReconciled列)ため、ここでの二重計上は数式側で自動的に防止される
+    # (手動削除は不要)。
     row_num += 1
     ws.cell(row=row_num, column=2, value="Order(発注予定,kg)")
     for w in range(1, N_WEEKS + 1):
@@ -1139,7 +1146,7 @@ readme_lines = [
     "                        Shipping Scheduleから一括更新できます（手入力も可）。",
     "  T_PlannedOrders     : PO Noがまだ出ていない「計画中の発注」の入力（材料名・数量・納品予定日・",
     "                        発注月）。Material_Detailの「Order」行に反映されます。同じ材料・発注月の",
-    "                        実データがT_Shipmentsに現れるか、TTAF実績が納品予定週に追いついたら",
+    "                        実データがT_Shipments(RefreshShipmentsFromCSAで毎週更新)に現れたら",
     "                        自動的に消え（二重計上防止）、手動削除は不要です。",
     "  T_OpeningStock/T_StockCount : 入力用",
     "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
