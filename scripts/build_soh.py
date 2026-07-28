@@ -1200,8 +1200,78 @@ for i, line in enumerate(readme_lines, start=1):
 ws["A1"].font = Font(bold=True, size=14)
 ws.column_dimensions["A"].width = 100
 
+# ============================================================ 操作パネル
+# Alt+F8のマクロ一覧は常にマクロ名のアルファベット順に表示され、モジュールの並びや記述順を
+# 変えても順序を変えられない(Excelの仕様)。月次の運用手順どおりの順番でマクロを実行したい、
+# という要望に対応するため、シート上に手順順のボタン一覧を用意する。openpyxl(このブックの
+# 生成に使っているPythonライブラリ)はクリック可能な図形やそこへのマクロ割り当てを自動生成
+# できないため、このシートは「どこに・どの順で・どのマクロを割り当てるか」の下地(枠と番号・
+# マクロ名・説明)を用意するところまでで、実際の図形の配置とマクロ登録は貴社のExcelで
+# 一度だけ手動で行う(下記【ボタンの割り当て方】参照)。
+ws_panel = wb.create_sheet("操作パネル")
+ws_panel["A1"] = "操作パネル（ボタンの設置場所）"
+ws_panel["A1"].font = Font(bold=True, size=14)
+ws_panel["A2"] = ("Alt+F8のマクロ一覧は常にアルファベット順になるため、このシートに月次の運用手順の順で"
+                  "ボタンを配置します。ボタンの作成・マクロの割り当ては貴社のExcelで一度だけ手動で行って"
+                  "ください（下記の番号・マクロ名の行に重ねて図形を描き、「マクロの登録」で対応するマクロ名を"
+                  "選ぶだけです）。詳しい手順はdocs/SOH_System_Guide.mdを参照してください。")
+ws_panel["A2"].font = Font(italic=True, color="808080", size=9)
+ws_panel["A2"].alignment = Alignment(wrap_text=True, vertical="top")
+ws_panel.row_dimensions[2].height = 45
+
+PANEL_SLOT_FILL = PatternFill("solid", fgColor="E2EFDA")
+PANEL_SECTION_FILL = PatternFill("solid", fgColor="1F4E78")
+
+panel_sections = [
+    ("【毎月・毎週の定型作業】上から順に実行", [
+        ("RefreshWeeklyBatches", "「Powder & Slurry & Pgm Plan」の新しい月版が出たら実行"),
+        ("RefreshBOM", "「Usage from Production Engineering」が更新されたら実行"),
+        ("RefreshSelfStock", "自社倉庫の現物確認（daily check）を実施したら実行"),
+        ("RefreshTTAFStock", "CSA Reportが毎週月曜に届いたら実行（TTAF在庫）"),
+        ("RefreshShipments", "CSA Reportが毎週月曜に届いたら実行（発注・着荷）"),
+    ]),
+    ("【任意】Material_Detailの表示調整", [
+        ("HideInactiveIntermediates", "しばらく生産予定の無い中間体の行を折りたたむ"),
+        ("ShowAllIntermediates", "折りたたんだ行をすべて再表示する"),
+    ]),
+    ("【まれに使う】材料・中間体の追加/削除（取り消せません。事前にバックアップ推奨）", [
+        ("AddMaterial", "新しい材料(TTAF供給品)をシステムに追加する"),
+        ("RemoveMaterial", "使わなくなった材料をシステムから削除する"),
+        ("RemoveIntermediate", "生産中止になった中間体をシステムから削除する"),
+    ]),
+]
+
+panel_row = 4
+panel_num = 1
+for section_title, items in panel_sections:
+    ws_panel.cell(row=panel_row, column=1, value=section_title)
+    for c in range(1, 4):
+        ws_panel.cell(row=panel_row, column=c).fill = PANEL_SECTION_FILL
+        ws_panel.cell(row=panel_row, column=c).font = Font(color="FFFFFF", bold=True)
+    panel_row += 1
+    for macro_name, desc in items:
+        ws_panel.cell(row=panel_row, column=1, value=panel_num)
+        ws_panel.cell(row=panel_row, column=1).alignment = Alignment(horizontal="center")
+        ws_panel.cell(row=panel_row, column=2, value=macro_name)
+        ws_panel.cell(row=panel_row, column=2).font = Font(bold=True)
+        ws_panel.cell(row=panel_row, column=3, value=desc)
+        for c in range(1, 4):
+            ws_panel.cell(row=panel_row, column=c).fill = PANEL_SLOT_FILL
+            ws_panel.cell(row=panel_row, column=c).border = Border(
+                top=Side(style="thin", color="A9A9A9"), bottom=Side(style="thin", color="A9A9A9"),
+                left=Side(style="thin", color="A9A9A9"), right=Side(style="thin", color="A9A9A9"))
+        panel_row += 1
+        panel_num += 1
+    panel_row += 1  # セクション間の空白行
+
+ws_panel.column_dimensions["A"].width = 6
+ws_panel.column_dimensions["B"].width = 28
+ws_panel.column_dimensions["C"].width = 70
+ws_panel.freeze_panes = "A3"
+
 # ---- ナビゲーション（README上部にジャンプリンクを追加） ----
 nav_targets = [
+    ("操作パネル", "月次の運用手順順に並んだマクロボタンの設置場所"),
     ("Dashboard", "原材料×週の在庫（2年分・横軸で見渡せるメイン画面。まずここ）"),
     ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
     ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
@@ -1231,7 +1301,7 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
         wb[sheet_name].sheet_state = "hidden"
 
 # ---- シートの並び順を業務で使う順に ----
-order = ["README", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
+order = ["README", "操作パネル", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
          "PO_Draft_Substrate", "T_Shipments", "T_PlannedOrders", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
