@@ -54,6 +54,7 @@
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
+| `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 
 **TTAF供給材料の在庫予測の考え方（重要）**: TTAFは仕入先であると同時に、原材料を預けている
 倉庫でもあります。`T_Shipments`（Status=TTAF Stock）は「TTAFが外部の仕入先から新しく仕入れて
@@ -311,7 +312,7 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 のため、通常どおりRefreshData.basをインポートしていれば追加の作業は不要です。上記4つの
 `Worksheet_Change`だけを、対応するシート自身のコードモジュールに貼り付けてください。
 
-## 5.7 材料の追加・削除（`AddMaterial` / `RemoveMaterial`）— Python不要
+## 5.7 材料・中間体の追加・削除（`AddMaterial` / `RemoveMaterial` / `RemoveIntermediate`）— Python不要
 
 駐在員の帰国後もローカル社員だけで運用を続けられるよう、対象材料（TTAF供給品）の追加・削除を
 Excel(VBA)だけで完結できるようにしています。ブックの再生成（Pythonスクリプト実行）は不要です。
@@ -344,13 +345,34 @@ Order・合計在庫・注記の6行のみ）になります。その後**通常
 `T_TTAFStock_Log`・`M_BOM`のデータは削除しません**（履歴として残しておき、万一同じPart Nameを
 `AddMaterial`で再登録した場合は自動的に再びつながる設計です）。
 
+**中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
+行、生産計画上の製品コード）の増減にも対応しています。
+
+- **追加**: 何もしなくても自動対応済みです。`RefreshWeeklyBatches`が「Powder & Slurry & Pgm
+  Plan」に新しい中間体を見つければ`PP_Grid`に自動で行を追加し、`RefreshBOM`が「Usage from
+  Production Engineering」に新しい中間体×材料の組み合わせを見つければ`M_BOM`に追加した上で
+  `Material_Detail`の該当材料ブロックにも内訳行を自動追加します（上記参照）。専用マクロを
+  実行する必要はありません。
+- **削除（`RemoveIntermediate`マクロ）**: 生産中止になった中間体名を入力すると、`PP_Grid`の
+  該当行、`M_BOM`のその中間体を使う原単位の行（複数の材料で使われていれば全件）、
+  `Material_Detail`側のその中間体の内訳行（この中間体を使っているすべての材料ブロックから）
+  を削除します。原材料側のデータ（`T_Shipments`・`T_PlannedOrders`・`T_OpeningStock`・
+  `T_StockCount`・実績ログ・`M_RawMaterials`）は削除しません。
+  - 中間体の行を明示的に削除しなくても、生産計画から単に消えれば以降の週の「No. of
+    batches」は0のまま更新されなくなり、使用量計算（原単位×バッチ数）も自動的に0になるため
+    在庫計算が狂うことはありません。また`HideInactiveIntermediates`で表示上も折りたためます。
+    `RemoveIntermediate`は、シートが年々肥大化するのを防ぐための**任意のクリーンアップ**です。
+
 **注意点**:
-- どちらの操作も**取り消せません**。実行前にファイルのバックアップ（コピー）を取ることを
+- いずれの操作も**取り消せません**。実行前にファイルのバックアップ（コピー）を取ることを
   強く推奨します。
-- 行は常に各シートの一番下に追加され、既存の行の途中に挿入することはありません（既存行の
-  数式・参照がずれるのを避けるため）。
+- `AddMaterial`で追加する行は常に各シートの一番下に追加され、既存の行の途中に挿入することは
+  ありません（既存行の数式・参照がずれるのを避けるため）。
 - `PO_Draft_*`の週次予測式はGrid_Stock内の行位置を`MATCH`で毎回動的に検索する方式のため、
   材料の追加・削除でGrid_Stockの行位置がずれても数式側が自動的に追従します。
+- `PP_Grid`・`M_BOM`から中間体の行を削除しても、他の中間体・他の材料の計算には影響しません。
+  `Grid_Requirement`・`Material_Detail`側の数式がすべて`MATCH`／構造化参照（テーブル名[列名]）で
+  組まれており、固定の行番号を直接使っていないためです。
 
 ## 6. 自動反映の仕組み
 

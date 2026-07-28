@@ -55,6 +55,17 @@ Public Const SS_TABLE_ROW As Long = 5        ' T_SelfStock/T_TTAFStock: 見出�
 '                          (履歴として残すため。再度AddMaterialで同じPart Nameを追加すれば
 '                          自動的に再びつながる)。取り消せない操作のため、実行前にファイルの
 '                          バックアップを取ることを強く推奨します。
+'   RemoveIntermediate    : 生産中止になった中間体(完成品コード)をシステムから削除する。
+'                          InputBoxで中間体名を入力すると、PP_Grid・M_BOMの該当行と、
+'                          Material_Detailの該当内訳行(No. of batches／使用量(kg)。この中間体を
+'                          使っているすべての材料ブロックから)を削除する。原材料側のデータ
+'                          (T_Shipments・T_PlannedOrders・T_OpeningStock・T_StockCount・
+'                          実績ログ・M_RawMaterials)は削除しない。取り消せない操作のため、
+'                          実行前にファイルのバックアップを取ることを強く推奨します。
+'                          (参考) 中間体の"追加"側は既に自動化済みです。RefreshWeeklyBatches/
+'                          RefreshBOMが、生産計画・原単位表に新しい中間体を見つけるたびに
+'                          PP_Grid・M_BOM・Material_Detailへ自動的に行を追加するため、
+'                          専用の"AddIntermediate"マクロは不要です。
 '
 ' いずれも、それぞれ対応するシートだけを更新します。T_Shipments・T_OpeningStock・
 ' T_StockCount・SafetyStock_Qty等、運用中に手入力した内容には一切触れません。
@@ -1542,6 +1553,79 @@ ErrHandler:
            "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
 End Sub
 
+' 生産中止になった中間体をシステムから削除する。PP_Grid・M_BOMの該当行と、
+' Material_Detail側の内訳行(No. of batches／使用量(kg)。この中間体を使うすべての
+' 材料ブロックから)を削除する。
+'
+' 【安全性についての補足】PP_Grid・M_BOMの行を削除しても、他の中間体・他の材料の計算には
+' 影響しません。理由は、Grid_Requirement・Material_DetailからPP_Grid/M_BOMを参照する数式が
+' すべてMATCH/構造化参照(テーブル名[列名]形式)で組まれており、固定の行番号を直接使っていない
+' ためです(MATCHは削除後の新しい行位置を毎回再計算し、構造化参照は削除後のテーブルの
+' 行数に自動的に追従します)。この設計のおかげで、中間体の削除は他の中間体・材料の
+' 数式には一切影響しません。
+Sub RemoveIntermediate()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
+    Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
+
+    Dim interName As String
+    interName = Trim(InputBox("削除する中間体名(Intermediate)を入力してください。" & vbCrLf & _
+        "PP_Gridシートの「Intermediate」列に表示されている名称と一致させてください" & vbCrLf & _
+        "(大文字小文字は区別しません)。", "中間体の削除"))
+    If Len(interName) = 0 Then Exit Sub
+
+    Dim ppFoundRow As Long: ppFoundRow = FindMaterialRow(ppGrid, interName)
+    If ppFoundRow = 0 Then
+        MsgBox "PP_Gridに「" & interName & "」という中間体が見つかりませんでした。" & vbCrLf & _
+               "PP_Gridシートで正確な名称を確認してください。", vbExclamation
+        Exit Sub
+    End If
+    ' 実際に登録されている表記(大文字小文字)に揃える(入力時のゆらぎを吸収するため)
+    Dim canonicalName As String
+    canonicalName = CStr(ppGrid.ListRows(ppFoundRow).Range.Cells(1, 1).Value)
+
+    Dim bomCount As Long: bomCount = CountMatchingTableRows(bomTbl, canonicalName)
+
+    If MsgBox("中間体「" & canonicalName & "」を削除します。" & vbCrLf & vbCrLf & _
+              "削除される内容:" & vbCrLf & _
+              "・PP_Grid: 該当行(週次バッチ数)を1行削除" & vbCrLf & _
+              "・M_BOM: この中間体を使う原単位の行を " & bomCount & " 件削除" & vbCrLf & _
+              "・Material_Detail: この中間体の内訳行(No. of batches／使用量(kg))を、" & vbCrLf & _
+              "  この中間体を使っているすべての材料ブロックから削除" & vbCrLf & vbCrLf & _
+              "T_Shipments・T_PlannedOrders・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
+              "M_RawMaterialsなど、原材料側のデータは一切削除されません。" & vbCrLf & vbCrLf & _
+              "この操作は元に戻せません。よろしいですか？", _
+              vbYesNo + vbExclamation, "中間体の削除の確認") <> vbYes Then Exit Sub
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim removedDetailPairs As Long
+    removedDetailPairs = DeleteIntermediateFromMaterialDetail(thisWb.Sheets("Material_Detail"), canonicalName)
+    Call DeleteMatchingTableRow(bomTbl, canonicalName)
+    ' PP_Grid自体は、上のFindMaterialRowの検索キーとして使い終わってから最後に削除する
+    Call DeleteMatchingTableRow(ppGrid, canonicalName)
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "中間体「" & canonicalName & "」を削除しました。" & vbCrLf & _
+           "Material_Detailから削除した内訳行: " & removedDetailPairs & " 組（材料ブロック数）" & vbCrLf & vbCrLf & _
+           "（T_Shipments・T_PlannedOrders・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
+           "M_RawMaterialsは削除されていません）", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "中間体の削除中にエラーが発生しました: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
+           "途中まで削除されている可能性があります。シートの状態を確認してください" & vbCrLf & _
+           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+End Sub
+
 ' 列番号(例:28)を列名(例:AB)に変換する。ワークシートに依存しない純粋な計算。
 Private Function ColLetter(colNum As Long) As String
     Dim s As String, n As Long, r As Long
@@ -1928,3 +2012,53 @@ Private Sub DeleteMaterialDetailBlock(sh As Worksheet, rmCode As String)
     Next r
     sh.Rows(startRow & ":" & endRow).Delete
 End Sub
+
+' テーブルの列1(RemoveIntermediateではPP_Grid/M_BOMの「Intermediate」列)に一致する行数を数える
+' (実際の削除前に、確認ダイアログでユーザーに件数を提示するためだけに使う)。
+Private Function CountMatchingTableRows(tbl As ListObject, keyVal As String) As Long
+    Dim n As Long: n = tbl.ListRows.Count
+    Dim i As Long, cnt As Long: cnt = 0
+    For i = 1 To n
+        If UCase(Trim(CStr(tbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(keyVal) Then cnt = cnt + 1
+    Next i
+    CountMatchingTableRows = cnt
+End Function
+
+' Material_Detailの全ブロックを走査し、指定した中間体名の内訳行ペア(No. of batches／使用量(kg))を
+' 見つけ次第削除する。1つの中間体が複数の材料ブロックで使われている場合、該当するすべての
+' ブロックから削除する(削除した組数を返す)。SyncMaterialDetailIntermediates(追加側)と対になる
+' 削除側の処理で、同じブロック走査の考え方(ライブにセルを読みながら、削除で行がずれても
+' その場で辻褄が合うようにする)を使っている。
+Private Function DeleteIntermediateFromMaterialDetail(sh As Worksheet, interName As String) As Long
+    Dim removedPairs As Long: removedPairs = 0
+    Dim lastRowScan As Long: lastRowScan = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
+
+    Dim r As Long: r = MD_HEADER_ROW + 1
+    Do While r <= lastRowScan
+        Dim rmCode As String: rmCode = Trim(CStr(sh.Cells(r, 1).Value))
+        If Len(rmCode) = 0 Then
+            r = r + 1
+        Else
+            Dim headerRow As Long: headerRow = r
+            Dim rr As Long: rr = headerRow + 1
+            Dim sumRow As Long: sumRow = 0
+            Do While rr <= lastRowScan
+                Dim lbl As String: lbl = Trim(CStr(sh.Cells(rr, 2).Value))
+                If lbl = "合計使用量(kg)/週" Then
+                    sumRow = rr
+                    Exit Do
+                End If
+                If Trim(CStr(sh.Cells(rr, 3).Value)) = "No. of batches" And StrComp(lbl, interName, vbTextCompare) = 0 Then
+                    sh.Rows(rr & ":" & (rr + 1)).Delete
+                    removedPairs = removedPairs + 1
+                    lastRowScan = lastRowScan - 2
+                    ' rrはそのまま(削除により、次の行がこの位置に繰り上がってくるため)
+                Else
+                    rr = rr + 1
+                End If
+            Loop
+            If sumRow > 0 Then r = sumRow + 1 Else r = headerRow + 1
+        End If
+    Loop
+    DeleteIntermediateFromMaterialDetail = removedPairs
+End Function
