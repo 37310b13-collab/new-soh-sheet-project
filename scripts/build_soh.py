@@ -650,7 +650,7 @@ for r in bom:
 ws = wb.create_sheet("Material_Detail")
 # 選択週の値をピン留め列に複製する方式は廃止。ピン留め列があった位置(旧D列)は削除し、
 # 週データの本物の列(D列〜)をそのままA〜C列の直後に配置。選択週(C1)を入力すると、
-# VBAのWorksheet_Change(macros/RefreshData.basのJumpToSelectedWeekを呼び出す。導入は
+# VBAのWorksheet_Change(macros/RefreshData_Display.basのJumpToSelectedWeekを呼び出す。導入は
 # 任意・手動設定)がウィンドウを横スクロールし、本物の該当週列を固定ペインのすぐ右に
 # 表示する（複製データではないため、Dashboard等との数値の食い違いが原理的に起こらない）。
 WEEK_START_COL = 4  # column D
@@ -845,7 +845,7 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # 「最終的にここで在庫を確認する」メイン画面。原材料×週の在庫を2年分横軸で見渡せる。
 # A〜H列(RM情報。基準在庫の下限・上限を含む)を固定し、その右に本物の週データ列(I列〜)を
 # そのまま並べる（選択週の値を複製するピン留め列は廃止）。C1に週No(例:W23)を入力すると、
-# VBAのWorksheet_Change(macros/RefreshData.basのJumpToSelectedWeekを呼び出す。導入は
+# VBAのWorksheet_Change(macros/RefreshData_Display.basのJumpToSelectedWeekを呼び出す。導入は
 # 任意・手動設定)がウィンドウを横スクロールし、本物の該当週列を固定ペインのすぐ右に
 # 表示する。複製データではないため、条件付き書式や数値がずれる余地がない。
 # Statusのテキスト列は廃止し、各週のセル自体を基準在庫の下限/上限に対して
@@ -1170,7 +1170,7 @@ readme_lines = [
     "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
     "",
     "【重要】原単位・バッチ数・自社/TTAF在庫・発注実績はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
-    "  macros/RefreshData.bas を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
+    "  macros/フォルダのRefreshData_*.bas(7ファイル)を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
     "  RefreshTTAFStock / RefreshShipments を実行してください（対象ファイルを選ぶだけです。",
     "  詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
     "  T_Shipments・T_OpeningStock・T_StockCount・T_PlannedOrders等の入力内容は上書きされません",

@@ -37,8 +37,12 @@
 
 ## 2. Python不要・Excel(VBA)だけで完結する更新の仕組み
 
-`macros/RefreshData.bas` に4つの更新マクロと、表示だけを操作する補助マクロ3つを
-用意しています。更新マクロはいずれも、対象ファイルを選ぶだけで該当シートの値だけを更新し、
+`macros/`フォルダに、機能ごとに分割した7つのVBAモジュール(`RefreshData_*.bas`)を
+用意しています。以前は1つの巨大な標準モジュールでしたが、メンテナンス性のため
+`RefreshData_Utilities`（共通ヘルパー）・`RefreshData_ProductionPlan`・`RefreshData_BOM`・
+`RefreshData_StockActuals`・`RefreshData_Shipments`・`RefreshData_Display`・
+`RefreshData_MaterialMgmt`の7モジュールに分割しています（マクロ名・動作は分割前と同じ）。
+更新マクロはいずれも、対象ファイルを選ぶだけで該当シートの値だけを更新し、
 **それ以外の入力済みデータ（T_Shipments・T_OpeningStock・T_StockCount・基準在庫の設定値など）
 には一切触れません。**
 
@@ -79,11 +83,14 @@ TTAF倉庫に到着する」実績・予定を表します。これはTTAF倉庫
 
 **導入方法**
 1. `SOH_Master.xlsx`を「名前を付けて保存」→ファイルの種類を「Excel マクロ有効ブック(*.xlsm)」にする
-2. Alt+F11 でVBEを開く → 「ファイル」→「ファイルのインポート」→ `macros/RefreshData.bas`を選択
+2. Alt+F11 でVBEを開く → 「ファイル」→「ファイルのインポート」→ `macros/`フォルダの
+   `RefreshData_*.bas`7ファイルをすべて選択（複数選択して一括インポート可。1ファイルずつでも
+   構いません。インポートする順序は結果に影響しません）
    （`.bas`ファイルを直接選ぶことで、モジュール名も含めて正しく読み込まれます）
-   - コードをコピー＆貼り付けする場合は、**1行目の`Attribute VB_Name = "..."`を必ず削除してから**
-     貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります
-     （標準モジュールを挿入→中身を貼り付け、の手順を使う場合はこの点にご注意ください）
+   - コードをコピー＆貼り付けする場合は、**各ファイル1行目の`Attribute VB_Name = "..."`を
+     必ず削除してから**貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイル
+     エラーになります（標準モジュールを挿入→中身を貼り付け、の手順を使う場合はこの点にご注意
+     ください。また7つのモジュールはそれぞれ別の標準モジュールとして挿入してください）
 3. `macros/PO_Export.bas`（完全に任意、下記参照）も使う場合は同様にインポート
 4. Alt+F8 → `RefreshWeeklyBatches`を選択して実行 → ファイル選択ダイアログで最新の
    「Powder & Slurry & Pgm Plan」ファイルを選ぶ
@@ -308,9 +315,9 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
    End Sub
    ```
 
-呼び出し先の`JumpToSelectedWeek`本体は`macros/RefreshData.bas`（標準モジュール）側に実装済み
-のため、通常どおりRefreshData.basをインポートしていれば追加の作業は不要です。上記4つの
-`Worksheet_Change`だけを、対応するシート自身のコードモジュールに貼り付けてください。
+呼び出し先の`JumpToSelectedWeek`本体は`macros/RefreshData_Display.bas`（標準モジュール）側に
+実装済みのため、通常どおり`RefreshData_*.bas`をインポートしていれば追加の作業は不要です。
+上記4つの`Worksheet_Change`だけを、対応するシート自身のコードモジュールに貼り付けてください。
 
 ## 5.7 材料・中間体の追加・削除（`AddMaterial` / `RemoveMaterial` / `RemoveIntermediate`）— Python不要
 
@@ -452,7 +459,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
   MATCH不要、週番号からそのまま計算できます）。
 
 **それでも`RefreshWeeklyBatches`実行時に強制終了する不具合について（VBA側の直し忘れ）**:
-上記のExcel数式の見直しの際、`macros/RefreshData.bas`側にも同じパターン（`UpsertBomRow`が
+上記のExcel数式の見直しの際、`macros/RefreshData_ProductionPlan.bas`側にも同じパターン（`UpsertBomRow`が
 M_BOMへの書き込みのたびに全711行以上をセル単位でスキャンする、`FindOrAddIntermediateRow`が
 中間体ごとに毎回`.Find()`を呼ぶ）が残っていると気づいていながら、そちらの修正を実装し忘れて
 いました。結果として`RefreshWeeklyBatches`実行時の強制終了が再発しました。`RefreshWeeklyBatches`
@@ -580,7 +587,7 @@ week3・week10分もまとめて消えてしまいます。これを避けるた
   登録）。`PO_Draft_Substrate`にも実データが反映されています。
 - **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください
   （`T_SelfStock`・`T_TTAFStock`に実績があれば、その週以降は自動でリセットされます）。
-- **`RefreshData.bas`・`Q_Shipments.pq`**: 未検証です。動作確認の結果を教えてください。
+- **`RefreshData_*.bas`・`Q_Shipments.pq`**: 未検証です。動作確認の結果を教えてください。
 - **`T_SelfStock`/`T_TTAFStock`シートへの手入力はしないでください**: これらは数式のみのグリッド
   表示です。値は非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`から自動計算されるため、直接
   上書きしても`RefreshSelfStock`/`RefreshTTAFStock`を再実行すると数式に戻ります。
