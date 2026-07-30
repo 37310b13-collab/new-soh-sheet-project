@@ -50,7 +50,7 @@
 |---|---|---|
 | `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid（+ substrate分のM_BOM） |
 | `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
-| `RefreshSelfStock` | Raw materials daily check（自社在庫、現物確認のたび） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
+| `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
@@ -74,6 +74,14 @@ TTAF倉庫に到着する」実績・予定を表します。これはTTAF倉庫
 `RefreshSelfStock`・`RefreshTTAFStock`は、選んだファイルの**ファイル名からDD.MM.YYYY形式の日付を
 自動で読み取り**、その日付がどの週に該当するかをCal_Weeksと照合して記録します。ファイル名に日付が
 含まれていない場合はエラーになりますので、ファイル名は変更せずそのまま使ってください。
+
+**`RefreshSelfStock`は、ファイル名の日付から7日引いてから対象週を判定します**（毎週月曜の朝に
+自社在庫を確認する運用のため。月曜朝の在庫は前週末時点の状態を表すので、前週の実績として記録
+します）。これは`RefreshTTAFStock`（CSA Reportの対象日から7日引く）と同じ考え方です。月曜が祝日で
+別の曜日に確認した場合も、7日引くだけなので正しく前週の範囲内に収まります。数週間まとめて休業と
+なり、その間まったく確認できなかった場合も特別な対応は不要です。確認できなかった週は空欄
+（通常のロールフォワード計算）のままになり、休業明けに次の確認を行えば、その週から7日前＝
+休業直前の週の実績として、通常どおり記録されます。
 
 **同じ週内に複数回取り込んでも、自動的に1件にまとめられます。** 取り込んだ実施日から「その週の
 月曜日」を計算し、それをキーに記録するため、同じ週の中で日を分けて何度実行しても行が増え続ける
@@ -189,7 +197,7 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
 2. 「Usage from Production Engineering」が更新されていれば`RefreshBOM`を実行
-3. 自社倉庫の現物確認（daily check）を実施したら`RefreshSelfStock`を実行
+3. 自社倉庫の現物確認（daily check）を毎週月曜の朝に実施したら`RefreshSelfStock`を実行
 4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`と`RefreshShipments`を実行
    （`RefreshShipments`はShipping Scheduleの全PO・全材料を一括で`T_Shipments`に反映）
 5. 新しく発注したら`T_PlannedOrders`に追記（材料名・数量・納品予定日・発注月）。実際にCSA Reportの

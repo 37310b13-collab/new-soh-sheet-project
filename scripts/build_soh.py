@@ -1181,7 +1181,7 @@ readme_lines = [
     "【毎月の運用】",
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
-    "  3. 自社倉庫の現物確認を実施したらRefreshSelfStockを実行",
+    "  3. 自社倉庫の現物確認を毎週月曜の朝に実施したらRefreshSelfStockを実行",
     "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsを実行",
     "  5. 新しく発注したらT_PlannedOrdersに追記（材料名・数量・納品予定日・発注月）",
     "  6. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
@@ -1226,7 +1226,7 @@ panel_sections = [
     ("【毎月・毎週の定型作業】上から順に実行", [
         ("RefreshWeeklyBatches", "「Powder & Slurry & Pgm Plan」の新しい月版が出たら実行"),
         ("RefreshBOM", "「Usage from Production Engineering」が更新されたら実行"),
-        ("RefreshSelfStock", "自社倉庫の現物確認（daily check）を実施したら実行"),
+        ("RefreshSelfStock", "自社倉庫の現物確認（daily check）を毎週月曜の朝に実施したら実行"),
         ("RefreshTTAFStock", "CSA Reportが毎週月曜に届いたら実行（TTAF在庫）"),
         ("RefreshShipments", "CSA Reportが毎週月曜に届いたら実行（発注・着荷）"),
     ]),

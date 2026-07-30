@@ -6,7 +6,10 @@ Option Explicit
 '
 '   RefreshSelfStock : 「Raw materials daily check」(自社倉庫の現物確認シート、ファイル名に
 '                      DD.MM.YYYY形式の日付を含む)を選択すると、T_SelfStockにその週の実績を
-'                      追加/更新する。対象週はファイル名から読み取った日付で判定する。
+'                      追加/更新する。毎週月曜の朝に確認する運用のため、ファイル名の日付は
+'                      「その週の月曜(祝日の場合は翌営業日)」だが、これは前週末時点の在庫を
+'                      表す。そのため7日引いてから対象週を判定する(RefreshTTAFStockと同じ考え方。
+'                      詳細は下のRefreshTTAFStockの説明を参照)。
 '   RefreshTTAFStock : 「CSA Report」を選択すると、その中の「 COUNT SHEET SOH」シート
 '                      (先頭に半角スペースあり。A列=TTAF PART NUMBER、D列=Description、
 '                      H列1行目=対象日、H列2行目以降=Total SOH)からT_TTAFStockにその週の
@@ -49,7 +52,10 @@ Sub RefreshSelfStock()
     Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
-    Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath))
+    ' ファイル名の日付は「確認した月曜日(祝日の場合は翌営業日)」だが、その数値は前週末
+    ' 時点の在庫を表す。そのため7日引いてから週Noを判定する(祝日で月曜以外の日になっていても、
+    ' ちょうど1週間前にずらすだけなので、前週の範囲内に正しく収まる。RefreshTTAFStockと同じ考え方)。
+    Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath)) - 7
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock_Log").ListObjects("T_SelfStock_Log")
