@@ -583,15 +583,20 @@ build_actual_stock_sheets("T_TTAFStock", "TTAF_Qty", [])
 ws_req = wb.create_sheet("Grid_Requirement")
 ws_in = wb.create_sheet("Grid_Incoming")
 ws_st = wb.create_sheet("Grid_Stock")
+# Grid_TheoreticalStock: Grid_Stockと行位置(rr)を完全にそろえた、常に「前週+入庫-消費」だけで
+# 計算する純粋なロールフォワード専用シート。T_StockCount(棚卸)や自社/TTAF実績には一切
+# 反応しない(Grid_Stockのような優先順位の切り替えが無い)。Dashboardで「理論在庫」行として
+# 表示し、実際の値(Grid_Stock=「実在庫」行)との乖離を確認できるようにするために追加した。
+ws_theo = wb.create_sheet("Grid_TheoreticalStock")
 
 header = ["Part Name"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
-for ws_ in (ws_req, ws_in, ws_st):
+for ws_ in (ws_req, ws_in, ws_st, ws_theo):
     ws_.append(header)
 
 for i, r in enumerate(rm_master):
     rr = i + 2
     rm = r["RM_Code"]
-    for ws_ in (ws_req, ws_in, ws_st):
+    for ws_ in (ws_req, ws_in, ws_st, ws_theo):
         ws_.append([rm] + [None] * N_WEEKS)
     for w in range(1, N_WEEKS + 1):
         cl = week_col(w)
@@ -631,8 +636,20 @@ for i, r in enumerate(rm_master):
             f"IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal}))"
         )
 
+        # Grid_TheoreticalStock: T_StockCount・自社/TTAF実績を一切見ない、純粋な
+        # 「前週+入庫-消費」のロールフォワードのみ(Grid_Stockの優先順位チェーンとは無関係に、
+        # 常にこの計算式だけを使う)。Dashboardの「理論在庫」行として、実際の値(Grid_Stock=
+        # 「実在庫」行)との乖離を確認するために参照する。
+        if w == 1:
+            theo_prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
+        else:
+            theo_prior = f"{week_col(w-1)}{rr}"
+        ws_theo.cell(row=rr, column=1 + w).value = (
+            f"={theo_prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
+        )
+
 n = len(rm_master) + 1
-for ws_ in (ws_req, ws_in, ws_st):
+for ws_ in (ws_req, ws_in, ws_st, ws_theo):
     style_header(ws_, N_WEEKS + 1)
     add_table(ws_, ws_.title, f"A1:{week_col(N_WEEKS)}{n}", style="TableStyleMedium2")
     ws_.column_dimensions["A"].width = 14
@@ -854,9 +871,18 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # T_SelfStock/T_TTAFStockが「材料×週」のグリッド形式になったため、直近実績の検索は
 # 「その材料の行(週1〜週104)の中で一番右にある空欄でないセル」をLOOKUPの最終一致トリックで
 # 探すだけで済む(以前のような、行数が育つ長い列を毎回$12000行スキャンする必要がなくなった)。
+#
+# 【理論在庫／実在庫の2段表示について】材料ごとに2行(上段=理論在庫、下段=実在庫)を並べる。
+# 「実在庫」行は従来どおりGrid_Stock(手動棚卸 > 自社+TTAF実績 > ロールフォワード、の優先順位)を
+# 参照する。「理論在庫」行は新設のGrid_TheoreticalStock(棚卸・実績を一切見ない、常に純粋な
+# ロールフォワードのみ)を参照する。両者の差(乖離)が大きいほど、システム上の計算(原単位・
+# 生産計画等)と実際の現場がズレていることを意味する。基準在庫の赤/緑/青の色分けは「実在庫」
+# 行のみに適用する(発注判断に使うのは実際の在庫のため。理論在庫行は参考表示)。
 LEFT_COLS = ["Part Name", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
-             "自社在庫(実績)", "TTAF在庫(実績)", "実績週"]
-WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # I列から週データ
+             "自社在庫(実績)", "TTAF在庫(実績)", "実績週", "行種別", "乖離(kg)"]
+WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # K列から週データ
+DASH_ROW_LABEL_COL = 9   # 行種別(理論在庫/実在庫)
+DASH_DIFF_COL = 10       # 乖離(kg)
 HDR_MONTHYEAR_ROW = 3
 HDR_DATE_ROW = 4
 HDR_WEEKNO_ROW = 5
@@ -929,43 +955,66 @@ for row_i in (HDR_MONTHYEAR_ROW, HDR_DATE_ROW, HDR_WEEKNO_ROW):
         ws.cell(row=row_i, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=row_i, column=c).font = Font(bold=(row_i == HDR_MONTHYEAR_ROW))
 
-for col, w in zip("ABCDEFGH", [14, 32, 16, 12, 12, 12, 12, 10]):
+for col, w in zip("ABCDEFGHIJ", [14, 32, 16, 12, 12, 12, 12, 10, 10, 12]):
     ws.column_dimensions[col].width = w
 
 last_col_dash = get_column_letter(WEEK_START_COL_DASH + N_WEEKS - 1)
 for i, r in enumerate(rm_master):
-    rr = DATA_START_ROW + i
+    # 材料ごとに2行(理論在庫→実在庫の順)。Part Name(A列)は両方の行に同じ値を書く。
+    # RemoveMaterialのDeleteMatchingGridRowはA列の一致だけで行削除するため、これにより
+    # 2行とも自動的にまとめて削除される(VBA側の特別対応は不要)。
+    theo_rr = DATA_START_ROW + i * 2
+    actual_rr = theo_rr + 1
     grow = rm_row[r["RM_Code"]]
     rm = r["RM_Code"]
-    ws.cell(row=rr, column=1, value=rm)
-    ws.cell(row=rr, column=2,
-            value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
-    ws.cell(row=rr, column=3,
-            value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
-    ws.cell(row=rr, column=4,
-            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
-    ws.cell(row=rr, column=5,
-            value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
     ss_row = ss_row_map[r["RM_Code"]]
     ss_first_col = week_col(1)
     ss_last_col = week_col(N_WEEKS)
     ss_self_rng = f"'T_SelfStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
     ss_ttaf_rng = f"'T_TTAFStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
     ss_label_rng = f"'T_SelfStock'!${ss_first_col}${SS_TABLE_ROW}:${ss_last_col}${SS_TABLE_ROW}"
-    ws.cell(row=rr, column=6,
-            value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_self_rng}),"")')
-    ws.cell(row=rr, column=7,
-            value=f'=IFERROR(LOOKUP(2,1/({ss_ttaf_rng}<>""),{ss_ttaf_rng}),"")')
-    ws.cell(row=rr, column=8,
-            value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_label_rng}),"")')
+    # 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。表示期間の最終週の値どうしを
+    # 比較するだけでよい。理由: 手動棚卸(T_StockCount)・自社/TTAF実績のどちらで補正されても、
+    # 補正が入った週以降は両シートとも「補正後の値+入庫-消費」を同じように積み上げていくため、
+    # 補正で生じた差分(乖離)はその週以降ずっと一定のまま変わらない(補正が無ければ差は常に0)。
+    # そのため、直近の実績週を特定するLOOKUP等を使わずに、表示している週の範囲でいちばん先
+    # (最終週)の値を単純に引き算するだけで、現時点までの累積乖離を取り出せる。
+    gs_last_col = week_col(N_WEEKS)
+    diff_formula = f"='Grid_Stock'!{gs_last_col}{grow}-'Grid_TheoreticalStock'!{gs_last_col}{grow}"
+    for rr in (theo_rr, actual_rr):
+        ws.cell(row=rr, column=1, value=rm)
+        ws.cell(row=rr, column=2,
+                value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
+        ws.cell(row=rr, column=3,
+                value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
+        ws.cell(row=rr, column=4,
+                value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
+        ws.cell(row=rr, column=5,
+                value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
+        ws.cell(row=rr, column=6,
+                value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_self_rng}),"")')
+        ws.cell(row=rr, column=7,
+                value=f'=IFERROR(LOOKUP(2,1/({ss_ttaf_rng}<>""),{ss_ttaf_rng}),"")')
+        ws.cell(row=rr, column=8,
+                value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_label_rng}),"")')
+        ws.cell(row=rr, column=DASH_DIFF_COL, value=diff_formula)
+    ws.cell(row=theo_rr, column=DASH_ROW_LABEL_COL, value="理論在庫")
+    ws.cell(row=theo_rr, column=DASH_ROW_LABEL_COL).font = Font(italic=True, color="808080")
+    ws.cell(row=actual_rr, column=DASH_ROW_LABEL_COL, value="実在庫")
+    ws.cell(row=actual_rr, column=DASH_ROW_LABEL_COL).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
         gs_col = week_col(w)
-        ws.cell(row=rr, column=col, value=f"='Grid_Stock'!{gs_col}{grow}")
+        ws.cell(row=theo_rr, column=col, value=f"='Grid_TheoreticalStock'!{gs_col}{grow}")
+        ws.cell(row=theo_rr, column=col).font = Font(italic=True, color="808080")
+        ws.cell(row=actual_rr, column=col, value=f"='Grid_Stock'!{gs_col}{grow}")
 
-n_last_row = DATA_START_ROW + len(rm_master) - 1
+n_last_row = DATA_START_ROW + len(rm_master) * 2 - 1
 # ヘッダー行が数式(Cal_Weeks参照)のため、Excelのテーブル機能(ListObject)ではなく
 # 罫線・縞模様の手動書式で「テーブルらしい」見た目にする（テーブル見出しは文字列必須のため）。
+# 【補足】材料ごとに理論在庫→実在庫の2行が並ぶ構成のため、この縞模様(1行おき)は偶然にも
+# 「理論在庫行(奇数オフセット)は常にグレー、実在庫行(偶数オフセット)は常に白」という、
+# 2種類の行を視覚的に区別する効果も兼ねている。
 thin = Side(style="thin", color="BFBFBF")
 border = Border(left=thin, right=thin, top=thin, bottom=thin)
 for rr2 in range(HDR_TABLE_ROW, n_last_row + 1):
@@ -978,22 +1027,28 @@ for rr2 in range(HDR_TABLE_ROW, n_last_row + 1):
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}"
 
 # 基準在庫の下限・上限に対して、各週のセルを赤(下限未満)/緑(範囲内)/青(上限超)に色分け
-# （$D=基準在庫_下限、$E=基準在庫_上限。行内の相対参照なのでどの週列でも自分の行の基準を見る）
+# （$D=基準在庫_下限、$E=基準在庫_上限。行内の相対参照なのでどの週列でも自分の行の基準を見る）。
+# $I(行種別)="実在庫"の行だけに適用する(発注判断に使うのは実際の在庫のため。理論在庫行は
+# グレー文字の参考表示のみで、色分けの対象にはしない)。
+row_label_col_letter = get_column_letter(DASH_ROW_LABEL_COL)
 stock_band_range = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}:{last_col_dash}{n_last_row}"
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<$D{DATA_START_ROW}"],
+    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="実在庫",'
+                          f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<$D{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="FFC7CE"))  # 赤: 基準在庫の下限未満
 )
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f"AND({get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>=$D{DATA_START_ROW},"
+    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="実在庫",'
+                          f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>=$D{DATA_START_ROW},"
                           f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<=$E{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="C6EFCE"))  # 緑: 基準在庫の範囲内
 )
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>$E{DATA_START_ROW}"],
+    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="実在庫",'
+                          f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>$E{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="BDD7EE"))  # 青: 基準在庫の上限超
 )
 # 選択中の週(F1のWeekIndex)に該当する列を太枠で強調（COLUMN()の自己参照なので
@@ -1296,7 +1351,7 @@ for i, (target, label) in enumerate(nav_targets, start=3):
 #      T_SelfStock_Log/T_TTAFStock_LogはVBAが書き込む生ログで、目に見えるT_SelfStock/T_TTAFStock
 #      （材料×週のグリッド）はそこから数式で計算するだけなので、生ログ自体は非表示にする） ----
 for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming",
-                    "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]:
+                    "Grid_Stock", "Grid_TheoreticalStock", "T_SelfStock_Log", "T_TTAFStock_Log"]:
     if sheet_name in wb.sheetnames:
         wb[sheet_name].sheet_state = "hidden"
 
@@ -1306,7 +1361,7 @@ order = ["README", "操作パネル", "Dashboard", "Material_Detail", "PO_Draft_
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
-         "Grid_Incoming", "Grid_Stock", "T_SelfStock_Log", "T_TTAFStock_Log"]
+         "Grid_Incoming", "Grid_Stock", "Grid_TheoreticalStock", "T_SelfStock_Log", "T_TTAFStock_Log"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
 # ---- 保存前チェック: テーブルがヘッダー行のみ(データ0行)になっていないか ----

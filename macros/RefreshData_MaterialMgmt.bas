@@ -12,12 +12,14 @@ Option Explicit
 '   AddMaterial : 新しい材料(TTAF供給品)をシステムに追加する。InputBoxで
 '                 Part Name(RM_Code)・Description・Supplier・Category・TTAF_Codeを
 '                 順に入力すると、M_RawMaterials・Grid_Requirement・Grid_Incoming・
-'                 Grid_Stock・T_OpeningStock・T_SelfStock・T_TTAFStock・Dashboard・
-'                 Material_Detail・対応するPO_Draft_*シートの一番下に、必要な行を
-'                 まとめて追加する。追加直後はまだM_BOMに使用実績が無いため、
-'                 Material_Detailのブロックは中間体の内訳が無いミニブロック(合計欄のみ)
-'                 になる。RefreshBOM実行後(RefreshData_BOMモジュール)、実際にこの材料を
-'                 使う中間体が見つかれば内訳行も自動的に追加される。
+'                 Grid_Stock・Grid_TheoreticalStock・T_OpeningStock・T_SelfStock・
+'                 T_TTAFStock・Dashboard・Material_Detail・対応するPO_Draft_*シートの
+'                 一番下に、必要な行をまとめて追加する。追加直後はまだM_BOMに使用実績が
+'                 無いため、Material_Detailのブロックは中間体の内訳が無いミニブロック
+'                 (合計欄のみ)になる。RefreshBOM実行後(RefreshData_BOMモジュール)、
+'                 実際にこの材料を使う中間体が見つかれば内訳行も自動的に追加される。
+'                 Dashboardには材料ごとに「理論在庫」「実在庫」の2行を追加する
+'                 （5.6章参照）。
 '   RemoveMaterial : 使わなくなった材料をシステムから削除する。InputBoxでPart Name
 '                 (RM_Code)を入力すると、AddMaterialが追加する全シートから該当行を
 '                 削除する。T_Shipments・T_PlannedOrders・T_StockCount・
@@ -108,22 +110,25 @@ Sub AddMaterial()
     newRmRow.Range.Cells(1, 8).Value = 4
     newRmRow.Range.Cells(1, 9).Value = ttafCodeVal
 
-    ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / T_OpeningStock ----
+    ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock / T_OpeningStock ----
     Dim reqTbl As ListObject: Set reqTbl = thisWb.Sheets("Grid_Requirement").ListObjects("Grid_Requirement")
     Dim inTbl As ListObject: Set inTbl = thisWb.Sheets("Grid_Incoming").ListObjects("Grid_Incoming")
     Dim stTbl As ListObject: Set stTbl = thisWb.Sheets("Grid_Stock").ListObjects("Grid_Stock")
+    Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
     Dim osTbl As ListObject: Set osTbl = thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock")
 
     Dim reqRow As ListRow: Set reqRow = reqTbl.ListRows.Add
     Dim inRow As ListRow: Set inRow = inTbl.ListRows.Add
     Dim stRow As ListRow: Set stRow = stTbl.ListRows.Add
+    Dim theoRow As ListRow: Set theoRow = theoTbl.ListRows.Add
     Dim osRow As ListRow: Set osRow = osTbl.ListRows.Add
 
-    Dim grow As Long: grow = reqRow.Range.Row  ' Grid_Requirement/Incoming/Stockの実シート行番号(3表とも同じ)
+    Dim grow As Long: grow = reqRow.Range.Row  ' Grid_Requirement/Incoming/Stock/TheoreticalStockの実シート行番号(4表とも同じ)
 
     reqRow.Range.Cells(1, 1).Value = rmCode
     inRow.Range.Cells(1, 1).Value = rmCode
     stRow.Range.Cells(1, 1).Value = rmCode
+    theoRow.Range.Cells(1, 1).Value = rmCode
     osRow.Range.Cells(1, 1).Value = rmCode
     osRow.Range.Cells(1, 2).Value = 0
     osRow.Range.Cells(1, 3).Value = Date
@@ -169,6 +174,18 @@ Sub AddMaterial()
         normalExpr = priorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
         stRow.Range.Cells(1, col).Value = _
             "=IF(" & hasCount & ">0," & countVal & ",IF((" & hasSelf & ")*(" & hasTTAF & ")>0," & selfVal & "+" & ttafVal & "," & normalExpr & "))"
+
+        ' Grid_TheoreticalStock: T_StockCount・自社/TTAF実績を一切見ない、純粋な「前週+入庫-消費」
+        ' のロールフォワードのみ(Grid_Stockの優先順位チェーンとは無関係)。Dashboardの「理論在庫」行
+        ' として、実際の値(Grid_Stock=「実在庫」行)との乖離を確認するために参照する。
+        Dim theoPriorExpr As String
+        If w = 1 Then
+            theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
+        Else
+            theoPriorExpr = ColLetter(col - 1) & grow
+        End If
+        theoRow.Range.Cells(1, col).Value = _
+            "=" & theoPriorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
     Next w
 
     ' ---- Dashboard (テーブルではない罫線グリッド。一番下に追加) ----
@@ -222,6 +239,7 @@ Sub RemoveMaterial()
 
     If MsgBox("材料「" & rmCode & "」を削除します。" & vbCrLf & _
               "関係する全シート(M_RawMaterials・Grid_Requirement・Grid_Incoming・Grid_Stock・" & vbCrLf & _
+              "Grid_TheoreticalStock・" & vbCrLf & _
               "T_OpeningStock・T_SelfStock・T_TTAFStock・Dashboard・Material_Detail・" & vbCrLf & _
               "該当するPO_Draft)から該当行を削除します。この操作は元に戻せません。" & vbCrLf & vbCrLf & _
               "（T_Shipments・T_PlannedOrders・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
@@ -234,6 +252,7 @@ Sub RemoveMaterial()
     Call DeleteMatchingTableRow(thisWb.Sheets("Grid_Requirement").ListObjects("Grid_Requirement"), rmCode)
     Call DeleteMatchingTableRow(thisWb.Sheets("Grid_Incoming").ListObjects("Grid_Incoming"), rmCode)
     Call DeleteMatchingTableRow(thisWb.Sheets("Grid_Stock").ListObjects("Grid_Stock"), rmCode)
+    Call DeleteMatchingTableRow(thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock"), rmCode)
     Call DeleteMatchingTableRow(thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock"), rmCode)
 
     Call DeleteMatchingGridRow(thisWb.Sheets("T_SelfStock"), rmCode, 1)
@@ -385,32 +404,66 @@ End Function
 
 ' Dashboardの一番下に新しい材料の行を追加する(ssRow=T_SelfStock/T_TTAFStock側の行番号、
 ' grow=Grid_Requirement/Incoming/Stock側の行番号)。
+' Dashboardは材料ごとに2行(理論在庫→実在庫の順)。Part Name(A列)は両方の行に同じ値を書くため、
+' RemoveMaterialのDeleteMatchingGridRow(A列一致で削除)が2行ともまとめて削除してくれる
+' (削除側の特別対応は不要)。列位置はbuild_soh.pyのLEFT_COLS/DASH_ROW_LABEL_COL/DASH_DIFF_COLと
+' 対応: 1=Part Name,2=Description,3=Category,4=基準在庫下限,5=基準在庫上限,6=自社在庫(実績),
+' 7=TTAF在庫(実績),8=実績週,9=行種別,10=乖離(kg)、週データは11列目(K列)から。
 Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long, ssRow As Long, grow As Long)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
-    Dim newRow As Long: newRow = lastRow + 1
+    Dim theoRow As Long: theoRow = lastRow + 1
+    Dim actualRow As Long: actualRow = lastRow + 2
     Dim lastWeekCol As String: lastWeekCol = ColLetter(1 + nWeeks)
 
-    sh.Cells(newRow, 1).Value = rmCode
-    sh.Cells(newRow, 2).Value = "=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A" & newRow & ",M_RawMaterials[Part Name],0)),"""")"
-    sh.Cells(newRow, 3).Value = "=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A" & newRow & ",M_RawMaterials[Part Name],0)),"""")"
-    sh.Cells(newRow, 4).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A" & newRow & ",M_RawMaterials[Part Name],0)),0)"
-    sh.Cells(newRow, 5).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A" & newRow & ",M_RawMaterials[Part Name],0)),0)"
     Dim ssSelfRng As String: ssSelfRng = "'T_SelfStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssTTAFRng As String: ssTTAFRng = "'T_TTAFStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssLabelRng As String: ssLabelRng = "'T_SelfStock'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
-    sh.Cells(newRow, 6).Value = "=IFERROR(LOOKUP(2,1/(" & ssSelfRng & "<>"""")," & ssSelfRng & "),"""")"
-    sh.Cells(newRow, 7).Value = "=IFERROR(LOOKUP(2,1/(" & ssTTAFRng & "<>"""")," & ssTTAFRng & "),"""")"
-    sh.Cells(newRow, 8).Value = "=IFERROR(LOOKUP(2,1/(" & ssSelfRng & "<>"""")," & ssLabelRng & "),"""")"
+    ' 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。表示期間の最終週どうしを
+    ' 比較するだけでよい(補正が入った週以降、差分はその後ずっと一定のまま変わらないため)。
+    Dim gsLastCol As String: gsLastCol = ColLetter(1 + nWeeks)
+    Dim diffFormula As String
+    diffFormula = "='Grid_Stock'!" & gsLastCol & grow & "-'Grid_TheoreticalStock'!" & gsLastCol & grow
+
+    Dim rowsArr(1 To 2) As Long
+    rowsArr(1) = theoRow
+    rowsArr(2) = actualRow
+    Dim idx As Long, rr As Long
+    For idx = 1 To 2
+        rr = rowsArr(idx)
+        sh.Cells(rr, 1).Value = rmCode
+        sh.Cells(rr, 2).Value = "=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),"""")"
+        sh.Cells(rr, 3).Value = "=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),"""")"
+        sh.Cells(rr, 4).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),0)"
+        sh.Cells(rr, 5).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),0)"
+        sh.Cells(rr, 6).Value = "=IFERROR(LOOKUP(2,1/(" & ssSelfRng & "<>"""")," & ssSelfRng & "),"""")"
+        sh.Cells(rr, 7).Value = "=IFERROR(LOOKUP(2,1/(" & ssTTAFRng & "<>"""")," & ssTTAFRng & "),"""")"
+        sh.Cells(rr, 8).Value = "=IFERROR(LOOKUP(2,1/(" & ssSelfRng & "<>"""")," & ssLabelRng & "),"""")"
+        sh.Cells(rr, 10).Value = diffFormula
+    Next idx
+
+    sh.Cells(theoRow, 9).Value = "理論在庫"
+    sh.Cells(theoRow, 9).Font.Italic = True
+    sh.Cells(theoRow, 9).Font.Color = RGB(128, 128, 128)
+    sh.Cells(actualRow, 9).Value = "実在庫"
+    sh.Cells(actualRow, 9).Font.Bold = True
 
     Dim w As Long, col As Long
     For w = 1 To nWeeks
-        col = 8 + w  ' Dashboardの週データ開始列=9(I列)
-        sh.Cells(newRow, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
+        col = 10 + w  ' Dashboardの週データ開始列=11(K列)
+        sh.Cells(theoRow, col).Value = "='Grid_TheoreticalStock'!" & ColLetter(1 + w) & grow
+        sh.Cells(theoRow, col).Font.Italic = True
+        sh.Cells(theoRow, col).Font.Color = RGB(128, 128, 128)
+        sh.Cells(actualRow, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
     Next w
 
-    sh.Rows(lastRow).Copy
-    sh.Rows(newRow).PasteSpecial xlPasteFormats
+    ' 書式コピー: 既存の最後の材料ペア(直前の理論在庫行・実在庫行)からそれぞれ複製する
+    On Error Resume Next
+    sh.Rows(lastRow - 1).Copy   ' 直前ペアの理論在庫行
+    sh.Rows(theoRow).PasteSpecial xlPasteFormats
+    sh.Rows(lastRow).Copy       ' 直前ペアの実在庫行
+    sh.Rows(actualRow).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
+    On Error GoTo 0
 End Sub
 
 ' Material_Detailの一番下に新しい材料のブロックを追加する。追加直後はM_BOMに未登録のため、

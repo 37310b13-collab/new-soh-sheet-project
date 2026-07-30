@@ -56,7 +56,7 @@ Public Const SS_TABLE_ROW As Long = 5        ' T_SelfStock/T_TTAFStock: 見出�
 '   ' --- Dashboardシートのコードモジュールに貼り付け ---
 '   Private Sub Worksheet_Change(ByVal Target As Range)
 '       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 9)   ' 9 = I列(週データ開始列)
+'       Call JumpToSelectedWeek(Me, "F1", 11)   ' 11 = K列(週データ開始列)
 '   End Sub
 '
 '   ' --- Material_Detailシートのコードモジュールに貼り付け ---
