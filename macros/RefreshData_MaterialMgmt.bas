@@ -233,8 +233,12 @@ Sub RemoveMaterial()
         MsgBox "M_RawMaterialsに見つかりませんでした: " & rmCode, vbExclamation
         Exit Sub
     End If
-    ' 実際に登録されている表記(大文字小文字)に揃える
-    rmCode = CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 1).Value)
+    ' 実際に登録されている表記(大文字小文字)に揃える。Trim()を通し忘れると、
+    ' M_RawMaterials側のセルに紛れ込んだ余分な空白がそのままrmCodeに乗り移り、
+    ' 以降のDeleteMatchingGridRow等(比較先のセルはTrimしているが、rmCode側は
+    ' 呼び出し元で整形済みという前提)で一致しなくなり、一部のシートだけ削除が
+    ' 失敗する不具合につながる(実際に報告された不具合)。
+    rmCode = Trim(CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 1).Value))
     Dim categoryVal As String: categoryVal = CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 4).Value)
 
     If MsgBox("材料「" & rmCode & "」を削除します。" & vbCrLf & _
@@ -305,9 +309,11 @@ Sub RemoveIntermediate()
                "PP_Gridシートで正確な名称を確認してください。", vbExclamation
         Exit Sub
     End If
-    ' 実際に登録されている表記(大文字小文字)に揃える(入力時のゆらぎを吸収するため)
+    ' 実際に登録されている表記(大文字小文字)に揃える(入力時のゆらぎを吸収するため)。
+    ' RemoveMaterialと同じ理由でTrim()を通す(セル側に紛れ込んだ余分な空白が
+    ' 以降の削除処理での不一致につながるのを防ぐ)。
     Dim canonicalName As String
-    canonicalName = CStr(ppGrid.ListRows(ppFoundRow).Range.Cells(1, 1).Value)
+    canonicalName = Trim(CStr(ppGrid.ListRows(ppFoundRow).Range.Cells(1, 1).Value))
 
     Dim bomCount As Long: bomCount = CountMatchingTableRows(bomTbl, canonicalName)
 
@@ -355,7 +361,7 @@ Private Function IsMaterialCodeFree(rmTbl As ListObject, rmCode As String) As Bo
     Dim n As Long: n = rmTbl.ListRows.Count
     Dim i As Long
     For i = 1 To n
-        If UCase(Trim(CStr(rmTbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(rmCode) Then
+        If UCase(Trim(CStr(rmTbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(Trim(rmCode)) Then
             IsMaterialCodeFree = False
             Exit Function
         End If
@@ -367,7 +373,7 @@ Private Function FindMaterialRow(rmTbl As ListObject, rmCode As String) As Long
     Dim n As Long: n = rmTbl.ListRows.Count
     Dim i As Long
     For i = 1 To n
-        If UCase(Trim(CStr(rmTbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(rmCode) Then
+        If UCase(Trim(CStr(rmTbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(Trim(rmCode)) Then
             FindMaterialRow = i
             Exit Function
         End If
@@ -584,8 +590,9 @@ End Sub
 Private Sub DeleteMatchingTableRow(tbl As ListObject, rmCode As String)
     Dim n As Long: n = tbl.ListRows.Count
     Dim i As Long
+    Dim key As String: key = UCase(Trim(rmCode))
     For i = n To 1 Step -1
-        If UCase(Trim(CStr(tbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(rmCode) Then
+        If UCase(Trim(CStr(tbl.ListRows(i).Range.Cells(1, 1).Value))) = key Then
             tbl.ListRows(i).Delete
         End If
     Next i
@@ -596,8 +603,9 @@ End Sub
 Private Sub DeleteMatchingGridRow(sh As Worksheet, rmCode As String, nameCol As Long)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, nameCol).End(xlUp).Row
     Dim r As Long
+    Dim key As String: key = UCase(Trim(rmCode))
     For r = lastRow To 1 Step -1
-        If UCase(Trim(CStr(sh.Cells(r, nameCol).Value))) = UCase(rmCode) Then
+        If UCase(Trim(CStr(sh.Cells(r, nameCol).Value))) = key Then
             sh.Rows(r).Delete
         End If
     Next r
@@ -632,8 +640,9 @@ End Sub
 Private Function CountMatchingTableRows(tbl As ListObject, keyVal As String) As Long
     Dim n As Long: n = tbl.ListRows.Count
     Dim i As Long, cnt As Long: cnt = 0
+    Dim key As String: key = UCase(Trim(keyVal))
     For i = 1 To n
-        If UCase(Trim(CStr(tbl.ListRows(i).Range.Cells(1, 1).Value))) = UCase(keyVal) Then cnt = cnt + 1
+        If UCase(Trim(CStr(tbl.ListRows(i).Range.Cells(1, 1).Value))) = key Then cnt = cnt + 1
     Next i
     CountMatchingTableRows = cnt
 End Function
