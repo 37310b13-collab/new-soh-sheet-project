@@ -36,6 +36,11 @@ Sub RefreshShipments()
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
 
+    ' 同じCSA Report内のピボットが更新し忘れられたまま送られてくる可能性があるため
+    ' (RefreshTTAFStockと同じ理由)、データを読む前に必ず更新しておく。
+    srcWb.RefreshAll
+    DoEvents
+
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")

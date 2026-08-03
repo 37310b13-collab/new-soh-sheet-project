@@ -123,6 +123,13 @@ Sub RefreshTTAFStock()
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
 
+    ' 「 COUNT SHEET SOH」の元になっているピボット(「Stock invoiced to CSA」の手入力データを
+    ' 集計元にしている)は、ファイルを開いただけでは更新されず、TTAF側が更新し忘れたまま送って
+    ' きた場合、古いキャッシュ値をそのまま読み込んでしまう。読み取り専用で開いていてもピボットの
+    ' 更新自体はメモリ上の再計算のみで問題なく行えるため、データを読む前に必ず更新しておく。
+    srcWb.RefreshAll
+    DoEvents
+
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock_Log").ListObjects("T_TTAFStock_Log")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
