@@ -10,10 +10,11 @@ Option Explicit
 '                      「その週の月曜(祝日の場合は翌営業日)」だが、これは前週末時点の在庫を
 '                      表す。そのため7日引いてから対象週を判定する(RefreshTTAFStockと同じ考え方。
 '                      詳細は下のRefreshTTAFStockの説明を参照)。
-'   RefreshTTAFStock : 「CSA Report」を選択すると、その中の「 COUNT SHEET SOH」シート
-'                      (先頭に半角スペースあり。A列=TTAF PART NUMBER、D列=Description、
-'                      H列1行目=対象日、H列2行目以降=Total SOH)からT_TTAFStockにその週の
-'                      実績を追加/更新する。対象週はH1セルの日付で判定する(ファイル名には
+'   RefreshTTAFStock : 「CSA Report」を選択すると、その中の「Stock invoiced to CSA」シート
+'                      (A列=TTAF PART NUMBER、D列=Description、F列=在庫数量。ヘッダーは4行目、
+'                      データは5行目から)からT_TTAFStockにその週の実績を追加/更新する。手入力の
+'                      生データを直接読むため、ピボット(旧「 COUNT SHEET SOH」「PIVOT SOH TTAF」)の
+'                      更新忘れに左右されない。対象週はF4セルの日付で判定する(ファイル名には
 '                      依存しない)。材料の照合はTTAF_Codeを優先し、見つからなければ
 '                      Descriptionの正規化テキストで照合する。
 '
@@ -123,26 +124,19 @@ Sub RefreshTTAFStock()
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
 
-    ' 「 COUNT SHEET SOH」の元になっているピボット(「Stock invoiced to CSA」の手入力データを
-    ' 集計元にしている)は、ファイルを開いただけでは更新されず、TTAF側が更新し忘れたまま送って
-    ' きた場合、古いキャッシュ値をそのまま読み込んでしまう。読み取り専用で開いていてもピボットの
-    ' 更新自体はメモリ上の再計算のみで問題なく行えるため、データを読む前に必ず更新しておく。
-    srcWb.RefreshAll
-    DoEvents
-
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock_Log").ListObjects("T_TTAFStock_Log")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
-    ' 「 COUNT SHEET SOH」シート(先頭に半角スペースあり)を使う。A列2行目=TTAF PART NUMBER、
-    ' D列2行目=Description、H列1行目=対象日(DD.MM.YYYY)、H列2行目=Total SOH、データは3行目から。
-    ' 以前使っていた「PIVOT SOH TTAF」シートは、CHEM-で始まるコードしか拾えず(substrate等が
-    ' 漏れる)、日付もファイル名から読み取っていたため、こちらのシートの方が網羅的かつ確実。
-    Dim sh As Worksheet: Set sh = srcWb.Sheets(" COUNT SHEET SOH")
-    ' H1の日付は「レポートが届いた月曜日(祝日の場合は翌営業日)」だが、その数値は前週の
-    ' 在庫を表す。そのため7日引いてから週Noを判定する(祝日で月曜以外の日になっていても、
-    ' ちょうど1週間前にずらすだけなので、前週の範囲内に正しく収まる)。
-    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(1, 8).Value)) - 7
+    ' 「Stock invoiced to CSA」シートを使う。A列=TTAF PART NUMBER、D列=Description、
+    ' F列=在庫数量。ヘッダーは4行目、データは5行目から。手入力の生データなので、
+    ' 「 COUNT SHEET SOH」/「PIVOT SOH TTAF」のようなピボット更新忘れの心配が無い。
+    Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock invoiced to CSA")
+    ' F4の日付は「レポートが届いた月曜日(祝日の場合は翌営業日)」だが、その数値は前週金曜
+    ' 営業終了後の在庫を表す。そのため7日引いてから週Noを判定する(月曜も金曜もExcel上は
+    ' 同じ月〜日の週に属するため、-7でも-3でも週Noの判定結果は変わらない。日付自体は
+    ' 週の起点であるMondayに揃えておいた方が他の実績(T_SelfStock等)と一貫するため-7を使う)。
+    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(4, 6).Value)) - 7
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
@@ -151,17 +145,17 @@ Sub RefreshTTAFStock()
     Call BuildTTAFCodeAndDescIndex(rmTbl, ttafCodeIdx, descIdx)
 
     ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する
-    ' (A列=TTAF PART NUMBER, D列=Description, H列=Total SOH)。
+    ' (A列=TTAF PART NUMBER, D列=Description, F列=在庫数量)。
     Const MAX_ROWS As Long = 2000
     Dim data As Variant
-    data = sh.Range(sh.Cells(3, 1), sh.Cells(MAX_ROWS, 8)).Value
+    data = sh.Range(sh.Cells(5, 1), sh.Cells(MAX_ROWS, 6)).Value
 
     Dim r As Long, added As Long, updated As Long, unresolved As String
     added = 0: updated = 0: unresolved = ""
-    For r = 1 To (MAX_ROWS - 3 + 1)
+    For r = 1 To (MAX_ROWS - 5 + 1)
         Dim ttafCodeRaw As String: ttafCodeRaw = Trim(CStr(data(r, 1)))
         If Len(ttafCodeRaw) = 0 Then GoTo NextRow
-        Dim v As Variant: v = data(r, 8)
+        Dim v As Variant: v = data(r, 6)
         If Not IsNumeric(v) Then GoTo NextRow
 
         Dim descRaw As String: descRaw = Trim(CStr(data(r, 4)))

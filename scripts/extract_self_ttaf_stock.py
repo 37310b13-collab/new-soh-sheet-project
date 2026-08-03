@@ -1,5 +1,5 @@
 """
-自社在庫（Raw materials daily check）とTTAF在庫（CSA ReportのPIVOT SOH TTAFシート）の
+自社在庫（Raw materials daily check）とTTAF在庫（CSA Reportの Stock invoiced to CSA シート）の
 週次実績を抽出する。
 
 使い方:
@@ -42,15 +42,17 @@ def extract_self(src_path, dt):
 
 
 def extract_ttaf(src_path, dt):
+    # Stock invoiced to CSA: A列=TTAF PART NUMBER, D列=Description, F列=在庫数量。
+    # ヘッダーは4行目、データは5行目から。RefreshTTAFStockと違い、この簡易スクリプトは
+    # TTAF_Code/Descriptionの照合を行わないため、A列がそのままRM_Codeとして使える
+    # (TTAF_Code=RM_Codeの)ケース向け。
     wb = openpyxl.load_workbook(src_path, read_only=True, data_only=True)
-    ws = wb["PIVOT SOH TTAF"]
+    ws = wb["Stock invoiced to CSA"]
     rows = []
-    for row in ws.iter_rows(min_row=5, max_col=4, values_only=True):
-        if row[0] == "Grand Total" or row[0] is None:
-            continue
-        code, aged, fresh, total = row
-        if isinstance(code, str) and code.startswith("CHEM") and isinstance(total, (int, float)):
-            rows.append([code, dt.isoformat(), total])
+    for row in ws.iter_rows(min_row=5, max_col=6, values_only=True):
+        code, total = row[0], row[5]
+        if isinstance(code, str) and code.strip() and isinstance(total, (int, float)):
+            rows.append([code.strip(), dt.isoformat(), total])
     wb.close()
     return rows
 
