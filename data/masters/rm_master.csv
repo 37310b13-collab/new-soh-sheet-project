@@ -1,96 +1,82 @@
-RM_Code,TTAF_Code,Description,Supplier,Category
-CHEM-1250,71288614901,Barium Sulfate (B-55),TTAF,Chemical
-CHEM-1670,712886265,ALESPER 1065,TTAF,Chemical
-CHEM-1700,712886270,TepyrusCT38,TTAF,Chemical
-CHEM-1420,71288629601,HEC SE900,TTAF,Chemical
-CHEM-1530,71388003501,JCK-97,TTAF,Chemical
-CHEM-1540,71388005801,NAT35,TTAF,Chemical
-CHEM-1690,734831040,TPZ-560,TTAF,Chemical
-CHEM-1720,734831050,CeZr oxide(TPZ-868),TTAF,Chemical
-CHEM-1440,83988005701,CITRIC ACID,TTAF,Chemical
-PET FILM(900*1000),839884031,PET FILM(900*1000),Japan,Chemical
-4HL,N60H27R08-JP,(7R-08) TP166-103-084,TTAF,Chemical
-1EK,N60H29R08-JP,(9R-08) TP166-103-105*T1,TTAF,Chemical
-7CL,N75H28R08-JP,(8R-08) TP167-103- 096*T4,TTAF,Chemical
-9RN,1846515030 ( 4FK13117080Z),N30S89R11WF7  4FK13117080,TTAF,Substrate
-7EP,1846540040 ( 4FK13093100Z),N30S7R07WF7 4FK13093100,China,Substrate
-F2290,18465-F3010Z,N30S/8-11R-11-WF7,China,Chemical
-CHEM-1400,71288617001,DISPAL 23N4-80,TTAF,Chemical
-CHEM-1570,71288624802,NOPAGOAL A,TTAF,Chemical
-CHEM-1650,712886256,DUASYN ACID BLUE AE-SF 30 LIQUID-SN,TTAF,Chemical
-CHEM-1660,71288627101,GW-3394,TTAF,Hazardous Chemical
-CHEM-1600,71388005101,BF-1P,TTAF,Chemical
-CHEM-1280,83988002202,DODECYL TRIMETHYL AMMONIUM CHLORIDE,TTAF,Hazardous Chemical
-CHEM-1240,83988008101,Alumina SOL(AS200),TTAF,Chemical
-0JN,KFD13117100,N30S/10 : 11R-11 (F2090) Poland,TTAF,Substrate
-CHEM-1760,713880079,Pigment(TC RED FD(A)),TTAF,Chemical
-Original Towel,859882220,Towel Paper,TTAF,Chemical
-0LJ,N60H39R08-JP,9R-08) N126-103-105 ,Japan,Chemical
-CHEM-1200,839880012,Oxalic Acid,TTAF,Chemical
-ABN,18465F3050Z,N20S/9-11R-11-WF10,China,Chemical
-YAN,18465F2100Z,N20S/9-13R-11-WF10,China,Chemical
-KEJ,N90S27R08,TP119-103-084,Belgium,Chemical
-JEJ,N90S29R08,TP119-103-105*T7,Belgium,Chemical
-CHEM-1830,713880083,RCT-43,TTAF,Chemical
-CHEM-1100,839880191,SODIUM HYDROXIDE,The Great Supply,Chemical
-CHEM-1680,713880069,NAT38,TTAF,Chemical
-CHEM-1820,713880091,JCK-472,TTAF,Chemical
-CHEM-1840,712886281,KAOCERA2020,TTAF,Chemical
-TPP-1469,734832058,TPP-1469,Japan,Chemical
-TDJ,1846537010,(11R-08) TP156- 103-130*TG,TTAF,Substrate
-CHEM-1730,71388007701,NAT-41,TTAF,Chemical
-CHEM-1110,Alumina Powder,Alumina Powder Mi-386,,Chemical
-CHEM-1120,712886120,Catapal D,,Chemical
-CHEM-1010,Sodium Carbonate,Sodium Carbonate Anhydrous,,Chemical
-CHEM-1410,71288623301,SCFa100L4,Sasol Germany,Chemical
-CHEM-1430,71388004301,RCT22,TTAF,Chemical
-CHEM-1450,Noptechs,Noptechs,,Chemical
-CHEM-1470,SCFA100,SCFa-100,,Chemical
-CHEM-1480,NAT30,NAT-30,TTAF,Chemical
-CHEM-1560,734831030,TPZ-511,TTAF,Chemical
-CHEM-1520,71388005301,Puralox TH100-100L1,Sasol Germany,Chemical
-CHEM-1580,71288614301,Barium Acetate,,Chemical
-CHEM-1550,71288624901,Chupol CC-6,,Chemical
-CHEM-1510,71288625001,BA-070,TTAF,Chemical
-CHEM-1080,839880043,Hydrazine Hydrate,,Chemical
-CHEM-1770,New,RCT-39,TTAF,Chemical
-CHEM-1850,kg,TPP-1469,,Chemical
-CHEM-1780,New,Diamonium Citrate,,Chemical
-CHEM-1020,,Sodium Nitrite,TTAF,Chemical
-CSA Code,,PART NAME,Supplier,Chemical
-Ester Film,,Ester Film,TTAF,Substrate
-PP Film,83988405701,PP Film,TTAF,Substrate
-5SN,,5SN,TTAF,Substrate
-1JN,,1JN,TTAF,Chemical
-V03,,V03,TTAF,Chemical
-V19,,V19,TTAF,Chemical
-3TP,,3TP,TTAF,Substrate
-CHEM-1740,,Alumax GX-L1,PIDC,Chemical
-CHEM-1750,,Alumax WDB-5,PIDC,Chemical
-848530,,848530,Corning SA,Chemical
-848531,,848531,Corning SA,Chemical
-846227,,846227,Corning SA,Chemical
-OLJ,,OLJ,NGK Japan,Chemical
-CHEM-1500,,TMAH,Sachem,Chemical
-CHEM-1810,,TEAH,Sachem,Chemical
-A043,,TDJ,TTAF,Chemical
-CHEM-1220,,Actalys Lisa,Rhodia / Solvay,Chemical
-CHEM-1260,,Acetic Acid 90% (25L),Merck,Chemical
-CHEM-1790,,Optalys 466,SOLVAY,Chemical
-TSZ-616,,TSZ-616 Slurry - NO PGM,,Chemical
-CHEM-1180,,Palladium DiNitrate (PDN) - TSAM,,Chemical
-TSZ-938,,TSZ-938 Slurry - NO PGM,,Chemical
-CHEM-1460,,Optalys 114,,Chemical
-CHEM-1490,,Optalys 227,SOLVAY,Chemical
-CHEM-1610,,Optalys 138,SOLVAY,Chemical
-CHEM-1640,,Palladium DiNitrate (PDN) - VW,,Chemical
-CHEM-1030,,Ammonium Hydroxide (25L),The Great Supply,Chemical
-CHEM-1800,,Stabilys 392,SOLVAY,Chemical
-CHEM-1710,,Stabilys 308,SOLVAY,Chemical
-CHEM-1170,,Rhodium Trichloride (RTC) - TSAM,,Chemical
-CHEM-1620,,Ammonium Hydroxide (2.5L),Glassworld,Chemical
-CHEM-1050,,Nitric Acid,Brenntag,Chemical
-CHEM-1190,,Hydrochloric Acid,Merck,Chemical
-CHEM-1630,,Rhodium Trichloride (RTC) - VW,,Chemical
-CHEM-1090,,Chloro Platinic Acid (CPA) - TSAM,,Chemical
-CHEM-1310,,Monoethanol Amine,The Great Supply,Chemical
+RM_Code,TTAF_Code,Description,Supplier,Category,FixedWeeklyQty
+CHEM-1260,,Acetic Acid 90% (25L),Merck,Chemical,0
+CHEM-1220,,Actalys Lisa,Rhodia,Chemical,0
+CHEM-1670,712886265,Alesper 1065,TTAF,Chemical,0
+CHEM-1740,,Alumax GX-L1,PIDC,Chemical,0
+CHEM-1750,,Alumax WDB5,PIDC,Chemical,0
+CHEM-1110,Alumina Powder,Alumina Powder,TTAF,Chemical,0
+CHEM-1240,83988008101,Alumina Sol [AS-200],TTAF,Chemical,0
+CHEM-1030,,Ammonium Hydroxide (25L),Great Supp,Chemical,0
+CHEM-1620,,Ammonium Hydroxide (2.5L),Glassworld,Chemical,0
+CHEM-1510,71288625001,BA-070,TTAF,Chemical,0
+CHEM-1580,71288614301,Barium Acetate,TTAF,Chemical,0
+CHEM-1250,71288614901,Barium Sulfate [B-55],TTAF,Chemical,0
+CHEM-1600,71388005101,BF-1P,TTAF,Chemical,0
+CHEM-1120,712886120,Catapal D,TTAF,Chemical,0
+CHEM-1550,71288624901,CHUPOL CC-6,TTAF,Chemical,0
+CHEM-1440,83988005701,Citric Acid,TTAF,Chemical,0
+CHEM-1780,New,Diammonium Citrate,TTAF,Chemical,0
+CHEM-1400,71288617001,Dispal,TTAF,Chemical,0
+CHEM-1650,712886256,Duasyn Acid Blue,TTAF,Chemical,0
+CHEM-1660,71288627101,GW-3394,TTAF,Hazardous Chemical,0
+CHEM-1420,71288629601,HEC SE900,TTAF,Chemical,0
+CHEM-1190,,Hydrochloric Acid,Merck,Chemical,0
+CHEM-1530,71388003501,JCK-97,TTAF,Chemical,0
+CHEM-1820,713880091,JCK-472,Trial Stock,Chemical,0
+CHEM-1840,712886281,KAOCER 2020,Trial Stock,Chemical,0
+CHEM-1310,,Monoethanol Amine,Protea/ Great,Chemical,0
+CHEM-1480,NAT30,NAT 30,TTAF,Chemical,0
+CHEM-1540,71388005801,NAT 35,TTAF,Chemical,0
+CHEM-1680,713880069,NAT 38,TTAF,Chemical,0
+CHEM-1730,71388007701,NAT 41,TTAF,Chemical,0
+CHEM-1280,83988002202,N-Dodeoyl Trimethyl Ammonium Chloride,TTAF,Hazardous Chemical,0
+CHEM-1050,,Nitric Acid,Brenntag,Chemical,0
+CHEM-1570,71288624802,NOPAGOAL A,TTAF,Chemical,0
+CHEM-1450,Noptechs,Noptechs,TTAF,Chemical,0
+CHEM-1460,,Optalys 114,RHODIA,Chemical,0
+CHEM-1610,,Optalys 138,RHODIA,Chemical,0
+CHEM-1490,,Optalys 227,RHODIA,Chemical,0
+CHEM-1790,,Optalys 466,RHODIA,Chemical,0
+CHEM-1200,839880012,Oxalic Acid,Merck,Chemical,0
+CHEM-1770,New,RCT39,TTAF,Chemical,0
+CHEM-1830,713880083,RCT43,Trial Stock,Chemical,0
+CHEM-1430,71388004301,RCT22,TTAF,Chemical,0
+CHEM-1470,SCFA100,Aluminium Oxide [SCFA-100] - NO LANTHANUM,TTAF,Chemical,0
+CHEM-1410,71288623301,Aluminium Oxide [SCFA-100L4] - BAGS,Sasol Germany,Chemical,0
+CHEM-1010,Sodium Carbonate,Sodium Carbonate Anhydrous,TTAF,Chemical,0
+CHEM-1100,839880191,Sodium Hydroxide (Caustic Soda),Protea,Chemical,0
+CHEM-1020,,Sodium Nitrite,Protea,Chemical,0
+CHEM-1710,,Stabilys 308,RHODIA,Chemical,0
+CHEM-1800,,Stabilys 392,RHODIA,Chemical,0
+CHEM-1760,713880079,Pigment TC RED FD (A),TTAF,Chemical,0
+CHEM-1810,,Tetraethylammonium Hydroxide 35% AQ,Sachem,Chemical,0
+CHEM-1700,712886270,Tepyrus CT38,TTAF,Chemical,0
+CHEM-1520,71388005301,TH100/100L1,Sasol Germany,Chemical,0
+CHEM-1500,,TMAH,Sachem,Chemical,0
+CHEM-1850,kg,TPP-1469,TTAF,Chemical,0
+CHEM-1560,734831030,TZP 511,TTAF,Chemical,0
+CHEM-1690,734831040,TPZ 560,TTAF,Chemical,0
+CHEM-1720,734831050,TPZ 868,TTAF,Chemical,0
+Ester Film,,Ester Film,TTAF,Chemical,0
+Original Towel,859882220,Towel Paper,TTAF,Chemical,200
+PP Film,83988405701,PP Film,TTAF,Chemical,0
+7EP,1846540040 ( 4FK13093100Z),TTAF 44FK13093100,NGK,Substrate,0
+1EK,N60H29R08-JP,Substrate NGK TP166-103-105xT1,NGK,Substrate,0
+4HL,N60H27R08-JP,NGK - 4HL,NGK,Substrate,0
+9RN,1846515030 ( 4FK13117080Z),TTAF 4FK13117080,NGK,Substrate,0
+7CL,N75H28R08-JP,Substrate NGK TP167-103-096xT4,NGK,Substrate,0
+OJN,,Substrate TTAF WF6,NGK,Substrate,0
+TDJ,1846537010,N60S/2-11R08 TTAF,NGK,Substrate,0
+3TP,,Substrate TTAF WF7,NGK,Substrate,0
+KEJ,N90S27R08,TP119-103-084,NGK,Substrate,0
+JEJ,N90S29R08,TP119-103-105*T7,NGK,Substrate,0
+YAN,18465F2100Z,N20S/9-13R-11-WF10,NGK,Substrate,0
+ABN,18465F3050Z,N20S/9-11R-11-WF10,NGK,Substrate,0
+OLJ,,Substrate NGK N126-103-105xT5,NGK,Substrate,0
+5SN,,Substrate NGK WF6,NGK,Substrate,0
+8EN,,Substrate NGK KFK1D118-152xX1,NGK,Substrate,0
+9RJ,,Substrate NGK N116-103-130xTB,NGK,Substrate,0
+5JK,,Substrate NGK TP167-103-105xT2,NGK,Substrate,0
+26F,,18471-N40S/4 - 13R13,NGK,Substrate,0
+73K,,18471-N60S/3 - 9R07,NGK,Substrate,0
+1JN,,Substrate TTAF WF6,NGK,Substrate,0

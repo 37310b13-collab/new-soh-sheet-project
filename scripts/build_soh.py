@@ -186,16 +186,22 @@ ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 # ============================================================ M_RawMaterials
 # 基準在庫は下限・上限の2つを持つ(Dashboardの週次の赤/緑/青のハイライトに使用)。
 # 以前の単一しきい値のSafetyStock_Qty_要入力を、下限・上限の2列に置き換えた。
+# 固定週次消費量_要入力: BOM(M_BOM/PP_Grid)経由の消費量計算とは別に、材料によっては
+# 毎週固定量を消費する(例: Original Towelは梱包資材で、生産中間体の構成とは無関係に
+# 週200枚など一定量を消費する)。Grid_Requirementはこの列の値をBOMベースの計算結果に
+# 単純に加算する。0の材料には影響しない。ここはExcel上のセルなので、消費量が変わった際も
+# 再生成なしにそのまま書き換えるだけで反映される。
 ws = wb.create_sheet("M_RawMaterials")
 ws.append(["Part Name", "Description", "Supplier", "Category", "UOM",
-           "基準在庫下限_要入力", "基準在庫上限_要入力", "LeadTime_Weeks_要入力", "TTAF_Code"])
+           "基準在庫下限_要入力", "基準在庫上限_要入力", "LeadTime_Weeks_要入力", "TTAF_Code",
+           "固定週次消費量_要入力"])
 for r in rm_master:
     ws.append([r["RM_Code"], r["Description"], r["Supplier"], r["Category"], "kg", 0, 0, 4,
-               r.get("TTAF_Code", "")])
+               r.get("TTAF_Code", ""), float(r.get("FixedWeeklyQty", 0) or 0)])
 n = len(rm_master) + 1
-style_header(ws, 9)
-add_table(ws, "M_RawMaterials", f"A1:I{n}")
-for col, w in zip("ABCDEFGHI", [14, 34, 14, 16, 8, 18, 18, 18, 16]):
+style_header(ws, 10)
+add_table(ws, "M_RawMaterials", f"A1:J{n}")
+for col, w in zip("ABCDEFGHIJ", [14, 34, 14, 16, 8, 18, 18, 18, 16, 20]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 
@@ -1322,6 +1328,42 @@ for section_title, items in panel_sections:
 ws_panel.column_dimensions["A"].width = 6
 ws_panel.column_dimensions["B"].width = 28
 ws_panel.column_dimensions["C"].width = 70
+
+# ---- Solution名リスト（RefreshWeeklyBatchesが「Powder & Slurry & Pgm Plan」の行を
+# 中間体/完成品(Catalyst)/Solutionに自動判定する際に使う）----
+# 中間体(TSP-/TPP-/TSZ-/TVS-/VSP-)・完成品(それ以外)は接頭辞や消去法で機械的に判定できるが、
+# Solutionだけは略称(20P・SH等)に共通の接頭辞が無いため、この表で明示的に列挙する。
+# 新しいSolutionが増えたら、この表に1行追加するだけでRefreshWeeklyBatchesが自動的に対応する
+# （行番号のメンテナンスは一切不要）。
+ws_panel["E3"] = "Solution名リスト（RefreshWeeklyBatchesの行判定に使用）"
+ws_panel["E3"].font = Font(bold=True)
+sol_header_row = 4
+ws_panel.cell(row=sol_header_row, column=5, value="略称（Pgm Plan表記）")
+ws_panel.cell(row=sol_header_row, column=6, value="正式名（システム内部名）")
+solution_aliases = [
+    ("20P", "SOL-20P"),
+    ("10H", "SOL-10H"),
+    ("10H VW", "SOL-10H VW"),
+    ("250D", "SOL-250D"),
+    ("85D", "SOL-85D"),
+    ("SCH", "SOL-SCH"),
+    ("SH", "SOL-SH"),
+]
+for i, (alias, canon) in enumerate(solution_aliases):
+    r = sol_header_row + 1 + i
+    ws_panel.cell(row=r, column=5, value=alias)
+    ws_panel.cell(row=r, column=6, value=canon)
+sol_last_row = sol_header_row + len(solution_aliases)
+style_header(ws_panel, 2, row=sol_header_row)
+for c in (5, 6):
+    ws_panel.cell(row=sol_header_row, column=c).fill = HEADER_FILL
+    ws_panel.cell(row=sol_header_row, column=c).font = HEADER_FONT
+sol_tbl = Table(displayName="T_SolutionNames", ref=f"E{sol_header_row}:F{sol_last_row}")
+sol_tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+ws_panel.add_table(sol_tbl)
+ws_panel.column_dimensions["E"].width = 22
+ws_panel.column_dimensions["F"].width = 22
+
 ws_panel.freeze_panes = "A3"
 
 # ---- ナビゲーション（README上部にジャンプリンクを追加） ----
