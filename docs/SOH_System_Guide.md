@@ -175,7 +175,7 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
 | T_SelfStock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_SelfStock_Log`が更新されると自動反映。手入力不可 |
 | T_TTAFStock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`T_TTAFStock_Log`が更新されると自動反映。手入力不可 |
-| M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code |
+| M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code・固定週次消費量_要入力(5.9章参照) |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
 | PP_Grid | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
 | (非表示) T_SelfStock_Log / T_TTAFStock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
@@ -447,6 +447,50 @@ Alt+F8の一覧にも出ません）のため、ボタン一覧には含めて�
 
 一度設定すれば、以降は`操作パネル`シートを開いて上から順にボタンをクリックするだけで、
 月次の運用手順どおりに作業を進められます。
+
+## 5.9 材料リスト・BOM・生産計画の元データについて（2026年7月改版）
+
+**材料リスト(`M_RawMaterials`)とBOM(`M_BOM`)の元データ**: 「Raw Material - Look Up」ファイル
+（`Catalyst Data Base`・`Slurry Data Base`・`Powder Data Base`・`Solution`の4シート）と、
+「Raw materials daily check」（自社倉庫の現物確認シート）を突合して作成しています。
+製造工程は「Powderを作る→Slurryを作る→Substrateに塗布してCatalyst(完成品)になる」の順で、
+BOMも以下の対応関係で作成しています。
+
+- `Powder Data Base`・`Slurry Data Base`・`Solution`: それぞれのシートの1バッチあたり使用量列
+  （Powder/Slurry/SolutionいずれもM列）をそのまま採用
+- `Catalyst Data Base`: **Substrateの行だけ**をF列（catalyst1個あたりの使用量。PP_Grid側で
+  catalystは個数管理のためF列を使う。他の材料はSlurry/Powder/Solution側で既にバッチベースの
+  計算式が存在するため、Catalyst Data Base側の直接行(化学品・スラリー参照行)は二重計上を
+  避けるため使用しない）
+
+**中間体が別の中間体の原料になっているケース**（例: TSZ-616・TSZ-938はSlurryだが、それ自体が
+外部購入品ではなく、TSP-618等の別のSlurryの原料としてのみ使われ、「Powder & Slurry & Pgm Plan」
+にも独自の週次バッチ計画を持たない）は、`M_RawMaterials`には一切登録しません（Dashboard等には
+表示されません）。代わりに、`PP_Grid`のその中間体の週次セルに、`Grid_Requirement`と全く同じ
+`SUMPRODUCT`パターンの数式（それを使う側の実バッチ数から逆算）を自動生成して埋め込みます。
+これはビルド時にPythonが数式を1回書き込むだけで、以降はExcelの数式として完結するため、
+中間体の増減やレシピの変更があっても再生成なしに追従します。
+
+**固定週次消費量(`M_RawMaterials`の`固定週次消費量_要入力`列)**: Original Towel（梱包資材の
+養生紙）のように、生産中間体の構成(BOM)とは無関係に毎週ほぼ一定量を消費する材料向けの入力欄
+です。`Grid_Requirement`はBOM経由の計算結果にこの値を単純加算します。通常は0で、値を変える
+場合はこのセルを直接書き換えるだけで反映されます(再生成不要)。
+
+**生産計画(`RefreshWeeklyBatches`)の元データ**: 以前は「Powder & Slurry & Pgm Plan」が材料
+ごとに別シート(40枚超)に分かれている前提でしたが、現在の運用では**単一シートに全中間体が
+まとまった形式**（B列=中間体/完成品(Catalyst)/Solutionの名前、週初日ヘッダー行以降に週次の
+生産量）に統一されています。`RefreshWeeklyBatches`もこれに合わせて書き直しています。
+
+行の種類（中間体/完成品/Solution）は行番号ではなく**名前のパターンで自動判定**します。
+`TSP-`・`TPP-`・`TSZ-`・`TVS-`・`VSP-`で始まれば中間体(Slurry/Powder)、`操作パネル`シートの
+`T_SolutionNames`テーブルに載っている名前(略称。例: `20P`・`SH`・`SCH`)ならSolution(略称は
+自動的に正式名`SOL-xxx`へ変換)、どちらでもなければ完成品(Catalyst)として扱います。この方式
+により、ファイル側で行が増減してもマクロ側の行番号メンテナンスは一切不要です。新しい
+Solutionが増えた場合だけ、`操作パネル`シートの`T_SolutionNames`テーブルに1行追加してください。
+
+なお、Catalyst以外(Powder/Slurry/Solution)の週次生産量は**バッチ数**、Catalystのみ**生産個数**
+で記録されています。前者はBOM側もバッチ単位の使用量(M列)、後者はcatalyst1個あたりの使用量
+(F列、Substrateのみ)を使うことで、単位を揃えています。
 
 ## 6. 自動反映の仕組み
 

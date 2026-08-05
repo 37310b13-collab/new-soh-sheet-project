@@ -97,9 +97,16 @@ inter_master = inter_dedup
 # PO_Draft_*まで、すべてこの3つのリストを起点に生成されるため、ここで絞り込むだけで
 # 以降のシート生成コードは一切変更せずに連動して絞り込まれる。
 if SUPPLIER_FILTER:
+    _all_inter_names_pre_filter = {r["Intermediate"] for r in inter_master}
     rm_master = [r for r in rm_master if r["Supplier"].strip() == SUPPLIER_FILTER]
     _filt_codes = {r["RM_Code"].upper() for r in rm_master}
-    bom = [r for r in bom if r["RM_Code"].upper() in _filt_codes]
+    # bom.csvのRM_Codeは、購入する原材料(rm_master由来)だけでなく、他の中間体を経由専用で
+    # 消費する行(例: TSP-618がTSZ-616を使う)も含む。後者はTSZ-616自身が購入品ではなく
+    # rm_masterに載らないため、rm_masterのコード集合だけでフィルタすると誤って除外され、
+    # PP_Gridの経由専用中間体(数式によるパススルー)の元になる行が消えてしまう。
+    # そのためRM_Codeが「他の中間体名」である行はサプライヤーに関係なく常に残す。
+    bom = [r for r in bom
+           if r["RM_Code"].upper() in _filt_codes or r["RM_Code"] in _all_inter_names_pre_filter]
     _filt_inter_names = {r["Intermediate"] for r in bom}
     inter_master = [r for r in inter_master if r["Intermediate"] in _filt_inter_names]
     prodmap = [r for r in prodmap if r["Intermediate"] in _filt_inter_names]
