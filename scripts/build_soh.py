@@ -800,12 +800,16 @@ ws.cell(row=MD_TABLE_ROW, column=2, value="項目")
 ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
 
 row_num = MD_TABLE_ROW
-for rm_code, entries in bom_by_rm.items():
-    rm_code = normalize_rm_code(rm_code)
-    if rm_code is None:
+# ブロックの並び順は、bom.csv内での初出順ではなく、rm_master(Dashboard等と同じ並び順、
+# Substrate→その他Chemical→Ester Film/PP Film→TPZ系)に揃える。BOM行が1つも無い材料
+# (Original Towel等)はこれまで通りブロックを作らない。
+for _r in rm_master:
+    rm_code = _r["RM_Code"]
+    entries = bom_by_rm.get(rm_code)
+    if not entries:
         continue
     grow = rm_row[rm_code]
-    desc = next((r["Description"] for r in rm_master if r["RM_Code"] == rm_code), "")
+    desc = _r["Description"]
 
     row_num += 1
     mat_header_row = row_num
