@@ -113,6 +113,24 @@ if SUPPLIER_FILTER:
     print(f"[SUPPLIER_FILTER={SUPPLIER_FILTER}] RM: {len(rm_master)}, "
           f"Intermediates: {len(inter_master)}, BOM rows: {len(bom)}")
 
+# rm_masterの並び順は、Dashboard・Material_Detail・M_RawMaterials・T_SelfStock・T_TTAFStock・
+# PO_Draft_*等、この行順を起点に生成される全シートに反映される。要望に基づき
+# 「Substrate → その他Chemical → Ester Film・PP Film → TPZ系」の順に並べる
+# (Python標準のsorted()は安定ソートなので、各グループ内は元の順序を保ったまま並び替わる)。
+_ESTER_PP = {"ESTER FILM", "PP FILM"}
+def _rm_sort_group(r):
+    code = r["RM_Code"].strip().upper()
+    desc = r["Description"].strip().upper()
+    is_tpz = "TPZ" in desc or "TZP" in desc  # LookupのRM Descriptionに"TZP"表記の誤記があるため両対応
+    if code in _ESTER_PP:
+        return 2
+    if is_tpz:
+        return 3
+    if r["Category"] == "Substrate":
+        return 0
+    return 1
+rm_master.sort(key=_rm_sort_group)
+
 # weekly batch counts, source: Powder & Slurry & Pgm Plan ("No. of batches" rows, one entry
 # per intermediate per week, extracted from ~36 per-material sheets). Keyed by actual calendar
 # date (WeekStart) so it lines up correctly regardless of ANCHOR_YEAR.
