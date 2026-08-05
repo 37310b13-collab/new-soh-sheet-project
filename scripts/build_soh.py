@@ -744,6 +744,13 @@ def mdetail_week_col(w):
 # 711(BOMペア数)×104週分のMATCHが発生し重くなるため、行位置は1回だけ求めてINDEXで使い回す
 # （列位置はPP_Gridの列並びが固定のため、週番号からそのままw+1として直接指定できる）。
 HELPER_COL_MD = WEEK_START_COL + N_WEEKS
+# HELPER_COL_MDのもう1つ右: 「Order(発注予定,kg)」行にだけPart Nameを複製しておく見えない
+# 列。PO_Draft_*シートがMATCHでこの行を直接特定し、手入力された発注数量を拾うために使う
+# (ブロックの長さが材料ごとに違うため、ヘッダー行から固定オフセットではOrder行を特定できない)。
+MD_ORDER_HELPER_COL = HELPER_COL_MD + 1
+md_order_helper_col_letter = get_column_letter(MD_ORDER_HELPER_COL)
+md_week_first_col_letter = get_column_letter(WEEK_START_COL)
+md_week_last_col_letter = get_column_letter(WEEK_START_COL + N_WEEKS - 1)
 
 MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 3, 4, 5, 6
 
@@ -879,25 +886,19 @@ for _r in rm_master:
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=f"='T_SelfStock'!{week_col(w)}{ss_row}")
 
-    # Order行: T_PlannedOrdersに手入力した「計画中の発注」を材料×週で表示する。
-    # セル内に「数量 (m月発注)」の形でテキスト表示する(Excelのセルコメントは数式で動的に
-    # 制御できないため、コメントの代わりにセル内テキストとして発注月を出す)。
-    # T_PlannedOrders[EffectiveQty]は、同じ材料・同じ発注月の実データがT_Shipmentsに現れたら
-    # 自動的に0になる(IsReconciled列)ため、ここでの二重計上は数式側で自動的に防止される
-    # (手動削除は不要)。
+    # Order行: 発注予定数量を材料×週で直接手入力する欄(黄色の入力セル)。以前はT_PlannedOrders
+    # を参照する数式だったが、PO_Draft側の自動発注計算をやめ手入力に統一したのに合わせて、
+    # ここも生の数値を直接入力する形に変更した。PO_Draft_*シートはMD_ORDER_HELPER_COL列
+    # (Part Nameをこの行にだけ複製した見えない列)を目印に、ここで入力した値をそのまま
+    # INDEX/MATCHで拾って発注書のレイアウトに転記する(発注書側では計算をしない)。
     row_num += 1
+    order_row = row_num
     ws.cell(row=row_num, column=2, value="Order(発注予定,kg)")
+    ws.cell(row=row_num, column=MD_ORDER_HELPER_COL, value=rm_code)
+    ws.cell(row=row_num, column=MD_ORDER_HELPER_COL).font = Font(size=8, color="808080")
     for w in range(1, N_WEEKS + 1):
-        qty_expr = (
-            f"SUMIFS(T_PlannedOrders[EffectiveQty],T_PlannedOrders[Part Name],$A{mat_header_row},"
-            f"T_PlannedOrders[WeekIndex],{w})"
-        )
-        month_expr = (
-            f"SUMPRODUCT(MAX((T_PlannedOrders[Part Name]=$A{mat_header_row})*"
-            f"(T_PlannedOrders[WeekIndex]={w})*(T_PlannedOrders[EffectiveQty]>0)*T_PlannedOrders[Order_Month]))"
-        )
-        ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f'=IF({qty_expr}=0,"",{qty_expr}&" ("&TEXT({month_expr},"m月")&"発注)")')
+        cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=None)
+        cell.fill = INPUT_FILL
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
@@ -919,6 +920,7 @@ ws.column_dimensions["C"].width = 14
 for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[mdetail_week_col(w)].width = 9
 ws.column_dimensions[get_column_letter(HELPER_COL_MD)].width = 10
+ws.column_dimensions[get_column_letter(MD_ORDER_HELPER_COL)].width = 14
 ws.freeze_panes = f"{get_column_letter(WEEK_START_COL)}{MD_TABLE_ROW+1}"
 
 # 注: Dashboardにある選択週の列を条件付き書式で強調する仕組みはここでは追加していません。
@@ -1216,10 +1218,15 @@ def build_po_draft(sheet_name, category, title):
         ws.cell(row=data_row, column=5, value="kg")
         ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[Part Name],0)),0)')
         ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_match},$P$7)")
+        # 発注数量は自動計算せず、Material_DetailのOrder(発注予定,kg)行に手入力された値を
+        # そのまま転記するだけ。MD_ORDER_HELPER_COL列(Order行にだけPart Nameが複製されている
+        # 見えない列)をMATCHでたどることで、材料ごとにブロックの長さが違っても正しい行を
+        # 一意に特定できる。
+        md_order_match = f'MATCH($D{data_row},Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},0)'
         for w in range(1, PO_N_WEEKS + 1):
             col = PO_FIRST_WEEK_COL + w - 1
             ws.cell(row=data_row, column=col,
-                    value=f"=MAX(0,$F{data_row}-INDEX(Grid_Stock[#Data],{grow_match},$P$7+{w-1}))")
+                    value=f"=IFERROR(INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{md_order_match},$P$7+{w-1}),0)")
         rng_start = get_column_letter(PO_FIRST_WEEK_COL)
         rng_end = get_column_letter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)
         ws.cell(row=data_row, column=total_col, value=f"=SUM({rng_start}{data_row}:{rng_end}{data_row})")

@@ -284,7 +284,7 @@ Sub AddMaterial()
     ' ---- PO_Draft_{Category} ----
     Dim poSheetName As String: poSheetName = POSheetNameForCategory(categoryVal)
     If Len(poSheetName) > 0 Then
-        Call AppendPODraftRow(thisWb.Sheets(poSheetName), rmCode, ttafCodeVal)
+        Call AppendPODraftRow(thisWb.Sheets(poSheetName), rmCode, ttafCodeVal, nWeeks)
     End If
 
     Application.Calculation = xlCalculationAutomatic
@@ -669,15 +669,19 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
         sh.Cells(r, col).Value = "='T_SelfStock'!" & ColLetter(1 + w) & ssRow
     Next w
 
+    ' Order行: 発注予定数量を材料×週で直接手入力する欄。PO_Draft_*シートは、
+    ' mdOrderHelperCol列(この行にだけPart Nameを複製した見えない列)をMATCHで特定し、
+    ' ここに入力された値をそのまま転記する(build_soh.pyのMaterial_Detail生成と同じ設計)。
     r = r + 1
     sh.Cells(r, 2).Value = "Order(発注予定,kg)"
-    Dim qtyExpr As String, monthExpr As String
+    Dim mdOrderHelperCol As Long: mdOrderHelperCol = MD_WEEK_START_COL + nWeeks + 1
+    sh.Cells(r, mdOrderHelperCol).Value = rmCode
+    sh.Cells(r, mdOrderHelperCol).Font.Size = 8
+    sh.Cells(r, mdOrderHelperCol).Font.Color = RGB(128, 128, 128)
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        qtyExpr = "SUMIFS(T_PlannedOrders[EffectiveQty],T_PlannedOrders[Part Name],$A" & headerRow & ",T_PlannedOrders[WeekIndex]," & w & ")"
-        monthExpr = "SUMPRODUCT(MAX((T_PlannedOrders[Part Name]=$A" & headerRow & ")*(T_PlannedOrders[WeekIndex]=" & w & _
-                    ")*(T_PlannedOrders[EffectiveQty]>0)*T_PlannedOrders[Order_Month]))"
-        sh.Cells(r, col).Value = "=IF(" & qtyExpr & "=0,"""","& qtyExpr & "&"" (""&TEXT(" & monthExpr & ",""m月"")&""発注)"")"
+        sh.Cells(r, col).Value = Empty
+        sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
     Next w
 
     r = r + 1
@@ -715,7 +719,7 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
 End Sub
 
 ' 該当カテゴリのPO_Draft_*シートの一番下に新しい材料の行を追加する。
-Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As String)
+Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As String, nWeeks As Long)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 4).End(xlUp).Row  ' D列(Part Name)基準
     Dim newRow As Long: newRow = lastRow + 1
     ' Grid_Stock内の行位置はMATCHで毎回動的に求める(材料の追加・削除で行位置がずれても
@@ -732,9 +736,18 @@ Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As S
     Const PO_FIRST_WEEK_COL As Long = 8
     Const PO_N_WEEKS As Long = 13
     Dim w As Long, col As Long
+    ' 発注数量はGrid_Stockから自動計算せず、Material_DetailのOrder(発注予定,kg)行に
+    ' 手入力された値をそのまま転記する(build_soh.pyのbuild_po_draft()と同じ式)。
+    Dim mdOrderHelperCol As Long: mdOrderHelperCol = MD_WEEK_START_COL + nWeeks + 1
+    Dim mdOrderHelperColLetter As String: mdOrderHelperColLetter = ColLetter(mdOrderHelperCol)
+    Dim mdWeekFirstColLetter As String: mdWeekFirstColLetter = ColLetter(MD_WEEK_START_COL)
+    Dim mdWeekLastColLetter As String: mdWeekLastColLetter = ColLetter(MD_WEEK_START_COL + nWeeks - 1)
+    Dim mdOrderMatch As String
+    mdOrderMatch = "MATCH($D" & newRow & ",Material_Detail!$" & mdOrderHelperColLetter & ":$" & mdOrderHelperColLetter & ",0)"
     For w = 1 To PO_N_WEEKS
         col = PO_FIRST_WEEK_COL + w - 1
-        sh.Cells(newRow, col).Value = "=MAX(0,$F" & newRow & "-INDEX(Grid_Stock[#Data]," & growMatch & ",$P$7+" & (w - 1) & "))"
+        sh.Cells(newRow, col).Value = "=IFERROR(INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & _
+            "," & mdOrderMatch & ",$P$7+" & (w - 1) & "),0)"
     Next w
     Dim totalCol As Long: totalCol = PO_FIRST_WEEK_COL + PO_N_WEEKS
     sh.Cells(newRow, totalCol).Value = "=SUM(" & ColLetter(PO_FIRST_WEEK_COL) & newRow & ":" & ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1) & newRow & ")"
