@@ -327,8 +327,13 @@ ws.freeze_panes = "B2"
 plan_lookup_names = set(plan_lookup.keys())
 bom_rm_code_names = {b["RM_Code"] for b in bom}
 inter_master_names = {r["Intermediate"] for r in inter_master}
+# Ester Film/PP Filmのような自己参照BOM行(Intermediate==RM_Code。1バッチ=1個消費という
+# 簡易表現のためのもの)は、そのままパススルー扱いにすると「自分自身のPP_Grid行を参照する
+# 数式」になり循環参照になってしまうため、対象から除外する(独自の週次データが無ければ
+# 素直に0のままにする。RefreshWeeklyBatches等で実データが入れば通常通り使われる)。
+self_referencing_names = {b["Intermediate"] for b in bom if b["Intermediate"] == b["RM_Code"]}
 passthrough_intermediates = sorted(
-    (bom_rm_code_names & inter_master_names) - plan_lookup_names
+    (bom_rm_code_names & inter_master_names) - plan_lookup_names - self_referencing_names
 )
 if passthrough_intermediates:
     print("PP_Grid: pass-through(数式)中間体:", passthrough_intermediates)
