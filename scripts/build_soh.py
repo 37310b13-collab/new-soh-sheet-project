@@ -291,6 +291,33 @@ for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[week_col(w)].width = 7
 ws.freeze_panes = "B2"
 
+# ---- 中間体が別の中間体の原料になっているケース(例: TSZ-616はTSP-618等のスラリーの
+# 原料になっているが、TSZ-616自身は購入品ではなく、「Powder & Slurry & Pgm Plan」にも
+# 独自の週次バッチ計画を持たない)への対応。このような「経由専用」の中間体は、PP_Grid上の
+# セルを固定値ではなく、それを使う側(TSP-618等、実バッチ数を持つ中間体)からの需要を
+# Grid_Requirementと全く同じSUMPRODUCTパターンで逆算する数式にする。これによりCHEM-1600等の
+# 週次所要量が正しく計算される一方、TSZ-616自身はrm_masterに載らないためDashboard等には
+# 一切表示されない。Python側で一度だけ数式を書き込むだけで、以降はExcelの数式として
+# 完結する(TSZ-616のレシピや、それを使うスラリーの増減があっても再生成不要で自動追従する)。
+plan_lookup_names = set(plan_lookup.keys())
+bom_rm_code_names = {b["RM_Code"] for b in bom}
+inter_master_names = {r["Intermediate"] for r in inter_master}
+passthrough_intermediates = sorted(
+    (bom_rm_code_names & inter_master_names) - plan_lookup_names
+)
+if passthrough_intermediates:
+    print("PP_Grid: pass-through(数式)中間体:", passthrough_intermediates)
+inter_batch_size = {r["Intermediate"]: to_float(r["Batch_Size"], 1.0) for r in inter_master}
+for name in passthrough_intermediates:
+    trow = inter_row[name]
+    batch_size = inter_batch_size.get(name, 1.0) or 1.0
+    for w in range(1, N_WEEKS + 1):
+        ws.cell(row=trow, column=1 + w).value = (
+            f"=SUMPRODUCT((M_BOM[Part Name]=$A{trow})*M_BOM[RM_Qty_Per_Batch]*"
+            f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))/{batch_size}"
+        )
+        ws.cell(row=trow, column=1 + w).fill = PatternFill(fill_type=None)  # INPUT_FILLを解除(数式セルのため)
+
 # ============================================================ T_OpeningStock (INPUT)
 ws = wb.create_sheet("T_OpeningStock")
 ws.append(["Part Name", "Opening_Qty_要入力", "AsOf"])
@@ -609,9 +636,12 @@ for i, r in enumerate(rm_master):
         # M_BOMのうちRM_Code=このRMの行だけを対象に、原単位×その週のバッチ数(PP_GridRow経由で
         # 週ごとのMATCHをせず直接INDEX)を合計する。PP_Grid内の列位置(w+1列目=Intermediate列の次)
         # は週ごとに固定できるため、MATCHは行位置(PPGridRow, M_BOM側で1回だけ計算済み)のみで済む。
+        # BOMベースの消費量に加え、M_RawMaterialsの固定週次消費量_要入力(Original Towel等、
+        # 生産中間体の構成とは無関係に毎週一定量を消費する梱包資材向け)を単純加算する。
         ws_req.cell(row=rr, column=1 + w).value = (
             f"=SUMPRODUCT((M_BOM[Part Name]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
             f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))"
+            f"+IFERROR(INDEX(M_RawMaterials[固定週次消費量_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)"
         )
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"

@@ -109,6 +109,7 @@ Sub AddMaterial()
     newRmRow.Range.Cells(1, 7).Value = 0
     newRmRow.Range.Cells(1, 8).Value = 4
     newRmRow.Range.Cells(1, 9).Value = ttafCodeVal
+    newRmRow.Range.Cells(1, 10).Value = 0  ' 固定週次消費量_要入力。必要であれば追加後にExcel上で書き換える
 
     ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock / T_OpeningStock ----
     Dim reqTbl As ListObject: Set reqTbl = thisWb.Sheets("Grid_Requirement").ListObjects("Grid_Requirement")
@@ -136,9 +137,12 @@ Sub AddMaterial()
     Dim w As Long, col As Long, cl As String
     For w = 1 To nWeeks
         col = 1 + w
+        ' BOMベースの消費量に加え、M_RawMaterialsの固定週次消費量_要入力を単純加算する
+        ' (build_soh.pyのGrid_Requirement生成ロジックと同じ式)。
         reqRow.Range.Cells(1, col).Value = _
             "=SUMPRODUCT((M_BOM[Part Name]=$A" & grow & ")*M_BOM[RM_Qty_Per_Batch]*" & _
-            "IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow]," & (w + 1) & "),0))"
+            "IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow]," & (w + 1) & "),0))" & _
+            "+IFERROR(INDEX(M_RawMaterials[固定週次消費量_要入力],MATCH($A" & grow & ",M_RawMaterials[Part Name],0)),0)"
         inRow.Range.Cells(1, col).Value = _
             "=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A" & grow & _
             ",T_Shipments[Effective_Week]," & w & ")"
