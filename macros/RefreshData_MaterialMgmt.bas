@@ -50,7 +50,71 @@ Option Explicit
 ' ファイルのバックアップ(コピー)を取っておくことを強くおすすめします。
 '
 ' 全体の設計方針はRefreshData_Utilitiesモジュール冒頭のコメントを参照してください。
+'
+' 【材料の並び順について】M_RawMaterials・Dashboard・Material_Detail等は、
+' Substrate→その他Chemical→Ester Film/PP Film→TPZ系、の順に並べている(build_soh.pyの
+' rm_master.sort()と同じ規則)。AddMaterialは常に末尾に追加するのではなく、新しい材料が
+' 属するグループの末尾に挿入することでこの並び順を維持する(ClassifyGroup/
+' FindGroupInsertPosition/FindRowByCodeを参照)。
 ' ============================================================================
+
+' rmCode/descVal/categoryValから、材料が属するグループ(0=Substrate, 1=その他Chemical,
+' 2=Ester Film・PP Film, 3=TPZ系)を判定する。build_soh.pyの_rm_sort_group()と同じ規則
+' (判定の優先順位も含めて完全に一致させること。Ester Film/PP FilmはCategoryに関わらず
+' 常にグループ2、TPZ系はCategoryに関わらず常にグループ3を優先する)。
+Private Function ClassifyGroup(rmCode As String, descVal As String, categoryVal As String) As Long
+    Dim codeUpper As String: codeUpper = UCase(Trim(rmCode))
+    Dim descUpper As String: descUpper = UCase(Trim(descVal))
+    If codeUpper = "ESTER FILM" Or codeUpper = "PP FILM" Then
+        ClassifyGroup = 2
+    ElseIf InStr(descUpper, "TPZ") > 0 Or InStr(descUpper, "TZP") > 0 Then
+        ClassifyGroup = 3
+    ElseIf Trim(categoryVal) = "Substrate" Then
+        ClassifyGroup = 0
+    Else
+        ClassifyGroup = 1
+    End If
+End Function
+
+' M_RawMaterials内で、targetGroupの材料を挿入すべき位置(1始まりのListRows位置)を返す。
+' 「同じグループの最後の行の直後」に挿入することで、既存の並び順(Substrate→その他Chemical→
+' Ester Film/PP Film→TPZ系)を保つ。該当グループの行が1つも無ければ、それより後のグループの
+' 最初の行の直前に挿入する位置を返す。全体の末尾に追加すべき場合はListRows.Count+1を返す
+' (呼び出し側は、この値がCount+1かどうかで「末尾への追加」か「途中への挿入」かを判定する)。
+Private Function FindGroupInsertPosition(rmTbl As ListObject, targetGroup As Long) As Long
+    Dim n As Long: n = rmTbl.ListRows.Count
+    If n = 0 Then
+        FindGroupInsertPosition = 1
+        Exit Function
+    End If
+    Dim data As Variant
+    data = rmTbl.ListColumns(1).DataBodyRange.Resize(n, 4).Value  ' Part Name, Description, Supplier, Category
+    Dim i As Long, lastLE As Long: lastLE = 0
+    For i = 1 To n
+        If ClassifyGroup(CStr(data(i, 1)), CStr(data(i, 2)), CStr(data(i, 4))) <= targetGroup Then
+            lastLE = i
+        End If
+    Next i
+    FindGroupInsertPosition = lastLE + 1
+End Function
+
+' シートのcolIdx列を、startRowから使用範囲の最終行(colIdx列基準)まで探し、値がrmCodeと
+' 完全一致(Trim比較)する最初の行番号を返す(見つからなければ0)。
+Private Function FindRowByCode(sh As Worksheet, colIdx As Long, rmCode As String, startRow As Long) As Long
+    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, colIdx).End(xlUp).Row
+    If lastRow < startRow Then
+        FindRowByCode = 0
+        Exit Function
+    End If
+    Dim r As Long
+    For r = startRow To lastRow
+        If Trim(CStr(sh.Cells(r, colIdx).Value)) = rmCode Then
+            FindRowByCode = r
+            Exit Function
+        End If
+    Next r
+    FindRowByCode = 0
+End Function
 
 Sub AddMaterial()
     On Error GoTo ErrHandler
@@ -98,8 +162,22 @@ Sub AddMaterial()
     Dim nWeeks As Long
     nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
 
+    ' ---- 挿入位置の決定 ----
+    ' 材料の並び順は「Substrate→その他Chemical→Ester Film/PP Film→TPZ系」に揃えている
+    ' (build_soh.pyのrm_master.sort()と同じ規則)。末尾に追加するのではなく、同じグループの
+    ' 最後の行の直後に挿入することで、この並び順を将来の追加でも維持する。
+    ' anchorRmCodeは「新しい行を挿入する位置に、挿入前は何の材料があったか」を表す
+    ' (空文字なら「グループの末尾=ブック全体の末尾に追加」を意味する)。M_RawMaterialsに
+    ' 実際に行を追加する前に読み取っておく必要がある(追加後だとその位置は新しい行になる)。
+    Dim targetGroup As Long: targetGroup = ClassifyGroup(rmCode, descVal, categoryVal)
+    Dim insertPos As Long: insertPos = FindGroupInsertPosition(rmTbl, targetGroup)
+    Dim anchorRmCode As String: anchorRmCode = ""
+    If insertPos <= rmTbl.ListRows.Count Then
+        anchorRmCode = Trim(CStr(rmTbl.ListRows(insertPos).Range.Cells(1, 1).Value))
+    End If
+
     ' ---- M_RawMaterials ----
-    Dim newRmRow As ListRow: Set newRmRow = rmTbl.ListRows.Add
+    Dim newRmRow As ListRow: Set newRmRow = rmTbl.ListRows.Add(Position:=insertPos)
     newRmRow.Range.Cells(1, 1).Value = rmCode
     newRmRow.Range.Cells(1, 2).Value = descVal
     newRmRow.Range.Cells(1, 3).Value = supplierVal
@@ -118,10 +196,13 @@ Sub AddMaterial()
     Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
     Dim osTbl As ListObject: Set osTbl = thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock")
 
-    Dim reqRow As ListRow: Set reqRow = reqTbl.ListRows.Add
-    Dim inRow As ListRow: Set inRow = inTbl.ListRows.Add
-    Dim stRow As ListRow: Set stRow = stTbl.ListRows.Add
-    Dim theoRow As ListRow: Set theoRow = theoTbl.ListRows.Add
+    ' Grid_Requirement/Incoming/Stock/TheoreticalStockはM_RawMaterialsと1行ずつ完全に対応して
+    ' いる必要がある(grow=行番号を共有して直接参照し合っているため)。同じinsertPosで挿入する。
+    ' T_OpeningStockはMATCH参照(順序に依存しない)なので、常に末尾に追加するままでよい。
+    Dim reqRow As ListRow: Set reqRow = reqTbl.ListRows.Add(Position:=insertPos)
+    Dim inRow As ListRow: Set inRow = inTbl.ListRows.Add(Position:=insertPos)
+    Dim stRow As ListRow: Set stRow = stTbl.ListRows.Add(Position:=insertPos)
+    Dim theoRow As ListRow: Set theoRow = theoTbl.ListRows.Add(Position:=insertPos)
     Dim osRow As ListRow: Set osRow = osTbl.ListRows.Add
 
     Dim grow As Long: grow = reqRow.Range.Row  ' Grid_Requirement/Incoming/Stock/TheoreticalStockの実シート行番号(4表とも同じ)
@@ -148,10 +229,11 @@ Sub AddMaterial()
             ",T_Shipments[Effective_Week]," & w & ")"
     Next w
 
-    ' ---- T_SelfStock / T_TTAFStock (テーブルではない罫線グリッド。一番下に追加) ----
+    ' ---- T_SelfStock / T_TTAFStock (テーブルではない罫線グリッド。anchorRmCodeの行の直前に
+    ' 挿入することでM_RawMaterialsと同じ並び順を保つ。anchorRmCodeが空なら末尾に追加) ----
     Dim ssRowSelf As Long, ssRowTTAF As Long
-    ssRowSelf = AppendStockGridRow(thisWb.Sheets("T_SelfStock"), rmCode, nWeeks, "T_SelfStock_Log", "Self_Qty")
-    ssRowTTAF = AppendStockGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, nWeeks, "T_TTAFStock_Log", "TTAF_Qty")
+    ssRowSelf = InsertOrAppendStockGridRow(thisWb.Sheets("T_SelfStock"), rmCode, nWeeks, "T_SelfStock_Log", "Self_Qty", anchorRmCode)
+    ssRowTTAF = InsertOrAppendStockGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, nWeeks, "T_TTAFStock_Log", "TTAF_Qty", anchorRmCode)
     If ssRowSelf <> ssRowTTAF Then
         MsgBox "警告: T_SelfStockとT_TTAFStockの行番号がずれました(" & ssRowSelf & " / " & ssRowTTAF & ")。" & vbCrLf & _
                "手動で確認してください。処理は続行します。", vbExclamation
@@ -192,11 +274,12 @@ Sub AddMaterial()
             "=" & theoPriorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
     Next w
 
-    ' ---- Dashboard (テーブルではない罫線グリッド。一番下に追加) ----
-    Call AppendDashboardRow(thisWb.Sheets("Dashboard"), rmCode, nWeeks, ssRow, grow)
+    ' ---- Dashboard (テーブルではない罫線グリッド。anchorRmCodeの行の直前に挿入) ----
+    Call AppendDashboardRow(thisWb.Sheets("Dashboard"), rmCode, nWeeks, ssRow, grow, anchorRmCode)
 
-    ' ---- Material_Detail (材料のブロックを一番下に追加。BOM未登録のため中間体行はまだ無い) ----
-    Call AppendMaterialDetailBlock(thisWb.Sheets("Material_Detail"), rmCode, descVal, nWeeks, ssRow, grow)
+    ' ---- Material_Detail (材料のブロックをanchorRmCodeのブロックの直前に挿入。
+    ' BOM未登録のため中間体行はまだ無い) ----
+    Call AppendMaterialDetailBlock(thisWb.Sheets("Material_Detail"), rmCode, descVal, nWeeks, ssRow, grow, anchorRmCode)
 
     ' ---- PO_Draft_{Category} ----
     Dim poSheetName As String: poSheetName = POSheetNameForCategory(categoryVal)
@@ -393,36 +476,73 @@ Private Function POSheetNameForCategory(categoryVal As String) As String
     End Select
 End Function
 
-' T_SelfStock/T_TTAFStockの一番下に新しい材料の行を追加し、実際に追加した行番号を返す。
-' テーブル機能を使わない罫線グリッドのため、直前行の罫線・縞模様をコピーして体裁を揃える。
-Private Function AppendStockGridRow(sh As Worksheet, rmCode As String, nWeeks As Long, logTableName As String, qtyColName As String) As Long
+' T_SelfStock/T_TTAFStockに新しい材料の行を追加する。テーブル機能を使わない罫線グリッドの
+' ため、行の追加は自前で行う。anchorRmCode(M_RawMaterials側で同じ挿入位置にあった材料の
+' コード)が指定されていれば、その材料の行の直前にExcelの行挿入(Rows.Insert)で割り込ませる
+' ことで、M_RawMaterials・Dashboard等と同じ並び順を保つ。Rows.Insertは同一ブック内の
+' 他のすべての数式の行参照を自動的に補正するため、既存行の数式を書き換える必要は無い。
+' anchorRmCodeが空文字(その材料のグループが最後のグループで、後に続く材料が無い)の場合は
+' 従来通り一番下に追加する。実際に追加/挿入した行番号を返す。
+Private Function InsertOrAppendStockGridRow(sh As Worksheet, rmCode As String, nWeeks As Long, logTableName As String, qtyColName As String, anchorRmCode As String) As Long
+    Dim targetRow As Long, formatSrcRow As Long
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
-    Dim newRow As Long: newRow = lastRow + 1
-    sh.Cells(newRow, 1).Value = rmCode
+    Dim anchorRow As Long: anchorRow = 0
+    If Len(anchorRmCode) > 0 Then
+        anchorRow = FindRowByCode(sh, 1, anchorRmCode, SS_TABLE_ROW + 1)
+    End If
+    If anchorRow > 0 Then
+        sh.Rows(anchorRow).Insert Shift:=xlDown
+        targetRow = anchorRow
+        formatSrcRow = anchorRow + 1  ' 挿入で1行下にずれた、元anchor行から書式を複製する
+    Else
+        targetRow = lastRow + 1
+        formatSrcRow = lastRow
+    End If
+
+    sh.Cells(targetRow, 1).Value = rmCode
     Dim w As Long, col As Long
     For w = 1 To nWeeks
         col = 1 + w
-        sh.Cells(newRow, col).Value = _
-            "=IF(COUNTIFS(" & logTableName & "[Part Name],$A" & newRow & "," & logTableName & "[WeekIndex]," & w & ")=0,"""",SUMIFS(" & _
-            logTableName & "[" & qtyColName & "]," & logTableName & "[Part Name],$A" & newRow & "," & logTableName & "[WeekIndex]," & w & "))"
+        sh.Cells(targetRow, col).Value = _
+            "=IF(COUNTIFS(" & logTableName & "[Part Name],$A" & targetRow & "," & logTableName & "[WeekIndex]," & w & ")=0,"""",SUMIFS(" & _
+            logTableName & "[" & qtyColName & "]," & logTableName & "[Part Name],$A" & targetRow & "," & logTableName & "[WeekIndex]," & w & "))"
     Next w
-    sh.Rows(lastRow).Copy
-    sh.Rows(newRow).PasteSpecial xlPasteFormats
+    On Error Resume Next
+    sh.Rows(formatSrcRow).Copy
+    sh.Rows(targetRow).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
-    AppendStockGridRow = newRow
+    On Error GoTo 0
+    InsertOrAppendStockGridRow = targetRow
 End Function
 
-' Dashboardの一番下に新しい材料の行を追加する(ssRow=T_SelfStock/T_TTAFStock側の行番号、
-' grow=Grid_Requirement/Incoming/Stock側の行番号)。
-' Dashboardは材料ごとに2行(理論在庫→実在庫の順)。Part Name(A列)は両方の行に同じ値を書くため、
-' RemoveMaterialのDeleteMatchingGridRow(A列一致で削除)が2行ともまとめて削除してくれる
-' (削除側の特別対応は不要)。列位置はbuild_soh.pyのLEFT_COLS/DASH_ROW_LABEL_COL/DASH_DIFF_COLと
-' 対応: 1=Part Name,2=Description,3=Category,4=基準在庫下限,5=基準在庫上限,6=自社在庫(実績),
-' 7=TTAF在庫(実績),8=実績週,9=行種別,10=乖離(kg)、週データは11列目(K列)から。
-Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long, ssRow As Long, grow As Long)
+' Dashboardに新しい材料の2行(理論在庫→実在庫の順)を追加する(ssRow=T_SelfStock/T_TTAFStock
+' 側の行番号、grow=Grid_Requirement/Incoming/Stock側の行番号)。anchorRmCodeが指定されていれば
+' その材料の行の直前にExcelの行挿入で割り込ませ、M_RawMaterialsと同じ並び順を保つ
+' (空文字なら従来通り末尾に追加)。
+' Part Name(A列)は両方の行に同じ値を書くため、RemoveMaterialのDeleteMatchingGridRow
+' (A列一致で削除)が2行ともまとめて削除してくれる(削除側の特別対応は不要)。列位置は
+' build_soh.pyのLEFT_COLS/DASH_ROW_LABEL_COL/DASH_DIFF_COLと対応: 1=Part Name,2=Description,
+' 3=Category,4=基準在庫下限,5=基準在庫上限,6=自社在庫(実績),7=TTAF在庫(実績),8=実績週,
+' 9=行種別,10=乖離(kg)、週データは11列目(K列)から。
+Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long, ssRow As Long, grow As Long, anchorRmCode As String)
+    Dim theoRow As Long, actualRow As Long, formatSrcTheo As Long, formatSrcActual As Long
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
-    Dim theoRow As Long: theoRow = lastRow + 1
-    Dim actualRow As Long: actualRow = lastRow + 2
+    Dim anchorRow As Long: anchorRow = 0
+    If Len(anchorRmCode) > 0 Then
+        anchorRow = FindRowByCode(sh, 1, anchorRmCode, DASH_DATA_START_ROW)
+    End If
+    If anchorRow > 0 Then
+        sh.Rows(anchorRow & ":" & (anchorRow + 1)).Insert Shift:=xlDown
+        theoRow = anchorRow
+        actualRow = anchorRow + 1
+        formatSrcTheo = anchorRow + 2   ' 挿入で2行下にずれた、元anchorペアの理論在庫行
+        formatSrcActual = anchorRow + 3 ' 同、実在庫行
+    Else
+        theoRow = lastRow + 1
+        actualRow = lastRow + 2
+        formatSrcTheo = lastRow - 1
+        formatSrcActual = lastRow
+    End If
     Dim lastWeekCol As String: lastWeekCol = ColLetter(1 + nWeeks)
 
     Dim ssSelfRng As String: ssSelfRng = "'T_SelfStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
@@ -466,25 +586,60 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
         sh.Cells(actualRow, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
     Next w
 
-    ' 書式コピー: 既存の最後の材料ペア(直前の理論在庫行・実在庫行)からそれぞれ複製する
+    ' 書式コピー: 末尾に追加する場合は直前の材料ペア、途中に挿入する場合は挿入により
+    ' 押し出されたanchor材料のペアから、それぞれ複製する
     On Error Resume Next
-    sh.Rows(lastRow - 1).Copy   ' 直前ペアの理論在庫行
+    sh.Rows(formatSrcTheo).Copy
     sh.Rows(theoRow).PasteSpecial xlPasteFormats
-    sh.Rows(lastRow).Copy       ' 直前ペアの実在庫行
+    sh.Rows(formatSrcActual).Copy
     sh.Rows(actualRow).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
     On Error GoTo 0
 End Sub
 
-' Material_Detailの一番下に新しい材料のブロックを追加する。追加直後はM_BOMに未登録のため、
+' Material_Detailに新しい材料のブロックを追加する。追加直後はM_BOMに未登録のため、
 ' 中間体の行(No. of batches/使用量)は無く、「合計使用量(0のはず)・TTAF在庫・自社在庫・
 ' Order・合計在庫・注記」の6行だけのミニブロックになる。RefreshBOM実行後、この材料が
 ' 実際に使われている中間体が見つかれば、SyncMaterialDetailIntermediates(RefreshData_BOM
 ' モジュール、RefreshBOMの末尾で自動的に呼ばれる)がこのブロックに中間体の内訳行を
 ' 自動的に追加する（AddMaterialを再度実行する必要はない）。
-Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal As String, nWeeks As Long, ssRow As Long, grow As Long)
+' anchorRmCodeが指定されていれば、そのブロックの直前に割り込ませる(M_RawMaterialsと同じ
+' 並び順を保つ)。空文字、または該当ブロックが見つからない場合は従来通り末尾に追加する。
+Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal As String, nWeeks As Long, ssRow As Long, grow As Long, anchorRmCode As String)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row  ' B列(項目)基準
-    Dim headerRow As Long: headerRow = lastRow + 2  ' 直前ブロックとの間に空白行を1行はさむ
+    Dim headerRow As Long
+    Dim formatSrcHeader As Long, formatSrcContentFirst As Long
+
+    Dim anchorHeaderRow As Long: anchorHeaderRow = 0
+    If Len(anchorRmCode) > 0 Then
+        anchorHeaderRow = FindRowByCode(sh, 1, anchorRmCode, MD_HEADER_ROW + 1)
+    End If
+
+    If anchorHeaderRow > 0 Then
+        ' 8行(空白1+ヘッダー1+内訳6)分のスペースを、anchorブロックの直前に挿入する。
+        ' anchorが一番最初のブロック(直前に空白行が無い)かどうかで挿入位置が変わるが、
+        ' どちらの場合も「挿入後、元anchorヘッダーは8行下にずれる」点は共通のため、
+        ' 書式コピー元の行番号(formatSrcHeader等)は同じ式で求められる。
+        Dim spacerExists As Boolean: spacerExists = (anchorHeaderRow > MD_HEADER_ROW + 1)
+        Dim insertAt As Long
+        If spacerExists Then
+            insertAt = anchorHeaderRow - 1
+        Else
+            insertAt = anchorHeaderRow
+        End If
+        sh.Rows(insertAt & ":" & (insertAt + 7)).Insert Shift:=xlDown
+        If spacerExists Then
+            headerRow = insertAt + 1
+        Else
+            headerRow = insertAt
+        End If
+        formatSrcHeader = anchorHeaderRow + 8
+        formatSrcContentFirst = anchorHeaderRow + 9
+    Else
+        headerRow = lastRow + 2  ' 直前ブロックとの間に空白行を1行はさむ
+        formatSrcHeader = MD_HEADER_ROW + 1
+        formatSrcContentFirst = lastRow - 5
+    End If
 
     sh.Cells(headerRow, 1).Value = rmCode
     sh.Cells(headerRow, 2).Value = descVal
@@ -538,14 +693,13 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Font.Italic = True
     sh.Cells(r, 2).Font.Color = RGB(128, 128, 128)
 
-    ' 罫線・書式のコピー: ヘッダー行は既存の任意のヘッダー行(最初の材料の行)から、
-    ' 残り6行(合計使用量〜注記)は直前ブロックの末尾6行から複製する
-    ' (ブロックの長さは材料によって違うが、末尾6行の並びは常に同じ順序のため)。
+    ' 罫線・書式のコピー: 末尾に追加する場合は既存の最初のヘッダー行・直前ブロックの末尾6行から、
+    ' 途中に挿入する場合は挿入で押し出されたanchorブロック自身のヘッダー行・先頭6行から複製する
+    ' (ブロックの長さは材料によって違うが、先頭のヘッダー行・その後6行の並びは常に同じ順序のため)。
     On Error Resume Next
-    Dim firstHeaderRow As Long: firstHeaderRow = MD_HEADER_ROW + 1
-    sh.Rows(firstHeaderRow).Copy
+    sh.Rows(formatSrcHeader).Copy
     sh.Rows(headerRow).PasteSpecial xlPasteFormats
-    sh.Rows((lastRow - 5) & ":" & lastRow).Copy
+    sh.Rows(formatSrcContentFirst & ":" & (formatSrcContentFirst + 5)).Copy
     sh.Rows((headerRow + 1) & ":" & r).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
     On Error GoTo 0
