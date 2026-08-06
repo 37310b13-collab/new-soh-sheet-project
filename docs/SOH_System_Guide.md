@@ -170,7 +170,6 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | Material_Detail | 出力（トレーサビリティ）＋発注数量の入力欄 | 材料ごとに「使用中間体・バッチ数・使用量・週次合計・TTAF/自社在庫実績・週末時点の合計在庫」をブロック表示。材料名の右にMOQ手入力欄あり。「Order(発注予定,kg)」行は週ごとの発注数量を直接手入力する欄（5.9章参照） |
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | Material_Detailで手入力したOrderの値を、材料コード・週で突き合わせてそのまま転記（自動計算はしない） |
 | T_Shipments | 入力（RefreshShipmentsでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
-| T_PlannedOrders | （未使用・レガシー） | 以前はここに手入力した計画中の発注をMaterial_Detailの「Order」行に反映していたが、現在はOrder行に直接手入力する方式に変更したため参照されていない |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
 | T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
 | T_SelfStock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_SelfStock_Log`が更新されると自動反映。手入力不可 |
@@ -391,7 +390,7 @@ Order・合計在庫・注記の6行のみ）になります。その後**通常
 同様に、`RefreshBOM`を実行するだけで内訳行が自動的に追加されます。
 
 **`RemoveMaterial`マクロ**: Part Name（RM_Code）を入力すると、`AddMaterial`が追加する全シートから
-該当行を削除します。**`T_Shipments`・`T_PlannedOrders`・`T_StockCount`・`T_SelfStock_Log`/
+該当行を削除します。**`T_Shipments`・`T_StockCount`・`T_SelfStock_Log`/
 `T_TTAFStock_Log`・`M_BOM`のデータは削除しません**（履歴として残しておき、万一同じPart Nameを
 `AddMaterial`で再登録した場合は自動的に再びつながる設計です）。
 
@@ -406,7 +405,7 @@ Order・合計在庫・注記の6行のみ）になります。その後**通常
 - **削除（`RemoveIntermediate`マクロ）**: 生産中止になった中間体名を入力すると、`PP_Grid`の
   該当行、`M_BOM`のその中間体を使う原単位の行（複数の材料で使われていれば全件）、
   `Material_Detail`側のその中間体の内訳行（この中間体を使っているすべての材料ブロックから）
-  を削除します。原材料側のデータ（`T_Shipments`・`T_PlannedOrders`・`T_OpeningStock`・
+  を削除します。原材料側のデータ（`T_Shipments`・`T_OpeningStock`・
   `T_StockCount`・実績ログ・`M_RawMaterials`）は削除しません。
   - 中間体の行を明示的に削除しなくても、生産計画から単に消えれば以降の週の「No. of
     batches」は0のまま更新されなくなり、使用量計算（原単位×バッチ数）も自動的に0になるため
@@ -513,8 +512,8 @@ Solutionが増えた場合だけ、`操作パネル`シートの`T_SolutionNames
   2つ右）を使い、`PO_Draft_*`側がその列を`MATCH`で特定して`INDEX`で値を拾っています。ブロックの
   長さ（使用中間体の数）は材料ごとに違いますが、この仕組みにより行番号のズレを気にせず正しく
   対応づけられます。
-- `T_PlannedOrders`シートは現在使われていません（過去の設計の名残です。削除はしていませんが、
-  入力しても`Material_Detail`・`PO_Draft_*`のどちらにも反映されません）。
+- 過去に存在した`T_PlannedOrders`シート（発注予定の完全手入力シート）は、この方式に置き換えた
+  ことで役割が完全になくなったため、現在はワークブックから削除されています。
 
 ## 6. 自動反映の仕組み
 
@@ -672,8 +671,8 @@ TTAF倉庫に到着する」実績・予定であり、TTAF倉庫内で場所を
 揃えるため7日引いています）。
 
 **計画中の発注（T_PlannedOrders）とMaterial_Detailの「Order」行について（※この節は過去の設計の
-記録です。現在は5.10章の通り、Orderの値はT_PlannedOrders経由ではなくMaterial_Detailに直接
-手入力する方式に変更されています）**: TTAF供給材料は
+記録です。`T_PlannedOrders`シートは現在ワークブックから削除されており存在しません。5.10章の
+通り、Orderの値はMaterial_Detailに直接手入力する方式に変更されています）**: TTAF供給材料は
 発注から着荷まで4〜6ヶ月かかり、常に複数件の発注が並行して進みます。当初PO_Draftにボタンを
 設けて発注を確定する案も検討しましたが、TTAFが希望通りの数量を用意できるとは限らず後から
 数量を手直しする必要があること、また注文書のドラフト自体は編集したくないという要望から、

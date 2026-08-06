@@ -22,7 +22,7 @@ Option Explicit
 '                 （5.6章参照）。
 '   RemoveMaterial : 使わなくなった材料をシステムから削除する。InputBoxでPart Name
 '                 (RM_Code)を入力すると、AddMaterialが追加する全シートから該当行を
-'                 削除する。T_Shipments・T_PlannedOrders・T_StockCount・
+'                 削除する。T_Shipments・T_StockCount・
 '                 T_SelfStock_Log/T_TTAFStock_Log・M_BOMのデータは削除しない
 '                 (履歴として残すため。再度AddMaterialで同じPart Nameを追加すれば
 '                 自動的に再びつながる)。
@@ -30,7 +30,7 @@ Option Explicit
 '                 InputBoxで中間体名を入力すると、PP_Grid・M_BOMの該当行と、
 '                 Material_Detailの該当内訳行(No. of batches／使用量(kg)。この中間体を
 '                 使っているすべての材料ブロックから)を削除する。原材料側のデータ
-'                 (T_Shipments・T_PlannedOrders・T_OpeningStock・T_StockCount・
+'                 (T_Shipments・T_OpeningStock・T_StockCount・
 '                 実績ログ・M_RawMaterials)は削除しない。
 '                 (参考) 中間体の"追加"側は既に自動化済みです。RefreshWeeklyBatches/
 '                 RefreshBOMが、生産計画・原単位表に新しい中間体を見つけるたびに
@@ -333,7 +333,7 @@ Sub RemoveMaterial()
               "Grid_TheoreticalStock・" & vbCrLf & _
               "T_OpeningStock・T_SelfStock・T_TTAFStock・Dashboard・Material_Detail・" & vbCrLf & _
               "該当するPO_Draft)から該当行を削除します。この操作は元に戻せません。" & vbCrLf & vbCrLf & _
-              "（T_Shipments・T_PlannedOrders・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
+              "（T_Shipments・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
               "この材料の過去データは削除されません）" & vbCrLf & vbCrLf & "よろしいですか？", _
               vbYesNo + vbExclamation, "材料の削除の確認") <> vbYes Then Exit Sub
 
@@ -364,7 +364,7 @@ Sub RemoveMaterial()
     Application.ScreenUpdating = True
 
     MsgBox "材料「" & rmCode & "」を削除しました。" & vbCrLf & vbCrLf & _
-           "（T_Shipments・T_PlannedOrders・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
+           "（T_Shipments・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
            "この材料の過去データは削除されていません。必要であれば手動で削除してください）", vbInformation
     Exit Sub
 
@@ -410,7 +410,7 @@ Sub RemoveIntermediate()
               "・M_BOM: この中間体を使う原単位の行を " & bomCount & " 件削除" & vbCrLf & _
               "・Material_Detail: この中間体の内訳行(No. of batches／使用量(kg))を、" & vbCrLf & _
               "  この中間体を使っているすべての材料ブロックから削除" & vbCrLf & vbCrLf & _
-              "T_Shipments・T_PlannedOrders・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
+              "T_Shipments・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
               "M_RawMaterialsなど、原材料側のデータは一切削除されません。" & vbCrLf & vbCrLf & _
               "この操作は元に戻せません。よろしいですか？", _
               vbYesNo + vbExclamation, "中間体の削除の確認") <> vbYes Then Exit Sub
@@ -429,7 +429,7 @@ Sub RemoveIntermediate()
 
     MsgBox "中間体「" & canonicalName & "」を削除しました。" & vbCrLf & _
            "Material_Detailから削除した内訳行: " & removedDetailPairs & " 組（材料ブロック数）" & vbCrLf & vbCrLf & _
-           "（T_Shipments・T_PlannedOrders・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
+           "（T_Shipments・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
            "M_RawMaterialsは削除されていません）", vbInformation
     Exit Sub
 

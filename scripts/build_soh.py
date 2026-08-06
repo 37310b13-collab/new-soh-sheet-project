@@ -3,9 +3,8 @@ import openpyxl
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.comments import Comment
-from openpyxl.formatting.rule import CellIsRule, FormulaRule
+from openpyxl.formatting.rule import FormulaRule
 
 import os
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -435,53 +434,9 @@ for col, w in zip("ABCDEFGHI", [12, 14, 16, 14, 14, 14, 14, 14, 12]):
 ws.freeze_panes = "A2"
 print("Shipment rows seeded:", len(ship_rows))
 
-# ============================================================ T_PlannedOrders (INPUT, 手入力)
-# 発注してから実際にCSA Reportで確認できるようになるまで(TTAF供給材料は4〜6ヶ月かかる)の
-# 「計画中の発注」を記録する。T_Shipmentsとは別管理: 発注時点ではPO Noがまだ無く、また
-# TTAFが希望通りの数量を用意できるとは限らない(後から数量を手直しする前提)ため。
-# Material_Detailの「Order」行から参照される。
-# 同じ材料・同じ発注月(Order_Month)の実データがT_Shipments(RefreshShipmentsで毎週
-# 更新)に現れたら、二重計上を避けるため自動的に非表示(EffectiveQty=0)になる
-# (IsReconciled/EffectiveQty列。手動での削除は不要)。
-# 【重要】以前はTTAFの実在庫(T_TTAFStock)が納品予定週に追いついたことも消込みの条件に
-# 含めていたが、これは誤りだった。CSA Reportは毎週「その材料の在庫」を(この注文と無関係に)
-# 更新し続けるため、「納品予定週以降に実績がある」は実質「予定週を過ぎて次のCSA Reportが
-# 来たかどうか」という時間経過の判定にしかならず、実際にこの注文が届いたかどうかとは無関係
-# だった。早着の場合は届いているのに予定週まで表示が残るだけで実害は小さいが、延着の場合は
-# まだ届いていないのに予定週超過だけでOrder欄から消えてしまい、見落としにつながる危険が
-# あったため、T_Shipmentsとの一致(=この注文の実データそのものが確認できた場合)のみを
-# 消込み条件とする。
-# 【重要】1つの発注が複数回に分けて納品される場合(例: 500kg注文がweek1に200kg、week3に
-# 200kg、week10に100kg、と3回に分かれて届く)、単純に「同じ材料・発注月の実データが1件でも
-# あれば全部消す」だと、week1分の実データが1件届いただけでweek3・week10分もまとめて消えて
-# しまう。これを避けるため、納品予定日が早い順の「累積計画数量」と、T_Shipments側の
-# 「累積確定数量」を比較し、確定数量でカバーされている行から順に(先入れ先出しで)消込む方式
-# にしている。
-ws = wb.create_sheet("T_PlannedOrders")
-ws.append(["Part Name", "Qty", "Target_Delivery_Date", "WeekIndex", "Order_Month", "IsReconciled", "EffectiveQty"])
-ws.append(["(例) CHEM-1010", 0, START_MONDAY, None, START_MONDAY.replace(day=1), None, None])
-po_row = 2
-ws.cell(row=po_row, column=4).value = week_index_formula_clamped(f"$C{po_row}")
-cumulative_planned = (
-    f'SUMPRODUCT((T_PlannedOrders[Part Name]=$A{po_row})*(T_PlannedOrders[Order_Month]<>"")*'
-    f'(TEXT(T_PlannedOrders[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm"))*'
-    f'(T_PlannedOrders[Target_Delivery_Date]<=$C{po_row})*T_PlannedOrders[Qty])'
-)
-confirmed_total = (
-    f'SUMPRODUCT((T_Shipments[Part Name]=$A{po_row})*(T_Shipments[Order_Month]<>"")*'
-    f'(TEXT(T_Shipments[Order_Month],"yyyy-mm")=TEXT($E{po_row},"yyyy-mm"))*T_Shipments[Confirmed_Qty])'
-)
-ws.cell(row=po_row, column=6).value = f'={cumulative_planned}<={confirmed_total}'
-ws.cell(row=po_row, column=7).value = f'=IF($F{po_row},0,$B{po_row})'
-ws.cell(row=po_row, column=3).number_format = "yyyy-mm-dd"
-ws.cell(row=po_row, column=5).number_format = "yyyy-mm"
-for c in (1, 2, 3, 5):
-    ws.cell(row=po_row, column=c).fill = INPUT_FILL
-n = 2
-style_header(ws, 7)
-add_table(ws, "T_PlannedOrders", f"A1:G{n}")
-for col, w in zip("ABCDEFG", [14, 10, 16, 10, 12, 12, 12]):
-    ws.column_dimensions[col].width = w
+# T_PlannedOrders(計画中の発注の入力シート)は廃止しました。発注数量はMaterial_Detailの
+# 「Order(発注予定,kg)」行に直接手入力する方式に変更したため、このシートの役割は不要に
+# なりました(5.10章参照)。
 ws.freeze_panes = "A2"
 
 # ============================================================ T_StockCount (INPUT, physical count overrides)
@@ -627,7 +582,7 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     ws_grid.conditional_formatting.add(
         f"B{SS_TABLE_ROW}:{week_col(N_WEEKS)}{n_last_row}",
         FormulaRule(
-            formula=[f'(COLUMN()-COLUMN($B$1)+1)=$F$1'],
+            formula=['(COLUMN()-COLUMN($B$1)+1)=$F$1'],
             border=ss_week_select_border,
         )
     )
@@ -1285,15 +1240,12 @@ readme_lines = [
     "                        合計在庫(週末時点)の週次推移も表示されます。",
     "                        HideInactiveIntermediatesマクロ(要ボタン設定)で、指定期間ずっと生産予定の無い",
     "                        中間体の行を折りたためます（在庫関連の行は常に表示されたままです）。",
-    "  PO_Draft_*          : 要発注分を注文書ひな形に自動転記",
+    "  PO_Draft_*          : Material_Detailの「Order」行に手入力した発注数量を注文書ひな形に転記",
+    "                        （自動計算はしません。発注数量はMaterial_Detail側で入力してください）。",
     "  T_Shipments         : 発注・着荷の入力。TTAF供給材料については「TTAF倉庫への到着実績」を",
     "                        表します(TTAFは仕入先であり倉庫でもあるため)。TTAF以外の材料は",
     "                        従来通り弊社への入庫実績です。RefreshShipmentsでCSA Reportの",
     "                        Shipping Scheduleから一括更新できます（手入力も可）。",
-    "  T_PlannedOrders     : PO Noがまだ出ていない「計画中の発注」の入力（材料名・数量・納品予定日・",
-    "                        発注月）。Material_Detailの「Order」行に反映されます。同じ材料・発注月の",
-    "                        実データがT_Shipments(RefreshShipmentsで毎週更新)に現れたら",
-    "                        自動的に消え（二重計上防止）、手動削除は不要です。",
     "  T_OpeningStock/T_StockCount : 入力用",
     "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
     "                        RefreshSelfStock/RefreshTTAFStockで更新されます。手入力はしないでください",
@@ -1305,7 +1257,7 @@ readme_lines = [
     "  macros/フォルダのRefreshData_*.bas(7ファイル)を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
     "  RefreshTTAFStock / RefreshShipments を実行してください（対象ファイルを選ぶだけです。",
     "  詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
-    "  T_Shipments・T_OpeningStock・T_StockCount・T_PlannedOrders等の入力内容は上書きされません",
+    "  T_Shipments・T_OpeningStock・T_StockCount等の入力内容は上書きされません",
     "  （T_ShipmentsはRefreshShipmentsを実行した場合のみ更新されます）。",
     "  Material_Detailの中間体の行を隠す/戻すHideInactiveIntermediates / ShowAllIntermediatesは、",
     "  ボタンへの割り当てが必要な一度だけの手動設定です（詳細はdocs/SOH_System_Guide.md）。",
@@ -1315,7 +1267,7 @@ readme_lines = [
     "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
     "  3. 自社倉庫の現物確認を毎週月曜の朝に実施したらRefreshSelfStockを実行",
     "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsを実行",
-    "  5. 新しく発注したらT_PlannedOrdersに追記（材料名・数量・納品予定日・発注月）",
+    "  5. 発注する数量はMaterial_Detailの「Order(発注予定,kg)」行に直接入力",
     "  6. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
     "  7. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
     "  8. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
@@ -1446,7 +1398,6 @@ nav_targets = [
     ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
     ("PO_Draft_Substrate", "発注書ドラフト（Substrate）"),
     ("T_Shipments", "発注・着荷の入力（TTAF供給材料はTTAF倉庫への到着実績を表す）"),
-    ("T_PlannedOrders", "計画中の発注の入力（PO Noが出る前の予定分。Material_DetailのOrder行に反映）"),
     ("T_OpeningStock", "期首在庫の入力"),
     ("T_StockCount", "棚卸実績の入力"),
     ("T_SelfStock", "自社倉庫の在庫実績（材料×週。RefreshSelfStockで自動更新）"),
@@ -1470,7 +1421,7 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "操作パネル", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
-         "PO_Draft_Substrate", "T_Shipments", "T_PlannedOrders", "T_OpeningStock", "T_StockCount",
+         "PO_Draft_Substrate", "T_Shipments", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
