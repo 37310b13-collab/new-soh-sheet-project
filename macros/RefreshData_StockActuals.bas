@@ -136,7 +136,7 @@ Sub RefreshTTAFStock()
     ' 営業終了後の在庫を表す。そのため7日引いてから週Noを判定する(月曜も金曜もExcel上は
     ' 同じ月〜日の週に属するため、-7でも-3でも週Noの判定結果は変わらない。日付自体は
     ' 週の起点であるMondayに揃えておいた方が他の実績(T_SelfStock等)と一貫するため-7を使う)。
-    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(CStr(sh.Cells(4, 6).Value)) - 7
+    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(sh.Cells(4, 6).Value) - 7
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
@@ -243,14 +243,26 @@ Private Function ResolveTTAFPart(ttafCodeIdx As Object, descIdx As Object, ttafC
     ResolveTTAFPart = ""
 End Function
 
-Private Function ExtractDDMMYYYYFromText(text As String) As Date
+' F4セルは「TTAF count(dd.mm.yyyy)」という見出し文字列だが、これがセルの表示形式
+' (カスタム書式)による見た目だけの場合、実際の.Valueは本物の日付シリアル値になっている
+' ことがある。その場合CStr()で文字列化すると地域設定依存の別形式(例: 6/29/2026)に
+' なってしまい、DD.MM.YYYYの正規表現に一致しない。そのため、まずIsDate()で本物の日付値
+' かどうかを確認し、日付値ならそのまま使う(文字列化を経由しない)。
+' 文字列として読む場合も、全角数字(２９.０６.２０２６)で入力されているケースに備えて
+' StrConv(..., vbNarrow)で半角に正規化してからマッチさせる。
+Private Function ExtractDDMMYYYYFromText(cellValue As Variant) As Date
+    If IsDate(cellValue) Then
+        ExtractDDMMYYYYFromText = CDate(cellValue)
+        Exit Function
+    End If
+    Dim text As String: text = StrConv(CStr(cellValue), vbNarrow)
     Dim re As Object
     Set re = CreateObject("VBScript.RegExp")
-    re.Pattern = "(\d{2})\.(\d{2})\.(\d{4})"
+    re.Pattern = "(\d{1,2})\.(\d{1,2})\.(\d{4})"
     Dim m As Object
     Set m = re.Execute(text)
     If m.Count = 0 Then
-        Err.Raise vbObjectError + 1, , "お届け予定日(DD.MM.YYYY)を読み取れませんでした: " & text
+        Err.Raise vbObjectError + 1, , "TTAF countの日付(DD.MM.YYYY)を読み取れませんでした: " & CStr(cellValue)
     End If
     ExtractDDMMYYYYFromText = DateSerial(CInt(m(0).SubMatches(2)), CInt(m(0).SubMatches(1)), CInt(m(0).SubMatches(0)))
 End Function
