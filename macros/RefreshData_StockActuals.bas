@@ -136,7 +136,10 @@ Sub RefreshTTAFStock()
     ' 営業終了後の在庫を表す。そのため7日引いてから週Noを判定する(月曜も金曜もExcel上は
     ' 同じ月〜日の週に属するため、-7でも-3でも週Noの判定結果は変わらない。日付自体は
     ' 週の起点であるMondayに揃えておいた方が他の実績(T_SelfStock等)と一貫するため-7を使う)。
-    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(sh.Cells(4, 6).Value) - 7
+    ' 「TTAF count(dd.mm.yyyy)」の見出しはF3:F4等で結合されていることがあり、結合セルは
+    ' 左上(アンカー)のセルにしか値を持たない。.Cells(4,6)がアンカーでない場合に空を
+    ' 読んでしまわないよう、.MergeArea.Cells(1,1)で必ずアンカー側の値を取得する。
+    Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(sh.Cells(4, 6).MergeArea.Cells(1, 1).Value) - 7
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
 
