@@ -9,7 +9,7 @@ Option Explicit
 '                          B列=中間体/完成品(Catalyst)/Solutionの名前、週初日ヘッダー行(C列
 '                          以降に日付が並ぶ行)を自動検出し、それ以降の行が名前+週次数量。
 '                          1バッチあたりの原単位(M_BOM)はこのファイルには含まれておらず、
-'                          RefreshBOM（Raw Material - Look Up）側の担当。
+'                          RefreshBOM（Usage from Production Engineering）側の担当。
 '
 '   【行の種類の自動判定について】中間体(Slurry/Powder)なのか完成品(Catalyst)なのか
 '   Solutionなのかは、名前の接頭辞と「Solution名リスト」(操作パネルシートのT_SolutionNames
