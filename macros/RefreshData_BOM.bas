@@ -28,6 +28,18 @@ Option Explicit
 '                (AddMaterialを2回実行する必要はない)。既存材料が新しい中間体で
 '                使われ始めた場合も同様に自動反映される。
 '
+'   FixPassthroughCircularRefs : PP_Gridのパススルー数式(独自の生産計画を持たず、他の
+'                中間体の原料としてのみ使われる中間体の行に入っている、SUMPRODUCT+
+'                M_BOM[PPGridRow]による逆算数式)には、その中間体自身のレシピ行についても
+'                INDEX(PP_Grid[#Data],M_BOM[PPGridRow],...)が評価されてしまい、最終的に
+'                0倍されて計算結果には影響しなくても「そのセル自身を参照する経路」が
+'                実際に発生してしまうという構造的な欠陥があった(LibreOfficeでの検証では
+'                黙って0扱いされるため気づけなかったが、本物のExcelでは循環参照として
+'                検出される)。このマクロは、PP_Grid内の既存のパススルー数式を1件ずつ
+'                走査し、この欠陥のある数式(IF(...,NA(),...)によるガードがまだ無いもの)
+'                だけを安全な形に書き換える。どの中間体をパススルーにするか自体は変更しない
+'                (既に数式が入っているセルの中身だけを直す)。
+'
 ' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
 ' モジュール冒頭のコメントを参照してください。
 ' ============================================================================
@@ -133,6 +145,59 @@ ErrHandler:
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+End Sub
+
+' PP_Gridの既存のパススルー数式(SUMPRODUCT+M_BOM[PPGridRow])を、そのパススルー中間体
+' 自身のレシピ行を誤って参照してしまう欠陥から守る形に書き換える(モジュール冒頭のコメント
+' 参照)。まだこの対策が入っていない数式(文字列に"NA()"を含まないもの)だけを対象にするため、
+' 複数回実行しても安全(2回目以降は対象0件になるだけ)。
+Sub FixPassthroughCircularRefs()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
+    Dim dataRange As Range: Set dataRange = ppGrid.DataBodyRange
+    If dataRange Is Nothing Then
+        MsgBox "PP_Gridにデータ行がありません。", vbExclamation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim fixedCells As Long: fixedCells = 0
+    Dim firstDataRow As Long: firstDataRow = dataRange.Row
+    Dim nRows As Long: nRows = dataRange.Rows.Count
+    Dim nCols As Long: nCols = dataRange.Columns.Count
+
+    Dim r As Long, c As Long
+    For r = 1 To nRows
+        Dim actualRow As Long: actualRow = firstDataRow + r - 1
+        For c = 2 To nCols  ' 1列目はIntermediate名(数式ではない)なのでスキップ
+            Dim cel As Range: Set cel = dataRange.Cells(r, c)
+            If cel.HasFormula Then
+                Dim f As String: f = cel.Formula
+                If InStr(f, "PPGridRow") > 0 And InStr(f, "NA()") = 0 Then
+                    cel.Formula = Replace(f, "M_BOM[PPGridRow]", _
+                        "IF(M_BOM[PPGridRow]=" & actualRow & ",NA(),M_BOM[PPGridRow])")
+                    fixedCells = fixedCells + 1
+                End If
+            End If
+        Next c
+    Next r
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "パススルー数式の循環参照リスクを修正しました。" & vbCrLf & _
+           "修正したセル数: " & fixedCells, vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "修正処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
 ' Slurry Data Base/Powder Data Base/Solutionシート共通の処理。行そのままA列=Intermediate、

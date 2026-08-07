@@ -341,9 +341,17 @@ for name in passthrough_intermediates:
     trow = inter_row[name]
     batch_size = inter_batch_size.get(name, 1.0) or 1.0
     for w in range(1, N_WEEKS + 1):
+        # M_BOM[PPGridRow]は「その行のIntermediateがPP_Gridの何行目か」を表す列なので、
+        # このtrow自身のレシピ行(Intermediate=$A{trow}自身の原料行)についてもPPGridRow=trowに
+        # なる。SUMPRODUCTは配列全体を評価してから($A{trow}に一致する行だけを残すために)
+        # 0倍するため、最終結果には影響しなくても「このセル自身を参照するINDEX」が実際に
+        # 発生してしまい、Excel上は正真正銘の循環参照として検出される(LibreOfficeは黙って
+        # 0扱いするため気づきにくい)。IF(...,NA(),...)でPPGridRow=trowの場合だけ意図的に
+        # エラー値に置き換え、INDEXがこのセル自身に到達しないようにする(IFERRORで0扱いになる
+        # ため計算結果は変わらない)。
         ws.cell(row=trow, column=1 + w).value = (
             f"=SUMPRODUCT((M_BOM[Part Name]=$A{trow})*M_BOM[RM_Qty_Per_Batch]*"
-            f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))/{batch_size}"
+            f"IFERROR(INDEX(PP_Grid[#Data],IF(M_BOM[PPGridRow]={trow},NA(),M_BOM[PPGridRow]),{w + 1}),0))/{batch_size}"
         )
         ws.cell(row=trow, column=1 + w).fill = PatternFill(fill_type=None)  # INPUT_FILLを解除(数式セルのため)
 
