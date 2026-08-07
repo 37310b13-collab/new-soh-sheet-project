@@ -64,6 +64,11 @@ Sub RefreshSelfStock()
     Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock_Log").ListObjects("T_SelfStock_Log")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim selfIdx As Object: Set selfIdx = BuildStockRowIndex(selfTbl)
+    ' C列(CSA code)がM_RawMaterialsに実在するPart Nameかどうかで対象行を判定する
+    ' (以前はLeft(code,4)="CHEM"で化学品のみに限定していたため、Substrate行
+    ' 〈OJN・7EP等の短いコード〉が一件も反映されない不具合があった)。
+    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+    Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
 
     Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock")
     ' シートを1セルずつ読むと遅くなるため、対象範囲(9〜200行, A〜J列)を1回だけ配列で読み込む
@@ -74,7 +79,7 @@ Sub RefreshSelfStock()
     For r = 1 To (200 - 9 + 1)
         Dim code As String
         code = Trim(CStr(data(r, 3)))
-        If Left(code, 4) = "CHEM" Then
+        If Len(code) > 0 And rmCodeSet.Exists(code) Then
             Dim v As Variant: v = data(r, 10)
             If IsNumeric(v) Then
                 Call UpsertStockRowIndexed(selfTbl, selfIdx, code, reportDate, CDbl(v), added, updated)
