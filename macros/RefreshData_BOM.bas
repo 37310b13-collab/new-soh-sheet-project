@@ -4,14 +4,29 @@ Option Explicit
 ' ============================================================================
 ' RefreshData_BOM モジュール
 '
-'   RefreshBOM : 「Usage from Production Engineering」を選択すると、
-'                M_BOM（化学原料の原単位）を更新する。新しい材料×中間体の組み合わせが
-'                見つかった場合、Material_Detailの該当材料ブロックにも中間体の内訳行
-'                （No. of batches／使用量(kg)）を自動的に追加する
-'                （SyncMaterialDetailIntermediates）。これにより、AddMaterialで追加した
-'                ばかりの材料(BOM未登録のため内訳行が無いミニブロック)も、RefreshBOMを
-'                1回実行するだけで既存の材料と同じ見た目になる(AddMaterialを2回実行する
-'                必要はない)。既存材料が新しい中間体で使われ始めた場合も同様に自動反映される。
+'   RefreshBOM : 「Raw Material - Look Up」を選択すると、M_BOM（原単位）を更新する。
+'                対象は4シート:
+'                  ・Slurry Data Base / Powder Data Base / Solution … 行そのまま転記。
+'                    A列=Intermediate、D列=RM Code、M列=1バッチあたり使用量。
+'                    RM CodeにはM_RawMaterials上のRM_Code(例:CHEM-1030)だけでなく、
+'                    他の中間体コード(SOL-SCH・TPP-103等、Slurry/PowderがSolutionや
+'                    別のPowderを材料として使うケース)がそのまま入ることがあるが、
+'                    そのままM_BOMの行として書き込む(Grid_Requirement側で無視される
+'                    だけで実害は無い)。
+'                  ・Catalyst Data Base … Substrate行(H列"Substrate SC"が埋まっている行)
+'                    だけを使う(化学品・スラリー参照行はSlurry側で既に原単位計算済み
+'                    のため、ここで拾うと二重計上になる)。Corning供給のSubstrate
+'                    (E列Descriptionに"CORNING"を含む)は対象外。中間体名はA列の
+'                    Catalyst名(例:"18461-0Q110-1st COAT")から短縮製品コード
+'                    (例:"0Q110")を抽出したもの、RM_CodeはH列、数量はF列
+'                    (catalyst1個あたりの使用量。PP_Grid側でcatalystは個数管理のため)。
+'                新しい材料×中間体の組み合わせが見つかった場合、Material_Detailの
+'                該当材料ブロックにも中間体の内訳行（No. of batches／使用量(kg)）を
+'                自動的に追加する（SyncMaterialDetailIntermediates）。これにより、
+'                AddMaterialで追加したばかりの材料(BOM未登録のため内訳行が無いミニ
+'                ブロック)も、RefreshBOMを1回実行するだけで既存の材料と同じ見た目になる
+'                (AddMaterialを2回実行する必要はない)。既存材料が新しい中間体で
+'                使われ始めた場合も同様に自動反映される。
 '
 ' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
 ' モジュール冒頭のコメントを参照してください。
@@ -20,7 +35,7 @@ Option Explicit
 Sub RefreshBOM()
     Dim srcPath As Variant
     srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
-        "Usage from Production Engineering を選択してください")
+        "Raw Material - Look Up を選択してください")
     If srcPath = False Then Exit Sub
 
     On Error GoTo ErrHandler
@@ -37,20 +52,13 @@ Sub RefreshBOM()
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
 
-    ' 材料名(正規化) -> RM_Code。RM_Code・Descriptionは隣接列(1,2列目)なので1回の配列読み込みで済む
-    ' （セルを1つずつ.Cells(i,1).Valueで読むより大幅に速い）。
-    Dim descIndex As Object: Set descIndex = CreateObject("Scripting.Dictionary")
-    Dim rmN As Long: rmN = rmTbl.ListRows.Count
-    If rmN > 0 Then
-        Dim rmData As Variant
-        rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 2).Value  ' Part Name, Description
-        Dim i As Long
-        For i = 1 To rmN
-            Dim key As String: key = NormalizeText(CStr(rmData(i, 2)))
-            If Len(key) > 0 And Not descIndex.Exists(key) Then descIndex(key) = CStr(rmData(i, 1))
-        Next i
-    End If
+    ' RM_Code(Part Name)の存在チェック用と、Catalyst短縮コード抽出時の
+    ' 「既知の中間体名かどうか」の判定(末尾"s"表記ゆれの解決)用に、それぞれの
+    ' 名前の集合を1回だけ作る。
+    Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
+    Dim knownIntermediates As Object: Set knownIntermediates = BuildNameIndex(ppGrid, "Intermediate")
 
     ' (Intermediate|RM_Code) -> M_BOM内の行番号(データ範囲内)
     Dim pairIndex As Object: Set pairIndex = BuildPairIndex(bomTbl)
@@ -58,14 +66,19 @@ Sub RefreshBOM()
     Dim updated As Long, added As Long, unresolved As String
     updated = 0: added = 0: unresolved = ""
 
-    Dim sheetNames As Variant: sheetNames = Array("Slurry", "Powder")
+    Dim flatSheets As Variant: flatSheets = Array("Slurry Data Base", "Powder Data Base", "Solution")
     Dim sIdx As Integer
-    For sIdx = LBound(sheetNames) To UBound(sheetNames)
-        Dim shName As String: shName = CStr(sheetNames(sIdx))
+    For sIdx = LBound(flatSheets) To UBound(flatSheets)
+        Dim shName As String: shName = CStr(flatSheets(sIdx))
         If SheetExists(srcWb, shName) Then
-            Call ProcessBomSheet(srcWb.Sheets(shName), bomTbl, descIndex, pairIndex, updated, added, unresolved)
+            Call ProcessLookupFlatSheet(srcWb.Sheets(shName), bomTbl, pairIndex, rmCodeSet, _
+                knownIntermediates, updated, added, unresolved)
         End If
     Next sIdx
+    If SheetExists(srcWb, "Catalyst Data Base") Then
+        Call ProcessLookupCatalystSheet(srcWb.Sheets("Catalyst Data Base"), bomTbl, pairIndex, _
+            rmCodeSet, knownIntermediates, updated, added, unresolved)
+    End If
 
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
     ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
@@ -100,7 +113,8 @@ Sub RefreshBOM()
               "発生しました: " & syncErrMsg & vbCrLf & "M_BOM自体の更新は正常に完了しています。"
     End If
     If Len(unresolved) > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "原材料コードが見つからず未反映の材料名:" & vbCrLf & unresolved
+        msg = msg & vbCrLf & vbCrLf & "M_RawMaterials・PP_Gridのどちらにも見つからないコード" & vbCrLf & _
+              "(未登録の新しい材料の可能性。AddMaterialでの登録漏れがないか確認してください):" & vbCrLf & unresolved
     End If
     msg = msg & vbCrLf & vbCrLf & "新規追加した組み合わせも、Grid_RequirementがM_BOMを直接参照しているため" & vbCrLf & "その場で自動反映されます。"
     MsgBox msg, vbInformation
@@ -121,54 +135,112 @@ ErrHandler:
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
-Private Sub ProcessBomSheet(sh As Worksheet, bomTbl As ListObject, descIndex As Object, _
-        pairIndex As Object, ByRef updated As Long, ByRef added As Long, ByRef unresolved As String)
-    Dim lastRow As Long, lastCol As Long
-    lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
-    lastCol = sh.Cells(2, sh.Columns.Count).End(xlToLeft).Column
-    If lastRow > 3000 Then lastRow = 3000  ' 異常値対策(通常は数十〜数百行)
-    If lastCol > 500 Then lastCol = 500
-    If lastRow < 4 Or lastCol < 2 Then Exit Sub
+' Slurry Data Base/Powder Data Base/Solutionシート共通の処理。行そのままA列=Intermediate、
+' D列=RM Code、M列=1バッチあたり使用量として取り込む。RM CodeはM_RawMaterialsのPart Name
+' そのものの場合も、他の中間体コード(SOL-SCH等)の場合もあるが、区別せずそのままM_BOMに書き込む
+' (Grid_Requirement側はM_RawMaterialsに実在するPart Nameだけを見るため、中間体コードの行は
+' 実害なく無視される)。
+Private Sub ProcessLookupFlatSheet(sh As Worksheet, bomTbl As ListObject, pairIndex As Object, _
+        rmCodeSet As Object, knownIntermediates As Object, ByRef updated As Long, ByRef added As Long, _
+        ByRef unresolved As String)
+    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
+    If lastRow > 5000 Then lastRow = 5000  ' 異常値対策
+    If lastRow < 2 Then Exit Sub
 
     ' シート全体を1回だけ配列として読み込む（.Cells(r,c).Valueをループ内で毎回呼ぶと遅いため）
     Dim data As Variant
-    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, lastCol)).Value
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, 13)).Value  ' M列(13)まで
 
-    Dim r As Long, c As Long
-    For r = 4 To lastRow
-        Dim interName As String
-        interName = Trim(CStr(data(r, 1)))
-        If Len(interName) > 0 Then
-            For c = 2 To lastCol
-                Dim matName As String: matName = Trim(CStr(data(2, c)))
-                Dim v As Variant: v = data(r, c)
-                If Len(matName) > 0 And IsNumeric(v) Then
-                    If CDbl(v) <> 0 Then
-                        Dim mkey As String: mkey = NormalizeText(matName)
-                        If descIndex.Exists(mkey) Then
-                            Dim rmCode As String: rmCode = descIndex(mkey)
-                            Dim pk As String: pk = interName & "|" & rmCode
-                            If pairIndex.Exists(pk) Then
-                                Dim rowN As Long: rowN = pairIndex(pk)
-                                bomTbl.ListRows(rowN).Range.Cells(1, 3).Value = CDbl(v)
-                                updated = updated + 1
-                            Else
-                                Dim newRow As ListRow
-                                Set newRow = bomTbl.ListRows.Add
-                                newRow.Range.Cells(1, 1).Value = interName
-                                newRow.Range.Cells(1, 2).Value = rmCode
-                                newRow.Range.Cells(1, 3).Value = CDbl(v)
-                                pairIndex(pk) = newRow.Index
-                                added = added + 1
-                            End If
-                        Else
-                            If InStr(unresolved, matName) = 0 Then unresolved = unresolved & matName & "; "
-                        End If
-                    End If
+    Dim r As Long
+    For r = 2 To lastRow
+        Dim inter As String: inter = Trim(CStr(data(r, 1)))
+        Dim rmCode As String: rmCode = Trim(CStr(data(r, 4)))
+        Dim v As Variant: v = data(r, 13)
+        If Len(inter) > 0 And Len(rmCode) > 0 And IsNumeric(v) Then
+            If CDbl(v) <> 0 Then
+                Call UpsertBomRow(bomTbl, pairIndex, inter, rmCode, CDbl(v), updated, added)
+                If Not rmCodeSet.Exists(rmCode) And Not knownIntermediates.Exists(rmCode) Then
+                    If InStr(unresolved, rmCode) = 0 Then unresolved = unresolved & rmCode & "; "
                 End If
-            Next c
+            End If
         End If
     Next r
+End Sub
+
+' Catalyst Data BaseシートのSubstrate行(H列"Substrate SC"が埋まっている行)だけを使う。
+' Corning供給のSubstrate(E列Descriptionに"CORNING"を含む)は対象外。中間体名はA列の
+' Catalyst名から短縮製品コードを抽出したもの、RM_CodeはH列、数量はF列(catalyst1個あたり)。
+Private Sub ProcessLookupCatalystSheet(sh As Worksheet, bomTbl As ListObject, pairIndex As Object, _
+        rmCodeSet As Object, knownIntermediates As Object, ByRef updated As Long, ByRef added As Long, _
+        ByRef unresolved As String)
+    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
+    If lastRow > 5000 Then lastRow = 5000
+    If lastRow < 2 Then Exit Sub
+
+    Dim data As Variant
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, 8)).Value  ' H列(8)まで
+
+    Dim r As Long
+    For r = 2 To lastRow
+        Dim subSC As String: subSC = Trim(CStr(data(r, 8)))
+        If Len(subSC) = 0 Then GoTo NextRow
+        Dim desc As String: desc = UCase(Trim(CStr(data(r, 5))))
+        If InStr(desc, "CORNING") > 0 Then GoTo NextRow  ' Corning供給は対象外
+        Dim catName As String: catName = Trim(CStr(data(r, 1)))
+        Dim v As Variant: v = data(r, 6)
+        If Len(catName) = 0 Or Not IsNumeric(v) Then GoTo NextRow
+        If CDbl(v) = 0 Then GoTo NextRow
+        Dim code As String: code = CatalystShortCode(catName, knownIntermediates)
+        Call UpsertBomRow(bomTbl, pairIndex, code, subSC, CDbl(v), updated, added)
+        If Not rmCodeSet.Exists(subSC) Then
+            If InStr(unresolved, subSC) = 0 Then unresolved = unresolved & subSC & "; "
+        End If
+NextRow:
+    Next r
+End Sub
+
+' Catalyst名(例:"18461-0Q110-1st COAT")から短縮製品コード(例:"0Q110")を抽出する。
+' 「18461-」プレフィックスを除去し、最初のスペース/ハイフンまでのトークンを取り出し、
+' 先頭が"O"(アルファベットのオー)なら"0"(ゼロ)に置換する(元データの表記ゆれ)。
+' それでも中間体マスタに見つからず末尾が"s"の場合は、末尾を除去して再試行する
+' (例:"0T420s"→"0T420")。
+Private Function CatalystShortCode(catName As String, knownIntermediates As Object) As String
+    Dim s As String: s = catName
+    If Left(s, 6) = "18461-" Then s = Mid(s, 7)
+    Dim i As Long, ch As String, code As String
+    code = ""
+    For i = 1 To Len(s)
+        ch = Mid(s, i, 1)
+        If ch = " " Or ch = "-" Then Exit For
+        code = code & ch
+    Next i
+    If Left(code, 1) = "O" Then code = "0" & Mid(code, 2)
+    If Not knownIntermediates.Exists(code) Then
+        Dim tailCh As String: tailCh = Right(code, 1)
+        If (tailCh = "s" Or tailCh = "S") And knownIntermediates.Exists(Left(code, Len(code) - 1)) Then
+            code = Left(code, Len(code) - 1)
+        End If
+    End If
+    CatalystShortCode = code
+End Function
+
+' M_BOMの(Intermediate, RM_Code)行を1件登録/更新する共通処理。
+Private Sub UpsertBomRow(bomTbl As ListObject, pairIndex As Object, inter As String, rmCode As String, _
+        qty As Double, ByRef updated As Long, ByRef added As Long)
+    Dim pk As String: pk = inter & "|" & rmCode
+    If pairIndex.Exists(pk) Then
+        Dim rowN As Long: rowN = pairIndex(pk)
+        bomTbl.ListRows(rowN).Range.Cells(1, 3).Value = qty
+        updated = updated + 1
+    Else
+        Dim newRow As ListRow
+        Set newRow = bomTbl.ListRows.Add
+        newRow.Range.Cells(1, 1).Value = inter
+        newRow.Range.Cells(1, 2).Value = rmCode
+        newRow.Range.Cells(1, 3).Value = qty
+        pairIndex(pk) = newRow.Index
+        added = added + 1
+    End If
 End Sub
 
 Private Function SheetExists(wb As Workbook, sName As String) As Boolean

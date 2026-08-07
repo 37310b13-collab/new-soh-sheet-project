@@ -21,8 +21,8 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開�
 '                                 WeekIndexForDate/ColLetter)。他の全モジュールが
 '                                 これに依存するため、最初にインポートしてください。
 '   RefreshData_ProductionPlan : RefreshWeeklyBatches（「Powder & Slurry & Pgm Plan」を
-'                                 取り込み、PP_Grid・M_BOMを更新）
-'   RefreshData_BOM             : RefreshBOM（「Usage from Production Engineering」を
+'                                 取り込み、PP_Gridを更新）
+'   RefreshData_BOM             : RefreshBOM（「Raw Material - Look Up」を
 '                                 取り込み、M_BOM・Material_Detailの内訳行を更新）
 '   RefreshData_StockActuals    : RefreshSelfStock・RefreshTTAFStock（自社/TTAF在庫実績の取込み）
 '   RefreshData_Shipments       : RefreshShipments（CSA ReportのShipping Scheduleを取込み）
@@ -98,7 +98,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開�
 '
 ' 【DisplayAlertsを抑制している理由】.DataBodyRangeの修正後も、取込元ファイルを開いた直後の
 ' srcWbが「Nothing」になり、後始末のsrcWb.Closeで同じ(91)エラーが再発するケースが報告されま
-' した。取込元ファイル(Powder & Slurry & Pgm Plan、Usage from Production Engineering等)は
+' した。取込元ファイル(Powder & Slurry & Pgm Plan、Raw Material - Look Up等)は
 ' 手動で開く際に「読み取り専用を推奨」の確認ダイアログが出るファイルであることが確認できて
 ' おり、Application.DisplayAlerts=Trueのままだと、VBAのWorkbooks.Open実行時にもこのダイアログ
 ' が表示されて処理が止まる(応答待ちのまま次の行に進めない、または想定外の状態でオブジェクトが

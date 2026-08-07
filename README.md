@@ -15,17 +15,17 @@
 ## 毎月の更新（Excel + VBAのみ、Python不要）
 
 1. `SOH_Master.xlsx`を「Excel マクロ有効ブック(*.xlsm)」として保存
-2. `macros/`内の`RefreshData_*.bas`（7ファイルすべて）をVBEに読み込む（Alt+F11 →「ファイル」→
+2. `macros/`内の`.bas`ファイル（8ファイルすべて）をVBEに読み込む（Alt+F11 →「ファイル」→
    「ファイルのインポート」で`.bas`ファイルを直接選択。複数選択して一括インポート可。
    コピー＆貼り付けする場合は各ファイル1行目の`Attribute VB_Name = "..."`を
    削除してから貼り付けてください）
 3. 「Powder & Slurry & Pgm Plan」の新しい月版で `RefreshWeeklyBatches` マクロを実行
-4. 「Usage from Production Engineering」が更新されていれば `RefreshBOM` マクロを実行
+4. 「Raw Material - Look Up」が更新されていれば `RefreshBOM` マクロを実行
 5. 自社倉庫の現物確認（daily check）を実施したら `RefreshSelfStock` マクロを実行
 6. CSA Reportが週次で届いたら `RefreshTTAFStock` マクロを実行
 
 詳しい運用手順は [`docs/SOH_System_Guide.md`](./docs/SOH_System_Guide.md) を参照してください。
-「Usage from Production Engineering」「Powder & Slurry & Pgm Plan」「CSA Report」の各ファイルは
+「Raw Material - Look Up」「Powder & Slurry & Pgm Plan」「CSA Report」の各ファイルは
 フォーマットを一切変更していません。「Plan Increase and Decrease」「Inventory June Releases」は
 このシステムの計算範囲から切り離しています。
 

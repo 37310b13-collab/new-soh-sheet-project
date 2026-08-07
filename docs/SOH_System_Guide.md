@@ -21,7 +21,7 @@
 既存のファイルの値を月次でマクロ経由で取り込みます。
 
 - **顧客オーダー・生産計画の策定**: このブックの範囲外
-- **原単位（1バッチあたり使用量）**: 「Usage from Production Engineering」からマクロで取り込み
+- **原単位（1バッチあたり使用量）**: 「Raw Material - Look Up」からマクロで取り込み
 - **週次バッチ数**: 「Powder & Slurry & Pgm Plan」（毎月改版）からマクロで取り込み
 - **自社倉庫の在庫実績**: 「Raw materials daily check」（現物確認シート）からマクロで取り込み
 - **TTAF倉庫の在庫実績**: 「CSA Report」の`Stock invoiced to CSA`シート（手入力の生データ）からマクロで取り込み
@@ -50,8 +50,8 @@
 
 | マクロ | 対象ファイル | 更新するシート |
 |---|---|---|
-| `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid（+ substrate分のM_BOM） |
-| `RefreshBOM` | Usage from Production Engineering（改版時） | M_BOM |
+| `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid |
+| `RefreshBOM` | Raw Material - Look Up（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映） |
@@ -209,7 +209,7 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 ## 5. 毎月の運用フロー
 
 1. 「Powder & Slurry & Pgm Plan」の新しい月版を受け取ったら`RefreshWeeklyBatches`を実行
-2. 「Usage from Production Engineering」が更新されていれば`RefreshBOM`を実行
+2. 「Raw Material - Look Up」が更新されていれば`RefreshBOM`を実行
 3. 自社倉庫の現物確認（daily check）を毎週月曜の朝に実施したら`RefreshSelfStock`を実行
 4. CSA Reportが毎週月曜に届いたら`RefreshTTAFStock`と`RefreshShipments`を実行
    （`RefreshShipments`はShipping Scheduleの全PO・全材料を一括で`T_Shipments`に反映）
@@ -398,8 +398,8 @@ Order・合計在庫・注記の6行のみ）になります。その後**通常
 行、生産計画上の製品コード）の増減にも対応しています。
 
 - **追加**: 何もしなくても自動対応済みです。`RefreshWeeklyBatches`が「Powder & Slurry & Pgm
-  Plan」に新しい中間体を見つければ`PP_Grid`に自動で行を追加し、`RefreshBOM`が「Usage from
-  Production Engineering」に新しい中間体×材料の組み合わせを見つければ`M_BOM`に追加した上で
+  Plan」に新しい中間体を見つければ`PP_Grid`に自動で行を追加し、`RefreshBOM`が「Raw Material -
+  Look Up」に新しい中間体×材料の組み合わせを見つければ`M_BOM`に追加した上で
   `Material_Detail`の該当材料ブロックにも内訳行を自動追加します（上記参照）。専用マクロを
   実行する必要はありません。
 - **削除（`RemoveIntermediate`マクロ）**: 生産中止になった中間体名を入力すると、`PP_Grid`の
@@ -562,7 +562,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 （ように見える）動きを引き起こします。対策として、各シートのデータを`sh.Range(...).Value`で
 1回だけ配列にまとめて読み込み、以降はメモリ上の配列だけを参照する方式に書き換え、あわせて
 使用範囲の異常な肥大化に備えた上限（500行×200列）も設けました。同様の問題を防ぐため、
-`RefreshBOM`が使う`ProcessBomSheet`にも同じ対策を適用済みです。
+`RefreshBOM`が使う`ProcessLookupFlatSheet`/`ProcessLookupCatalystSheet`にも同じ対策を適用済みです。
 
 **`RefreshSelfStock`実行時にも強制終了する不具合について**: 同じ理由（1セルずつの読み書き）が
 `RefreshSelfStock`にもありました。対象シート「Stock」の読み取りを同様に1回の配列読み込みに

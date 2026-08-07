@@ -11,12 +11,14 @@ Option Explicit
 '                      表す。そのため7日引いてから対象週を判定する(RefreshTTAFStockと同じ考え方。
 '                      詳細は下のRefreshTTAFStockの説明を参照)。
 '   RefreshTTAFStock : 「CSA Report」を選択すると、その中の「Stock invoiced to CSA」シート
-'                      (A列=TTAF PART NUMBER、D列=Description、F列=在庫数量。ヘッダーは4行目、
-'                      データは5行目から)からT_TTAFStockにその週の実績を追加/更新する。手入力の
-'                      生データを直接読むため、ピボット(旧「 COUNT SHEET SOH」「PIVOT SOH TTAF」)の
-'                      更新忘れに左右されない。対象週はF4セルの日付で判定する(ファイル名には
-'                      依存しない)。材料の照合はTTAF_Codeを優先し、見つからなければ
-'                      Descriptionの正規化テキストで照合する。
+'                      (A列=TTAF PART NUMBER、C列=Part No、D列=Description、F列=在庫数量。
+'                      ヘッダーは4行目、データは5行目から)からT_TTAFStockにその週の実績を
+'                      追加/更新する。手入力の生データを直接読むため、ピボット(旧「 COUNT
+'                      SHEET SOH」「PIVOT SOH TTAF」)の更新忘れに左右されない。対象週は
+'                      F4セルの日付で判定する(ファイル名には依存しない)。材料の照合は
+'                      TTAF_Codeを優先し、見つからなければPart No(M_RawMaterialsのPart Name
+'                      がそのまま入っていることが多く、Descriptionより確実)で照合し、
+'                      それでも見つからない場合だけDescriptionの正規化テキストで照合する。
 '
 ' どちらも、既存の(原材料, 週)の組み合わせがあれば値を上書き、無ければ新しい行として追加する
 ' (同じ週内に複数回取り込んでも1行にまとまる。取り込む順序は問わない)。
@@ -128,9 +130,10 @@ Sub RefreshTTAFStock()
     Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock_Log").ListObjects("T_TTAFStock_Log")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
-    ' 「Stock invoiced to CSA」シートを使う。A列=TTAF PART NUMBER、D列=Description、
-    ' F列=在庫数量。ヘッダーは4行目、データは5行目から。手入力の生データなので、
-    ' 「 COUNT SHEET SOH」/「PIVOT SOH TTAF」のようなピボット更新忘れの心配が無い。
+    ' 「Stock invoiced to CSA」シートを使う。A列=TTAF PART NUMBER、C列=Part No、
+    ' D列=Description、F列=在庫数量。ヘッダーは4行目、データは5行目から。手入力の
+    ' 生データなので、「 COUNT SHEET SOH」/「PIVOT SOH TTAF」のようなピボット更新忘れの
+    ' 心配が無い。
     Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock invoiced to CSA")
     ' F4の日付は「レポートが届いた月曜日(祝日の場合は翌営業日)」だが、その数値は前週金曜
     ' 営業終了後の在庫を表す。そのため7日引いてから週Noを判定する(月曜も金曜もExcel上は
@@ -145,10 +148,11 @@ Sub RefreshTTAFStock()
 
     Dim ttafCodeIdx As Object: Set ttafCodeIdx = CreateObject("Scripting.Dictionary")
     Dim descIdx As Object: Set descIdx = CreateObject("Scripting.Dictionary")
-    Call BuildTTAFCodeAndDescIndex(rmTbl, ttafCodeIdx, descIdx)
+    Dim rmNameIdx As Object: Set rmNameIdx = CreateObject("Scripting.Dictionary")
+    Call BuildTTAFCodeAndDescIndex(rmTbl, ttafCodeIdx, descIdx, rmNameIdx)
 
     ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する
-    ' (A列=TTAF PART NUMBER, D列=Description, F列=在庫数量)。
+    ' (A列=TTAF PART NUMBER, C列=Part No, D列=Description, F列=在庫数量)。
     Const MAX_ROWS As Long = 2000
     Dim data As Variant
     data = sh.Range(sh.Cells(5, 1), sh.Cells(MAX_ROWS, 6)).Value
@@ -161,9 +165,10 @@ Sub RefreshTTAFStock()
         Dim v As Variant: v = data(r, 6)
         If Not IsNumeric(v) Then GoTo NextRow
 
+        Dim partNoRaw As String: partNoRaw = Trim(CStr(data(r, 3)))
         Dim descRaw As String: descRaw = Trim(CStr(data(r, 4)))
         Dim matchedPart As String
-        matchedPart = ResolveTTAFPart(ttafCodeIdx, descIdx, ttafCodeRaw, descRaw)
+        matchedPart = ResolveTTAFPart(ttafCodeIdx, rmNameIdx, descIdx, ttafCodeRaw, partNoRaw, descRaw)
 
         If Len(matchedPart) = 0 Then
             If InStr(unresolved, ttafCodeRaw) = 0 Then
@@ -209,11 +214,12 @@ ErrHandler:
     MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
-' M_RawMaterialsから、TTAF_Code(正規化済み)->Part Name、Description(正規化済み)->Part Nameの
-' インデックスを1回だけ作る。RefreshTTAFStockが使う共通処理。
-' Dictionaryはオブジェクト(参照渡し)なので、ByRefを明示しなくても呼び出し元のtafCodeIdx/descIdxに
-' そのまま反映される。
-Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object, descIdx As Object)
+' M_RawMaterialsから、TTAF_Code(正規化済み)->Part Name、Description(正規化済み)->Part Name、
+' Part Name(大文字小文字・前後空白を無視)->Part Nameのインデックスを1回だけ作る。
+' RefreshTTAFStockが使う共通処理。Dictionaryはオブジェクト(参照渡し)なので、ByRefを
+' 明示しなくても呼び出し元のttafCodeIdx/descIdx/rmNameIdxにそのまま反映される。
+Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object, descIdx As Object, rmNameIdx As Object)
+    rmNameIdx.CompareMode = vbTextCompare
     Dim rmN As Long: rmN = rmTbl.ListRows.Count
     If rmN > 0 Then
         Dim rmNameDesc As Variant
@@ -222,20 +228,28 @@ Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object
         rmTtafCode = rmTbl.ListColumns(9).DataBodyRange.Value                 ' TTAF_Code
         Dim i As Long
         For i = 1 To rmN
+            Dim partName As String: partName = Trim(CStr(rmNameDesc(i, 1)))
             Dim tKeyBuild As String: tKeyBuild = NormalizeText(CStr(rmTtafCode(i, 1)))
-            If Len(tKeyBuild) > 0 And Not ttafCodeIdx.Exists(tKeyBuild) Then ttafCodeIdx(tKeyBuild) = CStr(rmNameDesc(i, 1))
+            If Len(tKeyBuild) > 0 And Not ttafCodeIdx.Exists(tKeyBuild) Then ttafCodeIdx(tKeyBuild) = partName
             Dim dKeyBuild As String: dKeyBuild = NormalizeText(CStr(rmNameDesc(i, 2)))
-            If Len(dKeyBuild) > 0 And Not descIdx.Exists(dKeyBuild) Then descIdx(dKeyBuild) = CStr(rmNameDesc(i, 1))
+            If Len(dKeyBuild) > 0 And Not descIdx.Exists(dKeyBuild) Then descIdx(dKeyBuild) = partName
+            If Len(partName) > 0 And Not rmNameIdx.Exists(partName) Then rmNameIdx(partName) = partName
         Next i
     End If
 End Sub
 
-' TTAF_Codeでの照合を優先し、見つからない場合だけDescription(材料名)の正規化テキストで照合する。
-' どちらでも見つからなければ空文字を返す。
-Private Function ResolveTTAFPart(ttafCodeIdx As Object, descIdx As Object, ttafCodeRaw As String, descRaw As String) As String
+' TTAF_Codeでの照合を優先し、見つからなければPart No(C列。M_RawMaterialsのPart Nameが
+' そのまま入っていることが多く、Descriptionより確実)で照合し、それでも見つからない場合だけ
+' Description(材料名)の正規化テキストで照合する。どれでも見つからなければ空文字を返す。
+Private Function ResolveTTAFPart(ttafCodeIdx As Object, rmNameIdx As Object, descIdx As Object, _
+        ttafCodeRaw As String, partNoRaw As String, descRaw As String) As String
     Dim tKey As String: tKey = NormalizeText(ttafCodeRaw)
     If Len(tKey) > 0 And ttafCodeIdx.Exists(tKey) Then
         ResolveTTAFPart = ttafCodeIdx(tKey)
+        Exit Function
+    End If
+    If Len(partNoRaw) > 0 And rmNameIdx.Exists(partNoRaw) Then
+        ResolveTTAFPart = rmNameIdx(partNoRaw)
         Exit Function
     End If
     Dim dKey As String: dKey = NormalizeText(descRaw)

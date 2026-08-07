@@ -66,8 +66,8 @@ def to_float(x, default=0.0):
     except (TypeError, ValueError):
         return default
 
-# bom.csv (source: Usage from Production Engineering Slurry/Powder sheets, supplemented by
-# Powder & Slurry & Pgm Plan) already stores the direct per-batch kg amount -- no further
+# bom.csv (source: Raw Material - Look Up's Slurry/Powder/Solution/Catalyst Data Base sheets)
+# already stores the direct per-batch (or per-catalyst-unit) kg amount -- no further
 # ratio x batch-size multiplication needed.
 for r in bom:
     r["RM_Total_Per_Batch"] = to_float(r["RM_Qty_Per_Batch"])
@@ -1264,7 +1264,7 @@ readme_lines = [
     "",
     "【毎月の運用】",
     "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
-    "  2. 「Usage from Production Engineering」が更新されていればRefreshBOMを実行",
+    "  2. 「Raw Material - Look Up」が更新されていればRefreshBOMを実行",
     "  3. 自社倉庫の現物確認を毎週月曜の朝に実施したらRefreshSelfStockを実行",
     "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsを実行",
     "  5. 発注する数量はMaterial_Detailの「Order(発注予定,kg)」行に直接入力",
@@ -1309,7 +1309,7 @@ PANEL_SECTION_FILL = PatternFill("solid", fgColor="1F4E78")
 panel_sections = [
     ("【毎月・毎週の定型作業】上から順に実行", [
         ("RefreshWeeklyBatches", "「Powder & Slurry & Pgm Plan」の新しい月版が出たら実行"),
-        ("RefreshBOM", "「Usage from Production Engineering」が更新されたら実行"),
+        ("RefreshBOM", "「Raw Material - Look Up」が更新されたら実行"),
         ("RefreshSelfStock", "自社倉庫の現物確認（daily check）を毎週月曜の朝に実施したら実行"),
         ("RefreshTTAFStock", "CSA Reportが毎週月曜に届いたら実行（TTAF在庫）"),
         ("RefreshShipments", "CSA Reportが毎週月曜に届いたら実行（発注・着荷）"),
