@@ -127,11 +127,15 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開�
 ' ============================================================================
 
 ' tblの1・2列目から「1列目の値|2列目の値」->行番号のDictionaryを1回だけ作る。
-' M_BOM(Intermediate|RM_Code)・T_Shipments(Part Name|PO_No)など、
-' 「先頭2列の組み合わせで行を特定する」テーブル全般に使う汎用ヘルパー。
-' RefreshData_ProductionPlan・RefreshData_BOMの両方から使われる共通処理。
+' M_BOM(Intermediate|RM_Code)など、「先頭2列の組み合わせで行を特定する」テーブル用の
+' 汎用ヘルパー。RefreshData_BOMが使う共通処理。
+' BuildNameIndexと同じ理由でCompareMode=vbTextCompareにしている(大文字小文字を区別すると、
+' 取込元ファイル側の表記ゆれ(例:Catalyst名から抽出した短縮コードの大文字小文字が既存の
+' M_BOM行とわずかに異なる)で同じ組み合わせを別物と誤判定してしまい、実行するたびに
+' M_BOMへ重複行が積み上がっていく不具合につながるため)。
 Public Function BuildPairIndex(tbl As ListObject) As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
+    idx.CompareMode = vbTextCompare
     Dim n As Long: n = tbl.ListRows.Count
     If n > 0 Then
         Dim data As Variant
