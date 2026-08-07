@@ -17,8 +17,10 @@ Option Explicit
 '                      SHEET SOH」「PIVOT SOH TTAF」)の更新忘れに左右されない。対象週は
 '                      F4セルの日付で判定する(ファイル名には依存しない)。材料の照合は
 '                      TTAF_Codeを優先し、見つからなければPart No(M_RawMaterialsのPart Name
-'                      がそのまま入っていることが多く、Descriptionより確実)で照合し、
-'                      それでも見つからない場合だけDescriptionの正規化テキストで照合する。
+'                      がそのまま入っていることが多く、Descriptionより確実。TTAF側データの
+'                      "0"(ゼロ)/"O"(オー)表記ゆれ〈例:CSA ReportのPart No列の"0JN"、
+'                      M_RawMaterials側は正式に"OJN"〉も読み替えて試す)で照合し、それでも
+'                      見つからない場合だけDescriptionの正規化テキストで照合する。
 '
 ' どちらも、既存の(原材料, 週)の組み合わせがあれば値を上書き、無ければ新しい行として追加する
 ' (同じ週内に複数回取り込んでも1行にまとまる。取り込む順序は問わない)。
@@ -256,6 +258,21 @@ Private Function ResolveTTAFPart(ttafCodeIdx As Object, rmNameIdx As Object, des
     If Len(partNoRaw) > 0 And rmNameIdx.Exists(partNoRaw) Then
         ResolveTTAFPart = rmNameIdx(partNoRaw)
         Exit Function
+    End If
+    ' TTAF側の元データで"0"(ゼロ)と"O"(アルファベットのオー)の表記ゆれが度々見つかっている
+    ' (例: CSA ReportのPart No列で"0JN"、M_RawMaterials側は正式に"OJN")。完全一致で
+    ' 見つからない場合、どちらの表記に読み替えても一致するか試す。
+    If Len(partNoRaw) > 0 Then
+        Dim zeroToO As String: zeroToO = Replace(partNoRaw, "0", "O")
+        If zeroToO <> partNoRaw And rmNameIdx.Exists(zeroToO) Then
+            ResolveTTAFPart = rmNameIdx(zeroToO)
+            Exit Function
+        End If
+        Dim oToZero As String: oToZero = Replace(partNoRaw, "O", "0")
+        If oToZero <> partNoRaw And rmNameIdx.Exists(oToZero) Then
+            ResolveTTAFPart = rmNameIdx(oToZero)
+            Exit Function
+        End If
     End If
     Dim dKey As String: dKey = NormalizeText(descRaw)
     If descIdx.Exists(dKey) Then
