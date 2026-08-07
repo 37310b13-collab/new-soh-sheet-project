@@ -164,26 +164,33 @@ Sub FixPassthroughCircularRefs()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
+    ' 数千セル(材料数×週数)を1セルずつ.Cells(r,c).Formulaで読み書きすると、RefreshBOM等
+    ' 他のマクロで対策済みのCOM通信の積み重ねと同じ理由で極めて遅くなる(フリーズしたように
+    ' 見える)。範囲全体を1回だけ配列として読み込み、書き換えが必要な要素だけを配列上で
+    ' 直し、最後に配列ごと1回だけ書き戻す。
     Dim fixedCells As Long: fixedCells = 0
     Dim firstDataRow As Long: firstDataRow = dataRange.Row
     Dim nRows As Long: nRows = dataRange.Rows.Count
     Dim nCols As Long: nCols = dataRange.Columns.Count
 
+    Dim allFormulas As Variant: allFormulas = dataRange.Formula
+
     Dim r As Long, c As Long
     For r = 1 To nRows
         Dim actualRow As Long: actualRow = firstDataRow + r - 1
         For c = 2 To nCols  ' 1列目はIntermediate名(数式ではない)なのでスキップ
-            Dim cel As Range: Set cel = dataRange.Cells(r, c)
-            If cel.HasFormula Then
-                Dim f As String: f = cel.Formula
-                If InStr(f, "PPGridRow") > 0 And InStr(f, "NA()") = 0 Then
-                    cel.Formula = Replace(f, "M_BOM[PPGridRow]", _
+            If VarType(allFormulas(r, c)) = vbString Then
+                Dim f As String: f = CStr(allFormulas(r, c))
+                If Left$(f, 1) = "=" And InStr(f, "PPGridRow") > 0 And InStr(f, "NA()") = 0 Then
+                    allFormulas(r, c) = Replace(f, "M_BOM[PPGridRow]", _
                         "IF(M_BOM[PPGridRow]=" & actualRow & ",NA(),M_BOM[PPGridRow])")
                     fixedCells = fixedCells + 1
                 End If
             End If
         Next c
     Next r
+
+    If fixedCells > 0 Then dataRange.Formula = allFormulas
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
