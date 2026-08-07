@@ -72,30 +72,78 @@ Sub RefreshBOM()
     Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
     Dim knownIntermediates As Object: Set knownIntermediates = BuildNameIndex(ppGrid, "Intermediate")
 
-    ' (Intermediate|RM_Code) -> M_BOM内の行番号(データ範囲内)
-    Dim pairIndex As Object: Set pairIndex = BuildPairIndex(bomTbl)
+    ' 差分件数(更新/新規/削除)を数えるため、更新前のM_BOMの内容を(pk->True)のセットとして
+    ' 一旦保持しておく(この後の実データ更新には使わない、件数計算専用)。
+    Dim oldPairs As Object: Set oldPairs = CreateObject("Scripting.Dictionary")
+    oldPairs.CompareMode = vbTextCompare
+    Dim oldN As Long: oldN = bomTbl.ListRows.Count
+    If oldN > 0 Then
+        Dim oldArr As Variant: oldArr = bomTbl.ListColumns(1).DataBodyRange.Resize(oldN, 2).Value
+        Dim oi As Long
+        For oi = 1 To oldN
+            oldPairs(CStr(oldArr(oi, 1)) & "|" & CStr(oldArr(oi, 2))) = True
+        Next oi
+    End If
 
-    Dim updated As Long, added As Long, unresolved As String
-    updated = 0: added = 0: unresolved = ""
+    ' 新しいBOM内容を、シートへは一切書き込まずメモリ上のDictionaryに組み立てる
+    ' (pk="Intermediate|RM_Code" -> Array(Intermediate, RM_Code, Qty))。
+    ' Look Upはこのシステムの唯一のBOM情報源なので、最終的にM_BOM全体をこの内容で
+    ' まるごと置き換える(1行ずつListRows.Addで追加すると、M_BOMを参照する大量の数式
+    ' 〈Grid_Requirement・Material_Detail・PP_Gridのパススルー数式〉の依存関係チェックが
+    ' 追加のたびに走り、行数が千を超えるあたりから極端に遅くなる「フリーズ」不具合の
+    ' 原因になっていたため、書き込みは最後に1回のブロック書き込みで済ませる)。
+    Dim newRows As Object: Set newRows = CreateObject("Scripting.Dictionary")
+    newRows.CompareMode = vbTextCompare
+    Dim unresolved As String: unresolved = ""
 
     Dim flatSheets As Variant: flatSheets = Array("Slurry Data Base", "Powder Data Base", "Solution")
     Dim sIdx As Integer
     For sIdx = LBound(flatSheets) To UBound(flatSheets)
         Dim shName As String: shName = CStr(flatSheets(sIdx))
         If SheetExists(srcWb, shName) Then
-            Call ProcessLookupFlatSheet(srcWb.Sheets(shName), bomTbl, pairIndex, rmCodeSet, _
-                knownIntermediates, updated, added, unresolved)
+            Call ProcessLookupFlatSheet(srcWb.Sheets(shName), newRows, rmCodeSet, knownIntermediates, unresolved)
         End If
     Next sIdx
     If SheetExists(srcWb, "Catalyst Data Base") Then
-        Call ProcessLookupCatalystSheet(srcWb.Sheets("Catalyst Data Base"), bomTbl, pairIndex, _
-            rmCodeSet, knownIntermediates, updated, added, unresolved)
+        Call ProcessLookupCatalystSheet(srcWb.Sheets("Catalyst Data Base"), newRows, rmCodeSet, _
+            knownIntermediates, unresolved)
     End If
 
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
     ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
     ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
+
+    Dim added As Long, updated As Long, removedCount As Long
+    added = 0: updated = 0: removedCount = 0
+    Dim k As Variant
+    For Each k In newRows.Keys
+        If oldPairs.Exists(k) Then updated = updated + 1 Else added = added + 1
+    Next k
+    For Each k In oldPairs.Keys
+        If Not newRows.Exists(k) Then removedCount = removedCount + 1
+    Next k
+
+    ' M_BOMを1回のブロック書き込みで丸ごと置き換える。PPGridRow列(D列)は本来Excelの
+    ' テーブル機能がListRows.Add時に自動複製する数式列だが、ここではAddを使わないため
+    ' 明示的に数式文字列として組み立てる(build_soh.pyの生成パターンと同一)。
+    Dim n As Long: n = newRows.Count
+    If Not bomTbl.DataBodyRange Is Nothing Then bomTbl.DataBodyRange.Delete
+    If n > 0 Then
+        Dim outArr() As Variant
+        ReDim outArr(1 To n, 1 To 4)
+        Dim idx As Long: idx = 0
+        For Each k In newRows.Keys
+            idx = idx + 1
+            Dim rec As Variant: rec = newRows(k)
+            outArr(idx, 1) = rec(0)
+            outArr(idx, 2) = rec(1)
+            outArr(idx, 3) = rec(2)
+            outArr(idx, 4) = "=IFERROR(MATCH($A" & (idx + 1) & ",PP_Grid[Intermediate],0),99999)"
+        Next k
+        bomTbl.Resize bomTbl.Range.Resize(n + 1, 4)
+        bomTbl.DataBodyRange.Formula = outArr
+    End If
 
     ' Material_Detailの中間体内訳行(No. of batches／使用量(kg))を、更新後のM_BOMの内容に
     ' 合わせて同期する。M_BOMの更新自体は上で既に確定しているため、この同期処理で
@@ -116,7 +164,8 @@ Sub RefreshBOM()
     Application.DisplayAlerts = True
 
     Dim msg As String
-    msg = "M_BOM を更新しました。" & vbCrLf & "更新: " & updated & " 件、新規追加: " & added & " 件"
+    msg = "M_BOM を更新しました。" & vbCrLf & "更新: " & updated & " 件、新規追加: " & added & _
+          " 件、削除: " & removedCount & " 件"
     If addedDetailRows > 0 Then
         msg = msg & vbCrLf & "Material_Detailに追加した中間体の内訳行: " & addedDetailRows & " 組"
     End If
@@ -212,9 +261,8 @@ End Sub
 ' そのものの場合も、他の中間体コード(SOL-SCH等)の場合もあるが、区別せずそのままM_BOMに書き込む
 ' (Grid_Requirement側はM_RawMaterialsに実在するPart Nameだけを見るため、中間体コードの行は
 ' 実害なく無視される)。
-Private Sub ProcessLookupFlatSheet(sh As Worksheet, bomTbl As ListObject, pairIndex As Object, _
-        rmCodeSet As Object, knownIntermediates As Object, ByRef updated As Long, ByRef added As Long, _
-        ByRef unresolved As String)
+Private Sub ProcessLookupFlatSheet(sh As Worksheet, newRows As Object, _
+        rmCodeSet As Object, knownIntermediates As Object, ByRef unresolved As String)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
     If lastRow > 5000 Then lastRow = 5000  ' 異常値対策
     If lastRow < 2 Then Exit Sub
@@ -230,7 +278,7 @@ Private Sub ProcessLookupFlatSheet(sh As Worksheet, bomTbl As ListObject, pairIn
         Dim v As Variant: v = data(r, 13)
         If Len(inter) > 0 And Len(rmCode) > 0 And IsNumeric(v) Then
             If CDbl(v) <> 0 Then
-                Call UpsertBomRow(bomTbl, pairIndex, inter, rmCode, CDbl(v), updated, added)
+                newRows(inter & "|" & rmCode) = Array(inter, rmCode, CDbl(v))
                 If Not rmCodeSet.Exists(rmCode) And Not knownIntermediates.Exists(rmCode) Then
                     If InStr(unresolved, rmCode) = 0 Then unresolved = unresolved & rmCode & "; "
                 End If
@@ -242,9 +290,8 @@ End Sub
 ' Catalyst Data BaseシートのSubstrate行(H列"Substrate SC"が埋まっている行)だけを使う。
 ' Corning供給のSubstrate(E列Descriptionに"CORNING"を含む)は対象外。中間体名はA列の
 ' Catalyst名から短縮製品コードを抽出したもの、RM_CodeはH列、数量はF列(catalyst1個あたり)。
-Private Sub ProcessLookupCatalystSheet(sh As Worksheet, bomTbl As ListObject, pairIndex As Object, _
-        rmCodeSet As Object, knownIntermediates As Object, ByRef updated As Long, ByRef added As Long, _
-        ByRef unresolved As String)
+Private Sub ProcessLookupCatalystSheet(sh As Worksheet, newRows As Object, _
+        rmCodeSet As Object, knownIntermediates As Object, ByRef unresolved As String)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
     If lastRow > 5000 Then lastRow = 5000
     If lastRow < 2 Then Exit Sub
@@ -263,7 +310,7 @@ Private Sub ProcessLookupCatalystSheet(sh As Worksheet, bomTbl As ListObject, pa
         If Len(catName) = 0 Or Not IsNumeric(v) Then GoTo NextRow
         If CDbl(v) = 0 Then GoTo NextRow
         Dim code As String: code = CatalystShortCode(catName, knownIntermediates)
-        Call UpsertBomRow(bomTbl, pairIndex, code, subSC, CDbl(v), updated, added)
+        newRows(code & "|" & subSC) = Array(code, subSC, CDbl(v))
         If Not rmCodeSet.Exists(subSC) Then
             If InStr(unresolved, subSC) = 0 Then unresolved = unresolved & subSC & "; "
         End If
@@ -296,25 +343,6 @@ Private Function CatalystShortCode(catName As String, knownIntermediates As Obje
     CatalystShortCode = code
 End Function
 
-' M_BOMの(Intermediate, RM_Code)行を1件登録/更新する共通処理。
-Private Sub UpsertBomRow(bomTbl As ListObject, pairIndex As Object, inter As String, rmCode As String, _
-        qty As Double, ByRef updated As Long, ByRef added As Long)
-    Dim pk As String: pk = inter & "|" & rmCode
-    If pairIndex.Exists(pk) Then
-        Dim rowN As Long: rowN = pairIndex(pk)
-        bomTbl.ListRows(rowN).Range.Cells(1, 3).Value = qty
-        updated = updated + 1
-    Else
-        Dim newRow As ListRow
-        Set newRow = bomTbl.ListRows.Add
-        newRow.Range.Cells(1, 1).Value = inter
-        newRow.Range.Cells(1, 2).Value = rmCode
-        newRow.Range.Cells(1, 3).Value = qty
-        pairIndex(pk) = newRow.Index
-        added = added + 1
-    End If
-End Sub
-
 Private Function SheetExists(wb As Workbook, sName As String) As Boolean
     Dim sh As Worksheet
     On Error Resume Next
@@ -336,7 +364,7 @@ Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPai
     If nWeeks <= 0 Then Exit Sub
 
     ' M_BOMを「材料コード -> その材料を使う中間体名の一覧(登場順、重複除去)」の
-    ' Dictionaryにまとめる(1回だけ配列読み込み。既存のBuildPairIndex等と同じ設計方針)。
+    ' Dictionaryにまとめる(1回だけ配列読み込み)。
     Dim byMat As Object: Set byMat = CreateObject("Scripting.Dictionary")
     byMat.CompareMode = vbTextCompare
     Dim bomN As Long: bomN = bomTbl.ListRows.Count

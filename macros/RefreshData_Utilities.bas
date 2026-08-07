@@ -17,7 +17,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開�
 '
 '   RefreshData_Utilities      : このモジュール。Public Const(MD_HEADER_ROW等)と、
 '                                 複数モジュールから共通で使うヘルパー関数
-'                                 (BuildNameIndex/BuildPairIndex/NormalizeText/
+'                                 (BuildNameIndex/NormalizeText/
 '                                 WeekIndexForDate/ColLetter)。他の全モジュールが
 '                                 これに依存するため、最初にインポートしてください。
 '   RefreshData_ProductionPlan : RefreshWeeklyBatches（「Powder & Slurry & Pgm Plan」を
@@ -80,12 +80,19 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開�
 '
 ' 【パフォーマンスについて】どのRefresh*マクロも、外部ファイルのシートを1セルずつ.Cells(r,c).Value
 ' で読む代わりに、対象範囲を1回だけ配列として読み込み(Range.Value)、以降はメモリ上の配列だけを
-' 参照する設計にしています。また、PP_Grid(中間体名->行番号)・M_BOM(Intermediate|RM_Code->行番号)・
+' 参照する設計にしています。また、PP_Grid(中間体名->行番号)・
 ' T_SelfStock_Log/T_TTAFStock_Log((RM_Code,週の月曜日)->行番号)への書き込みも、呼び出すたびに
 ' .Find()や全行スキャンをする代わりに、実行の最初にDictionaryを1回だけ作って参照する設計です
-' （このモジュールのBuildNameIndex/BuildPairIndex、RefreshData_StockActualsのBuildStockRowIndex）。
+' （このモジュールのBuildNameIndex、RefreshData_StockActualsのBuildStockRowIndex）。
 ' これは実際にExcelが強制終了する不具合(1セルずつの読み書きや毎回の全行スキャンがCOM通信の
 ' 積み重ねで極めて遅くなることが原因)が複数回報告されたことを受けての対策です。
+'
+' 【M_BOMへの書き込みについて】RefreshBOMは、Look Upから読み取った新しいBOM内容を一旦メモリ上の
+' Dictionaryに組み立ててから、M_BOM全体を1回のブロック書き込み(Range.Formula = 2次元配列)で
+' 丸ごと置き換える設計にしています。以前は行ごとにListRows.Addで追加していましたが、M_BOMは
+' Grid_Requirement・Material_Detail・PP_Gridのパススルー数式など非常に多くの数式から参照されて
+' いるため、行を1行追加するたびにそれら全ての依存関係の再チェックが走り、行数が千を超える
+' あたりから実質的にフリーズするほど遅くなる不具合が実際に報告されたための対策です。
 '
 ' 【既存行の更新に.DataBodyRangeを使わない理由】RefreshBOM/RefreshWeeklyBatchesの実行時に
 ' 「(91) オブジェクト変数または With ブロック変数が設定されていません」というエラーが報告され
@@ -125,28 +132,6 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開�
 ' 【注意】この環境ではVBAを実際に実行して検証できません。貴社のExcelで動作確認を
 '        お願いします。エラーが出た場合は内容を教えてください。
 ' ============================================================================
-
-' tblの1・2列目から「1列目の値|2列目の値」->行番号のDictionaryを1回だけ作る。
-' M_BOM(Intermediate|RM_Code)など、「先頭2列の組み合わせで行を特定する」テーブル用の
-' 汎用ヘルパー。RefreshData_BOMが使う共通処理。
-' BuildNameIndexと同じ理由でCompareMode=vbTextCompareにしている(大文字小文字を区別すると、
-' 取込元ファイル側の表記ゆれ(例:Catalyst名から抽出した短縮コードの大文字小文字が既存の
-' M_BOM行とわずかに異なる)で同じ組み合わせを別物と誤判定してしまい、実行するたびに
-' M_BOMへ重複行が積み上がっていく不具合につながるため)。
-Public Function BuildPairIndex(tbl As ListObject) As Object
-    Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
-    idx.CompareMode = vbTextCompare
-    Dim n As Long: n = tbl.ListRows.Count
-    If n > 0 Then
-        Dim data As Variant
-        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value
-        Dim i As Long
-        For i = 1 To n
-            idx(CStr(data(i, 1)) & "|" & CStr(data(i, 2))) = i
-        Next i
-    End If
-    Set BuildPairIndex = idx
-End Function
 
 ' tblの指定した1列(colName)の値->行番号のDictionaryを1回だけ作る。
 ' 旧実装は.Find()を使っており、Excelの既定の挙動として大文字/小文字を区別しない
