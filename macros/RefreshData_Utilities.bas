@@ -144,13 +144,18 @@ Public Function BuildNameIndex(tbl As ListObject, colName As String) As Object
     Dim n As Long: n = tbl.ListRows.Count
     If n = 1 Then
         Dim colPos As Long: colPos = tbl.ListColumns(colName).Index
-        idx(CStr(tbl.ListRows(1).Range.Cells(1, colPos).Value)) = 1
+        idx(Trim(CStr(tbl.ListRows(1).Range.Cells(1, colPos).Value))) = 1
     ElseIf n > 1 Then
         Dim data As Variant
         data = tbl.ListColumns(colName).DataBodyRange.Value
         Dim i As Long
         For i = 1 To n
-            Dim k As String: k = CStr(data(i, 1))
+            ' Trim()しておかないと、M_RawMaterials側のセルに前後の余分な空白が
+            ' 紛れ込んでいた場合、呼び出し側でTrim()済みの文字列と比較しても
+            ' 一致せず、該当行だけ静かに照合漏れする不具合につながる
+            ' (実際にEster Film/Original Towel/PP FilmがRefreshSelfStockで
+            ' 反映されない不具合として発覚した)。
+            Dim k As String: k = Trim(CStr(data(i, 1)))
             If Not idx.Exists(k) Then idx(k) = i
         Next i
     End If
