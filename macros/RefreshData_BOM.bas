@@ -40,6 +40,14 @@ Option Explicit
 '                だけを安全な形に書き換える。どの中間体をパススルーにするか自体は変更しない
 '                (既に数式が入っているセルの中身だけを直す)。
 '
+'   FixTheoreticalStockMonthlyReset : Grid_TheoreticalStock(理論在庫)は、運用開始時点
+'                (T_OpeningStock)から一度もリセットされず、実績を一切見ないままロール
+'                フォワードし続ける仕様だったため、長期間経つと誤差が無限に積み上がって
+'                しまう。このマクロは、月が変わる最初の週だけ前週の実在庫(Grid_Stock)を
+'                起点に再同期するよう数式を書き換え、「毎月リセットして今月分の計画と
+'                実績のズレだけを見たい」という要望に対応する。週1列目(T_OpeningStock起点)
+'                は対象外。何度実行しても同じ結果になるため再実行しても安全。
+'
 ' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
 ' モジュール冒頭のコメントを参照してください。
 ' ============================================================================
@@ -254,6 +262,65 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "修正処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+End Sub
+
+' Grid_TheoreticalStock(理論在庫)の数式を、月が変わる最初の週だけGrid_Stock(実在庫)を
+' 起点に再同期する形に書き換える。それ以外の週は従来通り「前週の理論在庫+入庫-消費」の
+' ロールフォワードのまま(週1列目はT_OpeningStock起点のままで対象外)。以前は運用開始時点
+' から一度もリセットされず誤差が無限に積み上がっていく仕様だったが、「月1回リセットして
+' 今月の計画と実績のズレだけを見たい」という要望に対応する。何度実行しても同じ結果になる
+' ため、再実行しても安全。build_soh.pyで新規に作られるブックは最初からこの数式で生成される。
+Sub FixTheoreticalStockMonthlyReset()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
+    Dim dataRange As Range: Set dataRange = theoTbl.DataBodyRange
+    If dataRange Is Nothing Then
+        MsgBox "Grid_TheoreticalStockにデータ行がありません。", vbExclamation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim firstDataRow As Long: firstDataRow = dataRange.Row
+    Dim firstDataCol As Long: firstDataCol = dataRange.Column
+    Dim nRows As Long: nRows = dataRange.Rows.Count
+    Dim nCols As Long: nCols = dataRange.Columns.Count  ' 1列目=Part Name, 2列目=Week1, 3列目=Week2...
+
+    Dim allFormulas As Variant: allFormulas = dataRange.Formula
+
+    Dim r As Long, c As Long, fixedCells As Long: fixedCells = 0
+    For r = 1 To nRows
+        Dim actualRow As Long: actualRow = firstDataRow + r - 1
+        For c = 3 To nCols  ' 2列目(週1)はT_OpeningStock起点のままなので対象外
+            Dim w As Long: w = c - 1
+            Dim curCol As String: curCol = ColLetter(firstDataCol + c - 1)
+            Dim prevCol As String: prevCol = ColLetter(firstDataCol + c - 2)
+            Dim monthChanged As String
+            monthChanged = "INDEX(Cal_Weeks[MonthYearLabel]," & w & ")<>INDEX(Cal_Weeks[MonthYearLabel]," & (w - 1) & ")"
+            Dim theoPrior As String
+            theoPrior = "IF(" & monthChanged & ",'Grid_Stock'!" & prevCol & actualRow & "," & prevCol & actualRow & ")"
+            allFormulas(r, c) = "=" & theoPrior & "+'Grid_Incoming'!" & curCol & actualRow & "-'Grid_Requirement'!" & curCol & actualRow
+            fixedCells = fixedCells + 1
+        Next c
+    Next r
+
+    dataRange.Formula = allFormulas
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "Grid_TheoreticalStockを月次リセット方式に更新しました。" & vbCrLf & _
+           "書き換えたセル数: " & fixedCells, vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum2 As Long: errNum2 = Err.Number
+    Dim errMsg2 As String: errMsg2 = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "修正処理でエラーが発生しました: (" & errNum2 & ") " & errMsg2, vbCritical
 End Sub
 
 ' Slurry Data Base/Powder Data Base/Solutionシート共通の処理。行そのままA列=Intermediate、

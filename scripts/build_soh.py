@@ -666,13 +666,16 @@ for i, r in enumerate(rm_master):
         )
 
         # Grid_TheoreticalStock: T_StockCount・自社/TTAF実績を一切見ない、純粋な
-        # 「前週+入庫-消費」のロールフォワードのみ(Grid_Stockの優先順位チェーンとは無関係に、
-        # 常にこの計算式だけを使う)。Dashboardの「理論在庫」行として、実際の値(Grid_Stock=
-        # 「実在庫」行)との乖離を確認するために参照する。
+        # 「前週+入庫-消費」のロールフォワードだが、月が変わる最初の週だけは前週の
+        # 実在庫(Grid_Stock)を起点に再同期する(月をまたいで誤差が無限に積み上がるのを防ぎ、
+        # 「今月の計画と実績がどれだけずれているか」を毎月リセットして確認できるようにする
+        # ため)。Dashboardの「理論在庫」行として、実際の値(Grid_Stock=「実在庫」行)との
+        # 乖離を確認するために参照する。
         if w == 1:
             theo_prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
-            theo_prior = f"{week_col(w-1)}{rr}"
+            month_changed = f"INDEX(Cal_Weeks[MonthYearLabel],{w})<>INDEX(Cal_Weeks[MonthYearLabel],{w-1})"
+            theo_prior = f"IF({month_changed},'Grid_Stock'!{week_col(w-1)}{rr},{week_col(w-1)}{rr})"
         ws_theo.cell(row=rr, column=1 + w).value = (
             f"={theo_prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
         )
