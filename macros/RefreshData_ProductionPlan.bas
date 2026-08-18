@@ -115,10 +115,19 @@ Sub RefreshWeeklyBatches()
     updatedCells = 0
     newInterRows = 0
 
+    ' 【重要】PP_Gridはこのブックの中でも最も多くの数式(Grid_Requirement・M_BOMの
+    ' PPGridRow経由の各種SUMPRODUCT等)から参照される重量級のテーブル。以前のRefreshBOM
+    ' (M_BOM)と同様、この規模のテーブルに対して.Cells().Value=をセル単位でループ実行すると、
+    ' 中間体数(~90)×週数(~104)=9千件超のCOM呼び出しが積み重なりExcelが応答なしになる
+    ' (実際に「重すぎてエクセルが止まる」不具合として報告された)。そのため、
+    ' ①新規中間体行の追加(通常0〜数件)だけを先に済ませてから、②テーブル全体を配列で
+    ' 1回読み込み→メモリ上で全セルを書き換え→最後に1回だけ配列を書き戻す、という
+    ' RefreshBOMと同じ「まとめて1回で書き込む」方式に統一する。
+    Dim canonNames As Object: Set canonNames = CreateObject("Scripting.Dictionary")
     Dim r As Long
     For r = hdrRow + 1 To usedRows
         Dim rawName As String: rawName = Trim(CStr(data(r, 2)))
-        If Len(rawName) = 0 Then GoTo NextRow
+        If Len(rawName) = 0 Then GoTo NextRowNames
 
         Dim canonName As String
         If solutionAlias.Exists(rawName) Then
@@ -126,9 +135,23 @@ Sub RefreshWeeklyBatches()
         Else
             canonName = rawName
         End If
+        canonNames(r) = canonName
 
-        Dim ppRowIndex As Long
-        ppRowIndex = FindOrAddIntermediateRow(ppGrid, ppIdx, canonName, newInterRows)
+        If Not ppIdx.Exists(canonName) Then
+            Dim newRow As ListRow
+            Set newRow = ppGrid.ListRows.Add
+            newRow.Range.Cells(1, 1).Value = canonName
+            ppIdx(canonName) = newRow.Index
+            newInterRows = newInterRows + 1
+        End If
+NextRowNames:
+    Next r
+
+    Dim ppArr As Variant: ppArr = ppGrid.DataBodyRange.Value
+
+    For r = hdrRow + 1 To usedRows
+        If Not canonNames.Exists(r) Then GoTo NextRow
+        Dim ppRowIndex As Long: ppRowIndex = ppIdx(canonNames(r))
 
         Dim keyVariant As Variant
         For Each keyVariant In dateCols.Keys
@@ -136,12 +159,14 @@ Sub RefreshWeeklyBatches()
                 Dim colIdx As Long: colIdx = weekColByDate(dateCols(keyVariant))
                 Dim v As Double: v = 0
                 If IsNumeric(data(r, keyVariant)) Then v = data(r, keyVariant)
-                ppGrid.ListRows(ppRowIndex).Range.Cells(1, colIdx).Value = v
+                ppArr(ppRowIndex, colIdx) = v
                 updatedCells = updatedCells + 1
             End If
         Next keyVariant
 NextRow:
     Next r
+
+    ppGrid.DataBodyRange.Value = ppArr
 
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
     ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
@@ -209,20 +234,4 @@ Private Function FindDateHeaderRow(data As Variant, usedRows As Long, usedCols A
         End If
     Next r
     FindDateHeaderRow = 0
-End Function
-
-' ppIdx(中間体名->PP_Grid内の行番号)を使い、.Find()を毎回呼ばずに済ませる。
-' 新規追加時はppIdxにもその場で登録し、同じ実行内で同じ中間体が再度出てきても
-' 重複追加せず既存行を再利用できるようにする。
-Private Function FindOrAddIntermediateRow(ppGrid As ListObject, ppIdx As Object, interName As String, ByRef newInterRows As Long) As Long
-    If ppIdx.Exists(interName) Then
-        FindOrAddIntermediateRow = ppIdx(interName)
-    Else
-        Dim newRow As ListRow
-        Set newRow = ppGrid.ListRows.Add
-        newRow.Range.Cells(1, 1).Value = interName
-        newInterRows = newInterRows + 1
-        FindOrAddIntermediateRow = newRow.Index
-        ppIdx(interName) = newRow.Index
-    End If
 End Function
