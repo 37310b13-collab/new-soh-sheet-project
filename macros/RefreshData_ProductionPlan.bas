@@ -115,15 +115,21 @@ Sub RefreshWeeklyBatches()
     updatedCells = 0
     newInterRows = 0
 
-    ' 【重要】PP_Gridはこのブックの中でも最も多くの数式(Grid_Requirement・M_BOMの
-    ' PPGridRow経由の各種SUMPRODUCT等)から参照される重量級のテーブル。以前のRefreshBOM
-    ' (M_BOM)と同様、この規模のテーブルに対して.Cells().Value=をセル単位でループ実行すると、
-    ' 中間体数(~90)×週数(~104)=9千件超のCOM呼び出しが積み重なりExcelが応答なしになる
-    ' (実際に「重すぎてエクセルが止まる」不具合として報告された)。そのため、
-    ' ①新規中間体行の追加(通常0〜数件)だけを先に済ませてから、②テーブル全体を配列で
-    ' 1回読み込み→メモリ上で全セルを書き換え→最後に1回だけ配列を書き戻す、という
-    ' RefreshBOMと同じ「まとめて1回で書き込む」方式に統一する。
+    ' 【重要】PP_Gridの行には2種類ある。①このファイルに直接載っている中間体/完成品/Solution
+    ' (通常の行。週次バッチ数は値として書き込む)と、②M_BOM経由で他の中間体から算出する
+    ' 「パススルー中間体」(週次バッチ数はSUMPRODUCT数式。このファイルには行として登場しない)。
+    ' そのため、テーブル全体を配列で読み込んで書き戻す方式(以前試した版)は、パススルー
+    ' 中間体の行の数式まで「その時点の計算結果の値」で上書きしてしまい、数式を破壊する
+    ' 事故になる。書き込みは、このファイルに実際に登場した行だけに絞る必要がある。
+    '
+    ' また、新規中間体行の追加(ListRows.Add)を1件ずつループで呼ぶと、PP_Gridのように
+    ' 多数の数式から参照される重量級テーブルでは1件ごとに依存関係の再チェックが走り、
+    ' 新規行が多い場合(名称の突き合わせ漏れ等で本来一致するはずの行が軒並み「新規」と
+    ' 判定された場合を含む)にExcelが応答なしになる(以前のRefreshBOMのM_BOMと同じ不具合)。
+    ' そのため新規行はまず件数をすべて数えてから、テーブルを1回のResizeでまとめて拡張し、
+    ' 中間体名の列だけ1回の配列書き込みで埋める。
     Dim canonNames As Object: Set canonNames = CreateObject("Scripting.Dictionary")
+    Dim newNames As Object: Set newNames = CreateObject("Scripting.Dictionary")
     Dim r As Long
     For r = hdrRow + 1 To usedRows
         Dim rawName As String: rawName = Trim(CStr(data(r, 2)))
@@ -137,21 +143,38 @@ Sub RefreshWeeklyBatches()
         End If
         canonNames(r) = canonName
 
-        If Not ppIdx.Exists(canonName) Then
-            Dim newRow As ListRow
-            Set newRow = ppGrid.ListRows.Add
-            newRow.Range.Cells(1, 1).Value = canonName
-            ppIdx(canonName) = newRow.Index
-            newInterRows = newInterRows + 1
+        If Not ppIdx.Exists(canonName) And Not newNames.Exists(canonName) Then
+            newNames(canonName) = True
         End If
 NextRowNames:
     Next r
 
-    Dim ppArr As Variant: ppArr = ppGrid.DataBodyRange.Value
+    If newNames.Count > 0 Then
+        Dim oldRowCount As Long: oldRowCount = ppGrid.ListRows.Count
+        ppGrid.Resize ppGrid.Range.Resize(ppGrid.Range.Rows.Count + newNames.Count, ppGrid.Range.Columns.Count)
+        Dim newNameArr() As Variant
+        ReDim newNameArr(1 To newNames.Count, 1 To 1)
+        Dim ni As Long: ni = 0
+        Dim nameKey As Variant
+        For Each nameKey In newNames.Keys
+            ni = ni + 1
+            newNameArr(ni, 1) = nameKey
+            ppIdx(CStr(nameKey)) = oldRowCount + ni
+            newInterRows = newInterRows + 1
+        Next nameKey
+        ppGrid.ListColumns(1).DataBodyRange.Resize(newNames.Count, 1).Offset(oldRowCount, 0).Value = newNameArr
+    End If
 
+    ' このファイルに登場した行だけを対象に、行ごと(セルごとではなく)にまとめて読み込み→
+    ' メモリ上で該当週だけ書き換え→行ごと書き戻す(パススルー中間体の行には一切触れない)。
+    Dim touchedRows As Object: Set touchedRows = CreateObject("Scripting.Dictionary")
     For r = hdrRow + 1 To usedRows
         If Not canonNames.Exists(r) Then GoTo NextRow
         Dim ppRowIndex As Long: ppRowIndex = ppIdx(canonNames(r))
+        If Not touchedRows.Exists(ppRowIndex) Then
+            touchedRows(ppRowIndex) = ppGrid.ListRows(ppRowIndex).Range.Value
+        End If
+        Dim rowArr As Variant: rowArr = touchedRows(ppRowIndex)
 
         Dim keyVariant As Variant
         For Each keyVariant In dateCols.Keys
@@ -159,14 +182,18 @@ NextRowNames:
                 Dim colIdx As Long: colIdx = weekColByDate(dateCols(keyVariant))
                 Dim v As Double: v = 0
                 If IsNumeric(data(r, keyVariant)) Then v = data(r, keyVariant)
-                ppArr(ppRowIndex, colIdx) = v
+                rowArr(1, colIdx) = v
                 updatedCells = updatedCells + 1
             End If
         Next keyVariant
+        touchedRows(ppRowIndex) = rowArr
 NextRow:
     Next r
 
-    ppGrid.DataBodyRange.Value = ppArr
+    Dim rowKey As Variant
+    For Each rowKey In touchedRows.Keys
+        ppGrid.ListRows(CLng(rowKey)).Range.Value = touchedRows(rowKey)
+    Next rowKey
 
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
     ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
