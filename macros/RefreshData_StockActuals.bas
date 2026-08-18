@@ -73,19 +73,25 @@ Sub RefreshSelfStock()
     Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
 
     Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock")
-    ' シートを1セルずつ読むと遅くなるため、対象範囲(9〜200行, A〜J列)を1回だけ配列で読み込む
+    ' シートを1セルずつ読むと遅くなるため、対象範囲(9〜200行, A〜L列)を1回だけ配列で読み込む。
+    ' J列(Total)はK列+L列の数式だが、Workbooks.Openの直前にApplication.Calculation=
+    ' xlCalculationManualへ切り替えているため、取込元ファイルが最後に保存された時点の
+    ' キャッシュ済みの計算結果がそのまま返ってきてしまう(再計算されない)。これによりJ列の
+    ' 値が実態と食い違う(古いまま)ケースが実際に報告されたため、J列の数式結果には頼らず、
+    ' K列・L列を直接読んでVBA側で合計する(取込元ファイルの再計算状態に一切左右されない)。
     Dim data As Variant
-    data = sh.Range(sh.Cells(9, 1), sh.Cells(200, 10)).Value
+    data = sh.Range(sh.Cells(9, 1), sh.Cells(200, 12)).Value
     Dim r As Long, added As Long, updated As Long
     added = 0: updated = 0
     For r = 1 To (200 - 9 + 1)
         Dim code As String
         code = Trim(CStr(data(r, 3)))
         If Len(code) > 0 And rmCodeSet.Exists(code) Then
-            Dim v As Variant: v = data(r, 10)
-            If IsNumeric(v) Then
-                Call UpsertStockRowIndexed(selfTbl, selfIdx, code, reportDate, CDbl(v), added, updated)
-            End If
+            Dim vK As Double: vK = 0
+            Dim vL As Double: vL = 0
+            If IsNumeric(data(r, 11)) Then vK = CDbl(data(r, 11))
+            If IsNumeric(data(r, 12)) Then vL = CDbl(data(r, 12))
+            Call UpsertStockRowIndexed(selfTbl, selfIdx, code, reportDate, vK + vL, added, updated)
         End If
     Next r
 
