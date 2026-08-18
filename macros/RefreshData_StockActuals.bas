@@ -6,7 +6,10 @@ Option Explicit
 '
 '   RefreshSelfStock : 「Raw materials daily check」(自社倉庫の現物確認シート、ファイル名に
 '                      DD.MM.YYYY形式の日付を含む)を選択すると、T_SelfStockにその週の実績を
-'                      追加/更新する。毎週月曜の朝に確認する運用のため、ファイル名の日付は
+'                      追加/更新する。「CHEMICAL SOH」シート(B列=CSA/コード、C列・D列=在庫
+'                      〈化学品セクションはC=WH・D=Floor、Substrate/Consumablesセクションは
+'                      C=Floor・D=WHと列の意味が入れ替わるが、在庫合計は単純にC+D)を読む。
+'                      毎週月曜の朝に確認する運用のため、ファイル名の日付は
 '                      「その週の月曜(祝日の場合は翌営業日)」だが、これは前週末時点の在庫を
 '                      表す。そのため7日引いてから対象週を判定する(RefreshTTAFStockと同じ考え方。
 '                      詳細は下のRefreshTTAFStockの説明を参照)。
@@ -72,26 +75,34 @@ Sub RefreshSelfStock()
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
     Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
 
-    Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock")
-    ' シートを1セルずつ読むと遅くなるため、対象範囲(9〜200行, A〜L列)を1回だけ配列で読み込む。
-    ' J列(Total)はK列+L列の数式だが、Workbooks.Openの直前にApplication.Calculation=
-    ' xlCalculationManualへ切り替えているため、取込元ファイルが最後に保存された時点の
-    ' キャッシュ済みの計算結果がそのまま返ってきてしまう(再計算されない)。これによりJ列の
-    ' 値が実態と食い違う(古いまま)ケースが実際に報告されたため、J列の数式結果には頼らず、
-    ' K列・L列を直接読んでVBA側で合計する(取込元ファイルの再計算状態に一切左右されない)。
+    ' 「Stock」シートのJ列(Total)ではなく「CHEMICAL SOH」シートを直接使う。「Stock」側は
+    ' 化学品がK列+L列の数式、Substrateは別シートを参照するVLOOKUPと、材料の種類によって
+    ' 仕組みがバラバラな上に、どちらもWorkbooks.Open直後は再計算されず取込元ファイルの
+    ' 保存時点のキャッシュ値のまま(古いまま)読み込まれてしまう問題があった。「CHEMICAL SOH」
+    ' シートは化学品・Substrate・Ester Film/Original Towel/PP Film等の実測値が全て
+    ' B列(CSA/コード)・C列・D列という共通の生データとして入っている(化学品セクションは
+    ' C=WH,D=Floor、それ以降のセクションはC=Floor,D=WHと列の意味が入れ替わるが、どちらに
+    ' せよ在庫合計はC+D列の単純合計になるため、セクションを区別する必要はない)。
+    ' なお、MATコード(18456-xxxxx)はこのシートに載っておらず「Stock」シート側にしかない。
+    ' MATは自社在庫の管理対象外のため未対応のままにしている。
+    Dim sh As Worksheet: Set sh = srcWb.Sheets("CHEMICAL SOH")
+    ' シートを1セルずつ読むと遅くなるため、対象範囲(5〜300行, A〜D列)を1回だけ配列で読み込む。
     Dim data As Variant
-    data = sh.Range(sh.Cells(9, 1), sh.Cells(200, 12)).Value
+    data = sh.Range(sh.Cells(5, 1), sh.Cells(300, 4)).Value
     Dim r As Long, added As Long, updated As Long
     added = 0: updated = 0
-    For r = 1 To (200 - 9 + 1)
+    For r = 1 To (300 - 5 + 1)
         Dim code As String
-        code = Trim(CStr(data(r, 3)))
-        If Len(code) > 0 And rmCodeSet.Exists(code) Then
-            Dim vK As Double: vK = 0
-            Dim vL As Double: vL = 0
-            If IsNumeric(data(r, 11)) Then vK = CDbl(data(r, 11))
-            If IsNumeric(data(r, 12)) Then vL = CDbl(data(r, 12))
-            Call UpsertStockRowIndexed(selfTbl, selfIdx, code, reportDate, vK + vL, added, updated)
+        code = Trim(CStr(data(r, 2)))
+        If Len(code) > 0 Then
+            Dim matchedCode As String: matchedCode = ResolveSelfStockCode(rmTbl, rmCodeSet, code)
+            If Len(matchedCode) > 0 Then
+                Dim vC As Double: vC = 0
+                Dim vD As Double: vD = 0
+                If IsNumeric(data(r, 3)) Then vC = CDbl(data(r, 3))
+                If IsNumeric(data(r, 4)) Then vD = CDbl(data(r, 4))
+                Call UpsertStockRowIndexed(selfTbl, selfIdx, matchedCode, reportDate, vC + vD, added, updated)
+            End If
         End If
     Next r
 
@@ -250,6 +261,31 @@ Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object
         Next i
     End If
 End Sub
+
+' RefreshSelfStockが使う。「CHEMICAL SOH」シートのB列(CSA/コード)がM_RawMaterialsの
+' Part Nameと完全一致すればそのまま返す。見つからなければ"0"(ゼロ)/"O"(オー)の表記ゆれ
+' 〈例:"0JN" vs "OJN"。daily check・CSA Report等TTAF側の複数ファイルで繰り返し見つかって
+' いる〉を両方向で読み替えて試す。見つかった場合はM_RawMaterials側の正式な表記(Part Name)
+' を返す(取込元ファイルの表記ゆれのまま書き込むと、既存のT_SelfStock_Log行や他シートの
+' 正式表記と食い違い、グリッド表示側で該当材料として認識されなくなるため)。
+' どれでも見つからなければ空文字を返す。
+Private Function ResolveSelfStockCode(rmTbl As ListObject, rmCodeSet As Object, codeRaw As String) As String
+    If rmCodeSet.Exists(codeRaw) Then
+        ResolveSelfStockCode = Trim(CStr(rmTbl.ListRows(rmCodeSet(codeRaw)).Range.Cells(1, 1).Value))
+        Exit Function
+    End If
+    Dim zeroToO As String: zeroToO = Replace(codeRaw, "0", "O")
+    If zeroToO <> codeRaw And rmCodeSet.Exists(zeroToO) Then
+        ResolveSelfStockCode = Trim(CStr(rmTbl.ListRows(rmCodeSet(zeroToO)).Range.Cells(1, 1).Value))
+        Exit Function
+    End If
+    Dim oToZero As String: oToZero = Replace(codeRaw, "O", "0")
+    If oToZero <> codeRaw And rmCodeSet.Exists(oToZero) Then
+        ResolveSelfStockCode = Trim(CStr(rmTbl.ListRows(rmCodeSet(oToZero)).Range.Cells(1, 1).Value))
+        Exit Function
+    End If
+    ResolveSelfStockCode = ""
+End Function
 
 ' TTAF_Codeでの照合を優先し、見つからなければPart No(C列。M_RawMaterialsのPart Nameが
 ' そのまま入っていることが多く、Descriptionより確実)で照合し、それでも見つからない場合だけ
