@@ -1011,14 +1011,19 @@ for i, r in enumerate(rm_master):
     ss_self_rng = f"'T_SelfStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
     ss_ttaf_rng = f"'T_TTAFStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
     ss_label_rng = f"'T_SelfStock'!${ss_first_col}${SS_TABLE_ROW}:${ss_last_col}${SS_TABLE_ROW}"
-    # 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。表示期間の最終週の値どうしを
-    # 比較するだけでよい。理由: 手動棚卸(T_StockCount)・自社/TTAF実績のどちらで補正されても、
-    # 補正が入った週以降は両シートとも「補正後の値+入庫-消費」を同じように積み上げていくため、
-    # 補正で生じた差分(乖離)はその週以降ずっと一定のまま変わらない(補正が無ければ差は常に0)。
-    # そのため、直近の実績週を特定するLOOKUP等を使わずに、表示している週の範囲でいちばん先
-    # (最終週)の値を単純に引き算するだけで、現時点までの累積乖離を取り出せる。
+    # 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。
+    # 【重要】理論在庫が月初にリセットされるようになったため(RefreshData_BOM.bas
+    # FixTheoreticalStockMonthlyReset参照)、表示期間の最終週(2年後)を見ても常にほぼ0にしか
+    # ならず意味が無い。代わりに「実績週」列(H列)と同じ基準(自社在庫実績が入っている
+    # 直近の週)の値どうしを比較することで、「今月に入ってからの計画と実績のズレ」を表示する。
+    # T_SelfStock・Grid_Stock・Grid_TheoreticalStockは同じweek_col()採番を共有しており
+    # (週1=B列, 週2=C列, ...で全シート共通)、列番号がそのまま使い回せる。
     gs_last_col = week_col(N_WEEKS)
-    diff_formula = f"='Grid_Stock'!{gs_last_col}{grow}-'Grid_TheoreticalStock'!{gs_last_col}{grow}"
+    last_actual_col_idx = f'LOOKUP(2,1/({ss_self_rng}<>""),COLUMN({ss_self_rng}))'
+    diff_formula = (
+        f"=IFERROR(INDEX('Grid_Stock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx})"
+        f"-INDEX('Grid_TheoreticalStock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx}),0)"
+    )
     for rr in (theo_rr, actual_rr):
         ws.cell(row=rr, column=1, value=rm)
         ws.cell(row=rr, column=2,
