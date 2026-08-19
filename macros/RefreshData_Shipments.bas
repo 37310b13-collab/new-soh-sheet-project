@@ -15,6 +15,11 @@ Option Explicit
 ' TTAF_Code/Description経由の照合(RefreshData_StockActuals側のResolveTTAFPart)ではなく、
 ' RM_Code同士を直接(大文字小文字・前後空白を無視して)照合する。
 '
+' T_ShipmentsはGrid_Incoming(材料×週のSUMIFS)から大量に参照される重量級テーブルのため、
+' RefreshBOM(M_BOM)・RefreshWeeklyBatches(PP_Grid)と同じ理由で、新規行はまとめて件数を
+' 数えてから1回のResizeで追加し、既存行の更新も行単位でまとめて読み書きする(1件ずつ
+' ListRows.Addを呼ぶとExcelが応答なしになる恐れがあるため)。
+'
 ' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
 ' モジュール冒頭のコメントを参照してください。
 ' ============================================================================
@@ -57,8 +62,16 @@ Sub RefreshShipments()
     Dim data As Variant
     data = sh.Range(sh.Cells(2, 1), sh.Cells(MAX_ROWS, 20)).Value
 
+    ' 【重要】T_ShipmentsはGrid_Incoming(材料×週のSUMIFS、90材料×104週分)から大量に参照される
+    ' テーブル。以前M_BOM(RefreshBOM)・PP_Grid(RefreshWeeklyBatches)で、新規行をListRows.Addで
+    ' 1件ずつ追加してExcelが応答なしになった不具合と同じ構造(重量級テーブル×大量の1件ずつAdd)
+    ' のため、ここでも新規行はまず件数を数えてから1回のResizeでまとめて追加する。既存行の
+    ' 更新も、行ごとに複数セルを個別に書き込むのではなく行単位でまとめて読み書きする。
     Dim r As Long, added As Long, updated As Long, unresolved As String
     added = 0: updated = 0: unresolved = ""
+    Dim updateVals As Object: Set updateVals = CreateObject("Scripting.Dictionary")  ' 行番号 -> Array(qty,eta,receivedDate,status,orderMonth)
+    Dim newRecords As Object: Set newRecords = CreateObject("Scripting.Dictionary")  ' "PartName|PO_No" -> Array(partName,poNo,qty,eta,receivedDate,status,orderMonth)
+
     For r = 1 To (MAX_ROWS - 2 + 1)
         Dim rmCodeRaw As String: rmCodeRaw = Trim(CStr(data(r, 4)))
         Dim poNo As String: poNo = Trim(CStr(data(r, 9)))
@@ -87,9 +100,59 @@ Sub RefreshShipments()
         Dim orderMonth As Variant: orderMonth = data(r, 7)
         If Not IsDate(orderMonth) Then orderMonth = Empty
 
-        Call UpsertShipmentRow(shipTbl, shipIdx, matchedPart, poNo, CDbl(qty), eta, receivedDate, statusVal, orderMonth, added, updated)
+        Dim key As String: key = matchedPart & "|" & poNo
+        If shipIdx.Exists(key) Then
+            updateVals(shipIdx(key)) = Array(CDbl(qty), eta, receivedDate, statusVal, orderMonth)
+            updated = updated + 1
+        Else
+            If Not newRecords.Exists(key) Then added = added + 1
+            newRecords(key) = Array(matchedPart, poNo, CDbl(qty), eta, receivedDate, statusVal, orderMonth)
+        End If
 NextRow:
     Next r
+
+    ' ---- 既存行の更新をまとめて反映(行ごとに読み込み→書き換え→書き戻しを1回ずつ) ----
+    Dim rowKey As Variant
+    For Each rowKey In updateVals.Keys
+        Dim rowN As Long: rowN = CLng(rowKey)
+        Dim uVals As Variant: uVals = updateVals(rowKey)
+        Dim rowArr As Variant: rowArr = shipTbl.ListRows(rowN).Range.Value
+        rowArr(1, 4) = uVals(0)
+        If Not IsEmpty(uVals(1)) Then rowArr(1, 5) = uVals(1)
+        If Not IsEmpty(uVals(2)) Then rowArr(1, 6) = uVals(2)
+        rowArr(1, 7) = uVals(3)
+        If Not IsEmpty(uVals(4)) Then rowArr(1, 9) = uVals(4)
+        shipTbl.ListRows(rowN).Range.Value = rowArr
+    Next rowKey
+
+    ' ---- 新規行をまとめて追加(1回のResize+配列書き込み。Effective_Week列は計算列の
+    ' 自動複製が効かないため、build_soh.pyのweek_index_formula_clampedと同じ式を明示的に書く) ----
+    If newRecords.Count > 0 Then
+        Dim oldRowCount As Long: oldRowCount = shipTbl.ListRows.Count
+        Dim nWeeksCal As Long: nWeeksCal = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+        shipTbl.Resize shipTbl.Range.Resize(shipTbl.Range.Rows.Count + newRecords.Count, shipTbl.Range.Columns.Count)
+        Dim nNew As Long: nNew = newRecords.Count
+        Dim outArr() As Variant
+        ReDim outArr(1 To nNew, 1 To 9)
+        Dim ni As Long: ni = 0
+        Dim recKey As Variant
+        For Each recKey In newRecords.Keys
+            ni = ni + 1
+            Dim rec As Variant: rec = newRecords(recKey)
+            Dim absRow As Long: absRow = oldRowCount + 1 + ni  ' このテーブルの新規行の実シート行番号(ヘッダー1行分+既存行+ni)
+            outArr(ni, 1) = rec(0)   ' Part Name
+            outArr(ni, 2) = rec(1)   ' PO_No
+            outArr(ni, 3) = Empty    ' Order_Date(手入力欄のため触れない)
+            outArr(ni, 4) = rec(2)   ' Confirmed_Qty
+            outArr(ni, 5) = rec(3)   ' Latest_ETA
+            outArr(ni, 6) = rec(4)   ' Received_Date
+            outArr(ni, 7) = rec(5)   ' Status
+            outArr(ni, 8) = "=IFERROR(MAX(1,MIN(" & nWeeksCal & ",INT((IF(F" & absRow & "="""",E" & absRow & ",F" & absRow & _
+                ")-(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3)))/7)+1)),"""")"
+            outArr(ni, 9) = rec(6)   ' Order_Month
+        Next recKey
+        shipTbl.ListRows(oldRowCount + 1).Range.Resize(nNew, 9).Formula = outArr
+    End If
 
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
     ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
@@ -155,33 +218,5 @@ End Function
 
 ' 列: Part Name(1), PO_No(2), Order_Date_発注日(3, 手入力のため触れない), Confirmed_Qty(4),
 ' Latest_ETA(5), Received_Date(6), Status(7), Effective_Week(8, 数式), Order_Month(9)。
-' Effective_Week(8列目)は数式列のため、新規行ではT_SelfStock_Log等と同様に直前行の数式を
-' FormulaR1C1でコピーする(VBAのListRows.Add経由では計算列の自動複製が効かないことがあるため)。
-Private Sub UpsertShipmentRow(tbl As ListObject, idx As Object, partName As String, poNo As String, qty As Double, _
-        eta As Variant, receivedDate As Variant, status As String, orderMonth As Variant, ByRef added As Long, ByRef updated As Long)
-    Dim key As String: key = partName & "|" & poNo
-    If idx.Exists(key) Then
-        Dim rowN As Long: rowN = idx(key)
-        tbl.ListRows(rowN).Range.Cells(1, 4).Value = qty
-        If Not IsEmpty(eta) Then tbl.ListRows(rowN).Range.Cells(1, 5).Value = eta
-        If Not IsEmpty(receivedDate) Then tbl.ListRows(rowN).Range.Cells(1, 6).Value = receivedDate
-        tbl.ListRows(rowN).Range.Cells(1, 7).Value = status
-        If Not IsEmpty(orderMonth) Then tbl.ListRows(rowN).Range.Cells(1, 9).Value = orderMonth
-        updated = updated + 1
-    Else
-        Dim newRow As ListRow
-        Set newRow = tbl.ListRows.Add
-        newRow.Range.Cells(1, 1).Value = partName
-        newRow.Range.Cells(1, 2).Value = poNo
-        newRow.Range.Cells(1, 4).Value = qty
-        If Not IsEmpty(eta) Then newRow.Range.Cells(1, 5).Value = eta
-        If Not IsEmpty(receivedDate) Then newRow.Range.Cells(1, 6).Value = receivedDate
-        newRow.Range.Cells(1, 7).Value = status
-        If Not IsEmpty(orderMonth) Then newRow.Range.Cells(1, 9).Value = orderMonth
-        If newRow.Index > 1 Then
-            newRow.Range.Cells(1, 8).FormulaR1C1 = tbl.ListRows(newRow.Index - 1).Range.Cells(1, 8).FormulaR1C1
-        End If
-        idx(key) = newRow.Index
-        added = added + 1
-    End If
-End Sub
+' Effective_Week(8列目)の数式は、RefreshShipments側で新規行をまとめて書き込む際に
+' build_soh.pyのweek_index_formula_clampedと同じ式を明示的に生成している。

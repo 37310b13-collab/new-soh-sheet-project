@@ -262,13 +262,17 @@ Sub AddMaterial()
             "=IF(" & hasCount & ">0," & countVal & ",IF((" & hasSelf & ")*(" & hasTTAF & ")>0," & selfVal & "+" & ttafVal & "," & normalExpr & "))"
 
         ' Grid_TheoreticalStock: T_StockCount・自社/TTAF実績を一切見ない、純粋な「前週+入庫-消費」
-        ' のロールフォワードのみ(Grid_Stockの優先順位チェーンとは無関係)。Dashboardの「理論在庫」行
-        ' として、実際の値(Grid_Stock=「実在庫」行)との乖離を確認するために参照する。
+        ' のロールフォワードだが、月が変わる最初の週だけは前週の実在庫(Grid_Stock)を起点に
+        ' 再同期する(FixTheoreticalStockMonthlyReset・build_soh.pyと同じ式。ここが古い
+        ' 「一度もリセットしない」式のままだと、AddMaterialで追加した材料だけ他の材料と
+        ' 挙動が食い違ってしまうため、必ず同じ式を使うこと)。
         Dim theoPriorExpr As String
         If w = 1 Then
             theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
         Else
-            theoPriorExpr = ColLetter(col - 1) & grow
+            Dim monthChangedExpr As String
+            monthChangedExpr = "INDEX(Cal_Weeks[MonthYearLabel]," & w & ")<>INDEX(Cal_Weeks[MonthYearLabel]," & (w - 1) & ")"
+            theoPriorExpr = "IF(" & monthChangedExpr & ",'Grid_Stock'!" & ColLetter(col - 1) & grow & "," & ColLetter(col - 1) & grow & ")"
         End If
         theoRow.Range.Cells(1, col).Value = _
             "=" & theoPriorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
@@ -548,11 +552,15 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     Dim ssSelfRng As String: ssSelfRng = "'T_SelfStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssTTAFRng As String: ssTTAFRng = "'T_TTAFStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssLabelRng As String: ssLabelRng = "'T_SelfStock'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
-    ' 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。表示期間の最終週どうしを
-    ' 比較するだけでよい(補正が入った週以降、差分はその後ずっと一定のまま変わらないため)。
+    ' 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。理論在庫が月初にリセット
+    ' されるため、表示期間の最終週(2年後)を見ても常にほぼ0にしかならない。実績週(8列目)と
+    ' 同じ基準(自社在庫実績が入っている直近の週)で比較する(build_soh.pyと同じ式)。
     Dim gsLastCol As String: gsLastCol = ColLetter(1 + nWeeks)
+    Dim lastActualColIdx As String
+    lastActualColIdx = "LOOKUP(2,1/(" & ssSelfRng & "<>""""),COLUMN(" & ssSelfRng & "))"
     Dim diffFormula As String
-    diffFormula = "='Grid_Stock'!" & gsLastCol & grow & "-'Grid_TheoreticalStock'!" & gsLastCol & grow
+    diffFormula = "=IFERROR(INDEX('Grid_Stock'!$A" & grow & ":$" & gsLastCol & grow & ",1," & lastActualColIdx & ")" & _
+        "-INDEX('Grid_TheoreticalStock'!$A" & grow & ":$" & gsLastCol & grow & ",1," & lastActualColIdx & "),0)"
 
     Dim rowsArr(1 To 2) As Long
     rowsArr(1) = theoRow
