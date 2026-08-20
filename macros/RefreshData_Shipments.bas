@@ -361,6 +361,111 @@ ErrHandler:
     MsgBox "更新処理でエラーが発生しました: (" & errNum3 & ") " & errMsg3, vbCritical
 End Sub
 
+' 【一度だけ実行する移行用マクロ】AddShipmentSplitColumns実行後、最初のRefreshShipments実行で
+' 新形式(Vessel/Container/Original_ETDが入った)行が追加されると、移行前から存在した旧形式の行
+' (Container・Original_ETDが両方とも空欄)は、複合キーが一致しないため以後RefreshShipmentsで
+' 二度と更新されずそのまま残り続ける。もしその旧形式行のPO番号がMaterial_Detail側でまだ
+' 確定([済])していなければ、SyncMaterialDetailOrdersは同じPO番号の旧行・新行の両方を合算して
+' しまい、実際より多い数量を発注予定として計上してしまう(二重計上)。
+' そのため、旧形式の行のうち、同じ材料+PO番号の新形式の行が既に存在するものだけを削除する
+' (新形式の行の方が正しい最新データなので、旧形式は完全に不要になっている。まだ新形式の行が
+' 無いPO番号の旧行はそのまま残す=削除しない。既に[済]で確定済みのPO番号は、そもそも
+' SyncMaterialDetailOrdersの集計対象から外れるため元々問題にならないが、対象PO番号の判定は
+' 単純にするため、確定済みかどうかは見ずに「新形式の行が存在するかどうか」だけで判定する)。
+' 【重要】実データ477件で確認した限り、コンテナ番号・Original ETDが両方空欄になることは
+' 無いため、「両方空欄」を旧形式行の判定条件として安全に使える。
+Sub CleanupOrphanedPreSplitShipmentRows()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
+
+    If shipTbl.ListColumns.Count < 12 Then
+        MsgBox "先に AddShipmentSplitColumns を実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim n As Long: n = shipTbl.ListRows.Count
+    If n = 0 Then
+        MsgBox "T_Shipmentsにデータがありません。", vbInformation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim data As Variant: data = shipTbl.DataBodyRange.Value
+
+    ' 新形式の行(コンテナ・Original ETDのどちらかが入力済み)がある「材料+PO番号」を集める
+    Dim hasNewFormat As Object: Set hasNewFormat = CreateObject("Scripting.Dictionary")
+    hasNewFormat.CompareMode = vbTextCompare
+    Dim i As Long
+    For i = 1 To n
+        Dim containerV As String: containerV = Trim(CStr(data(i, 11)))
+        Dim origEtdV As Variant: origEtdV = data(i, 12)
+        If Len(containerV) > 0 Or IsDate(origEtdV) Then
+            Dim mpKey As String: mpKey = Trim(CStr(data(i, 1))) & "|" & Trim(CStr(data(i, 2)))
+            If Not hasNewFormat.Exists(mpKey) Then hasNewFormat.Add mpKey, True
+        End If
+    Next i
+
+    ' 旧形式(コンテナ・Original ETDが両方空欄)の行のうち、新形式の行が既にある
+    ' 材料+PO番号のものだけを削除対象にする
+    Dim rowsToDelete As Object: Set rowsToDelete = CreateObject("Scripting.Dictionary")
+    For i = 1 To n
+        Dim containerV2 As String: containerV2 = Trim(CStr(data(i, 11)))
+        Dim origEtdV2 As Variant: origEtdV2 = data(i, 12)
+        If Len(containerV2) = 0 And Not IsDate(origEtdV2) Then
+            Dim poV As String: poV = Trim(CStr(data(i, 2)))
+            Dim mpKey2 As String: mpKey2 = Trim(CStr(data(i, 1))) & "|" & poV
+            If Len(poV) > 0 And hasNewFormat.Exists(mpKey2) Then rowsToDelete(i) = True
+        End If
+    Next i
+
+    Dim delCount As Long: delCount = rowsToDelete.Count
+    If delCount = 0 Then
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
+        MsgBox "削除対象の旧形式行はありませんでした(既にクリーンな状態です)。", vbInformation
+        Exit Sub
+    End If
+
+    ' 行番号の大きい方から順に削除する(小さい番号から消すとインデックスがずれるため)
+    Dim delRows() As Long
+    ReDim delRows(1 To delCount)
+    Dim delRow As Variant, di As Long: di = 0
+    For Each delRow In rowsToDelete.Keys
+        di = di + 1
+        delRows(di) = CLng(delRow)
+    Next delRow
+    Dim a As Long, b As Long, tmp As Long
+    For a = 1 To delCount - 1
+        For b = a + 1 To delCount
+            If delRows(b) > delRows(a) Then
+                tmp = delRows(a): delRows(a) = delRows(b): delRows(b) = tmp
+            End If
+        Next b
+    Next a
+    For a = 1 To delCount
+        shipTbl.ListRows(delRows(a)).Delete
+    Next a
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "二重計上の原因になり得る旧形式の行を " & delCount & " 件削除しました。" & vbCrLf & vbCrLf & _
+           "(移行前から存在し、同じ材料+PO番号の新形式の行に置き換わった行のみを削除しています。" & vbCrLf & _
+           "まだ新形式の行が無いPO番号の行には触れていません。削除後、あらためて" & vbCrLf & _
+           "RefreshShipmentsを実行してMaterial_Detailを最新状態に同期してください)", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum4 As Long: errNum4 = Err.Number
+    Dim errMsg4 As String: errMsg4 = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "処理中にエラーが発生しました: (" & errNum4 & ") " & errMsg4, vbCritical
+End Sub
+
 ' M_RawMaterialsのPart Name(=RM_Code)自体を正規化テキストでインデックス化する。
 ' TTAF_Code/Descriptionでの照合(RefreshData_StockActuals側のBuildTTAFCodeAndDescIndex)とは
 ' 別物: CSA Product Codeは既にRM_Codeとほぼ同じ表記のため、RM_Code同士を直接照合する方が確実。

@@ -58,6 +58,7 @@
 | `AddPONoRowToExistingMaterialBlocks` | （ファイル選択なし・実行するだけ） | Material_Detailの既存ブロックにPO_No行を追加する、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
 | `FixGridIncomingOrderFormula` | （ファイル選択なし・実行するだけ） | Grid_Incomingの数式を、Material_DetailのOrder行を優先して使う形に書き換える、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
 | `AddShipmentSplitColumns` | （ファイル選択なし・実行するだけ） | T_ShipmentsにVessel/Container/Original_ETD列を追加し、あわせて全行のEffective_Week数式を復元する移行用マクロ（分割出荷の欠落防止・数式破壊バグの修復、詳細は5.10.2〜5.10.3章。何度実行しても安全） |
+| `CleanupOrphanedPreSplitShipmentRows` | （ファイル選択なし・実行するだけ） | `AddShipmentSplitColumns`実行後、最初の`RefreshShipments`で二重計上の原因になり得る移行前の旧形式行を削除する移行用マクロ（詳細は5.10.5章。何度実行しても安全） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
@@ -627,6 +628,31 @@ T_Shipments全行のEffective_Week数式を正しい状態に一括で復元す�
 将来的に行数が多くなりすぎてパフォーマンスが気になるようであれば、「[済]が付いてから
 一定期間(例: 2年)経過した行を別の履歴シートに退避する」ような、月次程度のアーカイブ用マクロを
 追加で用意することは可能です。必要になった時点でご相談ください。
+
+### 5.10.5 移行直後の二重計上リスクとクリーンアップマクロ
+
+`AddShipmentSplitColumns`実行後、最初に`RefreshShipments`を実行すると、移行前から存在していた
+行（Container・Original_ETDが空欄）は新しい複合キーと一致しないため、実質すべて「更新」ではなく
+「追加」として扱われます（"追加:○件、更新:0件"という結果になるのはこのためで、想定どおりの
+動作です）。
+
+この結果、同じ材料・PO番号について「移行前の古い行」と「移行後の新しい行」が両方T_Shipments内に
+残ることになります。もしそのPO番号がMaterial_Detail側でまだ「[済]」で確定していなければ、
+`SyncMaterialDetailOrders`は古い行・新しい行の両方の数量を合算してしまい、実際より多い数量を
+発注予定として二重計上してしまう可能性があります（既に「[済]」で確定済みのPO番号は、
+そもそも同期処理の対象から外れるため元々問題になりません）。
+
+これを防ぐため、`CleanupOrphanedPreSplitShipmentRows`マクロを用意しました。同じ材料+PO番号で
+新形式の行が既に存在する「移行前の古い行」だけを判別して削除します（実データで確認した限り、
+コンテナ番号・Original ETDが両方空欄になることは無いため、「両方空欄」で移行前の行を確実に
+判別できます）。まだ新形式の行が無いPO番号（今回のCSA Reportにまだ登場していない出荷）の
+行には触れません。
+
+**実行手順**: `AddShipmentSplitColumns`実行後、最初に`RefreshShipments`を実行したら、続けて
+`CleanupOrphanedPreSplitShipmentRows`を一度実行し、その後もう一度`RefreshShipments`を実行して
+Material_Detailを最新状態に同期し直してください（このクリーンアップは移行直後の一過性の
+対応のため、それ以降は実行不要です。誤って複数回実行しても、既にクリーンな状態であれば
+「削除対象なし」と表示されるだけで安全です）。
 
 ## 6. 自動反映の仕組み
 
