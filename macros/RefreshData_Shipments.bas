@@ -10,11 +10,27 @@ Option Explicit
 '                      常に複数件のPOが並行して進むため)。
 '
 ' 列: D=CSA Product Code(材料コード)、G=CSA Order firm month(発注月)、I=CSA PO No.、
-' N=Confirmed Order Qty、Q=2 week transit to TTAF(Latest ETA[P列]+14日。実際の入荷予測に
-' 使うのはP列そのものではなくこちら)、S=Received At TTAF、T=Status。
+' K=Vessel、L=Container、N=Confirmed Order Qty、O=Original ETD、
+' Q=2 week transit to TTAF(Latest ETA[P列]+14日。実際の入荷予測に使うのはP列そのものでは
+' なくこちら)、S=Received At TTAF、T=Status。
 ' CSA Product CodeはTTAF PART NUMBERと異なり、既にこちらのRM_Codeとほぼ同じ表記のため、
 ' TTAF_Code/Description経由の照合(RefreshData_StockActuals側のResolveTTAFPart)ではなく、
 ' RM_Code同士を直接(大文字小文字・前後空白を無視して)照合する。
+'
+' 【重要】T_Shipmentsの一意キーについて。以前は「材料名＋PO番号」だけで行を一意に
+' 管理していたが、実際のCSA Reportでは同じ材料・同じPO番号が複数回に分けて届く分割出荷が
+' 頻繁にある(1つのPOで5行に分かれているケース等も普通にある)。材料名＋PO番号だけの
+' キーだとこれらが同じ行として扱われ、後から読んだ行が前の行を上書きし、実際には届いて
+' いるはずの数量が静かに失われる不具合があった(このプロジェクトの実データで55組も
+' 該当箇所が見つかった)。そのため、コンテナ番号(L列)・Original ETD(O列)まで含めた
+' 複合キーで行を区別する。それでも完全に同じ組み合わせ(同じコンテナに複数バッチが
+' 混載されている等、ごく稀なケース)が複数行ある場合だけ、ファイル内の出現順の連番で
+' 最終的に区別する(DateKeyStr/BuildShipmentRowIndex参照)。
+' 既存の運用中ブックはT_Shipmentsがまだ9列(Vessel/Container/Original_ETD列が無い)の
+' ため、このモジュールを貼り替えた後、一度だけ AddShipmentSplitColumns を実行して列を
+' 追加してから RefreshShipments を実行し直すこと。これにより、以前は材料名+PO番号の
+' 重複で上書きされて消えていた分割出荷の行が、複合キーで正しく区別されて自動的に
+' 追加され直す(過去に失われた数量が復元される)。
 '
 ' T_ShipmentsはGrid_Incoming(材料×週のSUMIFS)から大量に参照される重量級テーブルのため、
 ' RefreshBOM(M_BOM)・RefreshWeeklyBatches(PP_Grid)と同じ理由で、新規行はまとめて件数を
@@ -86,8 +102,11 @@ Sub RefreshShipments()
     ' 更新も、行ごとに複数セルを個別に書き込むのではなく行単位でまとめて読み書きする。
     Dim r As Long, added As Long, updated As Long, unresolved As String
     added = 0: updated = 0: unresolved = ""
-    Dim updateVals As Object: Set updateVals = CreateObject("Scripting.Dictionary")  ' 行番号 -> Array(qty,eta,receivedDate,status,orderMonth)
-    Dim newRecords As Object: Set newRecords = CreateObject("Scripting.Dictionary")  ' "PartName|PO_No" -> Array(partName,poNo,qty,eta,receivedDate,status,orderMonth)
+    Dim updateVals As Object: Set updateVals = CreateObject("Scripting.Dictionary")  ' 行番号 -> Array(qty,eta,receivedDate,status,orderMonth,vessel,container,origEtd)
+    Dim newRecords As Object: Set newRecords = CreateObject("Scripting.Dictionary")  ' 複合キー -> Array(partName,poNo,qty,eta,receivedDate,status,orderMonth,vessel,container,origEtd)
+    ' 複合キーの元(材料+PO番号+コンテナ+OriginalETD)ごとの、このファイル内での出現回数
+    Dim seqCounter As Object: Set seqCounter = CreateObject("Scripting.Dictionary")
+    seqCounter.CompareMode = vbTextCompare
 
     For r = 1 To (MAX_ROWS - 2 + 1)
         Dim rmCodeRaw As String: rmCodeRaw = Trim(CStr(data(r, 4)))
@@ -117,13 +136,28 @@ Sub RefreshShipments()
         Dim orderMonth As Variant: orderMonth = data(r, 7)
         If Not IsDate(orderMonth) Then orderMonth = Empty
 
-        Dim key As String: key = matchedPart & "|" & poNo
+        Dim vessel As String: vessel = Trim(CStr(data(r, 11)))
+        Dim container As String: container = Trim(CStr(data(r, 12)))
+        Dim origEtd As Variant: origEtd = data(r, 15)
+        If Not IsDate(origEtd) Then origEtd = Empty
+
+        Dim baseKey As String
+        baseKey = matchedPart & "|" & poNo & "|" & container & "|" & DateKeyStr(origEtd)
+        Dim seq As Long
+        If seqCounter.Exists(baseKey) Then
+            seq = seqCounter(baseKey) + 1
+        Else
+            seq = 1
+        End If
+        seqCounter(baseKey) = seq
+        Dim key As String: key = baseKey & "|" & seq
+
         If shipIdx.Exists(key) Then
-            updateVals(shipIdx(key)) = Array(CDbl(qty), eta, receivedDate, statusVal, orderMonth)
+            updateVals(shipIdx(key)) = Array(CDbl(qty), eta, receivedDate, statusVal, orderMonth, vessel, container, origEtd)
             updated = updated + 1
         Else
             If Not newRecords.Exists(key) Then added = added + 1
-            newRecords(key) = Array(matchedPart, poNo, CDbl(qty), eta, receivedDate, statusVal, orderMonth)
+            newRecords(key) = Array(matchedPart, poNo, CDbl(qty), eta, receivedDate, statusVal, orderMonth, vessel, container, origEtd)
         End If
 NextRow:
     Next r
@@ -139,6 +173,9 @@ NextRow:
         If Not IsEmpty(uVals(2)) Then rowArr(1, 6) = uVals(2)
         rowArr(1, 7) = uVals(3)
         If Not IsEmpty(uVals(4)) Then rowArr(1, 9) = uVals(4)
+        rowArr(1, 10) = uVals(5)
+        rowArr(1, 11) = uVals(6)
+        If Not IsEmpty(uVals(7)) Then rowArr(1, 12) = uVals(7)
         shipTbl.ListRows(rowN).Range.Value = rowArr
     Next rowKey
 
@@ -150,7 +187,7 @@ NextRow:
         shipTbl.Resize shipTbl.Range.Resize(shipTbl.Range.Rows.Count + newRecords.Count, shipTbl.Range.Columns.Count)
         Dim nNew As Long: nNew = newRecords.Count
         Dim outArr() As Variant
-        ReDim outArr(1 To nNew, 1 To 9)
+        ReDim outArr(1 To nNew, 1 To 12)
         Dim ni As Long: ni = 0
         Dim recKey As Variant
         For Each recKey In newRecords.Keys
@@ -167,8 +204,11 @@ NextRow:
             outArr(ni, 8) = "=IFERROR(MAX(1,MIN(" & nWeeksCal & ",INT((IF(F" & absRow & "="""",E" & absRow & ",F" & absRow & _
                 ")-(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3)))/7)+1)),"""")"
             outArr(ni, 9) = rec(6)   ' Order_Month
+            outArr(ni, 10) = rec(7)  ' Vessel
+            outArr(ni, 11) = rec(8)  ' Container
+            outArr(ni, 12) = rec(9)  ' Original_ETD
         Next recKey
-        shipTbl.ListRows(oldRowCount + 1).Range.Resize(nNew, 9).Formula = outArr
+        shipTbl.ListRows(oldRowCount + 1).Range.Resize(nNew, 12).Formula = outArr
     End If
 
     ' 【重要】Application.Calculation=xlCalculationManualのままなので、既存行のLatest_ETA/
@@ -216,6 +256,47 @@ ErrHandler:
     MsgBox "更新処理でエラーが発生しました: (" & errNum2 & ") " & errMsg2, vbCritical
 End Sub
 
+' T_Shipmentsに、分割出荷を区別するためのVessel/Container/Original_ETD列(10〜12列目)を
+' 追加する(一度だけ実行する移行用マクロ)。build_soh.pyで新規に作られるブックは最初から
+' この列があるが、既存のライブブックには無い。既存行はこれらの列が空欄のまま追加されるが、
+' 次にRefreshShipmentsを実行すると、以前は材料名+PO番号だけの一意キーで上書きされてしまい
+' 失われていた分割出荷の行が、複合キーで正しく区別されて自動的に追加され直す
+' (モジュール冒頭コメント参照)。既に列がある場合は何もしないため、誤って複数回実行しても安全。
+Sub AddShipmentSplitColumns()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
+
+    If shipTbl.ListColumns.Count >= 12 Then
+        MsgBox "既に移行済みです(Vessel/Container/Original_ETD列が既にあります)。", vbInformation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    shipTbl.Resize shipTbl.Range.Resize(shipTbl.Range.Rows.Count, 12)
+    shipTbl.HeaderRowRange.Cells(1, 10).Value = "Vessel"
+    shipTbl.HeaderRowRange.Cells(1, 11).Value = "Container"
+    shipTbl.HeaderRowRange.Cells(1, 12).Value = "Original_ETD"
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "T_ShipmentsにVessel/Container/Original_ETD列を追加しました。" & vbCrLf & vbCrLf & _
+           "既存の行はこの3列が空欄のままです。次にRefreshShipmentsを実行すると、" & vbCrLf & _
+           "以前は同じ材料+PO番号で上書きされて消えていた分割出荷の行が、" & vbCrLf & _
+           "自動的に正しく追加され直します。", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum3 As Long: errNum3 = Err.Number
+    Dim errMsg3 As String: errMsg3 = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "更新処理でエラーが発生しました: (" & errNum3 & ") " & errMsg3, vbCritical
+End Sub
+
 ' M_RawMaterialsのPart Name(=RM_Code)自体を正規化テキストでインデックス化する。
 ' TTAF_Code/Descriptionでの照合(RefreshData_StockActuals側のBuildTTAFCodeAndDescIndex)とは
 ' 別物: CSA Product Codeは既にRM_Codeとほぼ同じ表記のため、RM_Code同士を直接照合する方が確実。
@@ -231,25 +312,57 @@ Private Sub BuildRMCodeIndex(rmTbl As ListObject, rmCodeIdx As Object)
     End If
 End Sub
 
-' T_Shipmentsの(Part Name, PO_No)->行番号のインデックスを1回だけ作る。
+' T_Shipmentsの複合キー(材料名+PO番号+コンテナ+OriginalETD+出現順連番)->行番号の
+' インデックスを1回だけ作る。RefreshShipments側の複合キー生成と全く同じロジックで、
+' T_Shipments自身の現在の並び順から連番を振り直す(モジュール冒頭コメント参照)。
 Private Function BuildShipmentRowIndex(tbl As ListObject) As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     Dim n As Long: n = tbl.ListRows.Count
     If n > 0 Then
         Dim data As Variant
-        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' Part Name, PO_No
+        data = tbl.DataBodyRange.Value  ' 全12列(Part Name...Original_ETD)をまとめて読む
+        Dim seqCounter As Object: Set seqCounter = CreateObject("Scripting.Dictionary")
+        seqCounter.CompareMode = vbTextCompare
         Dim i As Long
         For i = 1 To n
-            idx(CStr(data(i, 1)) & "|" & CStr(data(i, 2))) = i
+            Dim partNameV As String: partNameV = Trim(CStr(data(i, 1)))
+            Dim poNoV As String: poNoV = Trim(CStr(data(i, 2)))
+            Dim containerV As String: containerV = Trim(CStr(data(i, 11)))
+            Dim origEtdV As Variant: origEtdV = data(i, 12)
+            Dim baseKey As String
+            baseKey = partNameV & "|" & poNoV & "|" & containerV & "|" & DateKeyStr(origEtdV)
+            Dim seq As Long
+            If seqCounter.Exists(baseKey) Then
+                seq = seqCounter(baseKey) + 1
+            Else
+                seq = 1
+            End If
+            seqCounter(baseKey) = seq
+            idx(baseKey & "|" & seq) = i
         Next i
     End If
     Set BuildShipmentRowIndex = idx
 End Function
 
+' 日付(またはEmpty)を、複合キーに使うための安定した文字列に変換する
+' (地域設定による日付表示の違いに影響されないよう、シリアル値の整数部分をそのまま使う)。
+Private Function DateKeyStr(v As Variant) As String
+    If IsEmpty(v) Then
+        DateKeyStr = ""
+    ElseIf IsDate(v) Then
+        DateKeyStr = CStr(CLng(CDate(v)))
+    Else
+        DateKeyStr = ""
+    End If
+End Function
+
 ' 列: Part Name(1), PO_No(2), Order_Date_発注日(3, 手入力のため触れない), Confirmed_Qty(4),
-' Latest_ETA(5), Received_Date(6), Status(7), Effective_Week(8, 数式), Order_Month(9)。
+' Latest_ETA(5), Received_Date(6), Status(7), Effective_Week(8, 数式), Order_Month(9),
+' Vessel(10), Container(11), Original_ETD(12)。
 ' Effective_Week(8列目)の数式は、RefreshShipments側で新規行をまとめて書き込む際に
 ' build_soh.pyのweek_index_formula_clampedと同じ式を明示的に生成している。
+' Vessel/Container/Original_ETDは、分割出荷の各行を一意に区別するための複合キーに
+' 使われる(BuildShipmentRowIndex/DateKeyStr参照)。
 
 ' Material_DetailのOrder行(発注予定,kg)・PO_No行(Order行の直下)を、T_Shipmentsの最新の
 ' Status/Effective_Weekに合わせて自動更新する(モジュール冒頭コメント参照)。
@@ -401,7 +514,16 @@ NextShipRow:
                 End If
                 If targetWeek > 0 Then
                     Dim frozenFlag As Boolean: frozenFlag = (statusText = "TTAF Stock")
-                    newWeeks(targetWeek) = Array(qty, frozenFlag)
+                    ' 同じPO番号の複数の出荷行(分割出荷)が同じ週に重なることもあるため、
+                    ' 上書きせず合算する。frozen(確定扱い)は、その週に合算された行の
+                    ' 全部がTTAF Stockになって初めて真にする(1件でもまだ輸送中なら、
+                    ' その週はまだGrid_Incomingの計算対象から外さない)。
+                    If newWeeks.Exists(targetWeek) Then
+                        Dim existingNW As Variant: existingNW = newWeeks(targetWeek)
+                        newWeeks(targetWeek) = Array(CDbl(existingNW(0)) + qty, CBool(existingNW(1)) And frozenFlag)
+                    Else
+                        newWeeks(targetWeek) = Array(qty, frozenFlag)
+                    End If
                 End If
             Next siKey
             If newWeeks.Count = 0 Then GoTo NextPoKey

@@ -424,8 +424,13 @@ for row in raw_shipments:
     # ship_rows layout: RM_Code, PO_No, Order_Date(unknown from source, left blank for manual entry), Confirmed_Qty, Latest_ETA, Received_Date, Status
 
 ws = wb.create_sheet("T_Shipments")
+# Vessel/Container/Original_ETD(10-12列目)は、同じPO番号・同じ材料が複数回に分けて
+# 届く分割出荷を区別するための列(RefreshShipments側の一意キーに使う。詳細はそちらの
+# モジュール冒頭コメント参照)。以前は材料名+PO番号だけで一意管理していたため、分割出荷が
+# あると後から読み込んだ行が前の行を上書きし、実際には届いているはずの数量が消えてしまう
+# 不具合があった。
 ws.append(["Part Name", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status",
-           "Effective_Week", "Order_Month"])
+           "Effective_Week", "Order_Month", "Vessel", "Container", "Original_ETD"])
 if not ship_rows:
     # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないため、
     # 該当する発注が無い場合はダミー行を1行入れておく（要削除・上書き可）。
@@ -433,7 +438,7 @@ if not ship_rows:
 start_row = 2
 for i, r in enumerate(ship_rows):
     row_num = start_row + i
-    ws.append(r + [None, None])
+    ws.append(r + [None, None, None, None, None])
     ws.cell(row=row_num, column=3).fill = INPUT_FILL  # Order_Date is not in the source file; input by hand
     # Effective_Week: use Received_Date if present else Latest_ETA; week index via anchor arithmetic, clamped to sheet horizon.
     # 起点日はCal_Weeks!$B$1(AnchorYear)からその都度計算する(week1の起点と同じ式、week_index_formula_clamped参照)。
@@ -444,9 +449,9 @@ for i, r in enumerate(ship_rows):
     )
     ws.cell(row=row_num, column=9).number_format = "yyyy-mm"
 n = len(ship_rows) + 1
-style_header(ws, 9)
-add_table(ws, "T_Shipments", f"A1:I{n}")
-for col, w in zip("ABCDEFGHI", [12, 14, 16, 14, 14, 14, 14, 14, 12]):
+style_header(ws, 12)
+add_table(ws, "T_Shipments", f"A1:L{n}")
+for col, w in zip("ABCDEFGHIJKL", [12, 14, 16, 14, 14, 14, 14, 14, 12, 16, 14, 14]):
     ws.column_dimensions[col].width = w
 ws.freeze_panes = "A2"
 print("Shipment rows seeded:", len(ship_rows))

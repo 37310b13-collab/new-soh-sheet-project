@@ -54,9 +54,10 @@
 | `RefreshBOM` | Raw Material - Look Up（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
-| `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
+| `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件を材料＋PO番号＋コンテナ＋Original ETDの複合キーで一括反映、分割出荷も欠落なく反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
 | `AddPONoRowToExistingMaterialBlocks` | （ファイル選択なし・実行するだけ） | Material_Detailの既存ブロックにPO_No行を追加する、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
 | `FixGridIncomingOrderFormula` | （ファイル選択なし・実行するだけ） | Grid_Incomingの数式を、Material_DetailのOrder行を優先して使う形に書き換える、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
+| `AddShipmentSplitColumns` | （ファイル選択なし・実行するだけ） | T_ShipmentsにVessel/Container/Original_ETD列を追加する、一度だけ実行する移行用マクロ（分割出荷の欠落防止、詳細は5.10.2章） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
@@ -556,6 +557,31 @@ Grid_Incomingの数式とも最初からこの形になっていますが、既�
 - `AddPONoRowToExistingMaterialBlocks`（Material_DetailにPO_No行を追加）
 - `FixGridIncomingOrderFormula`（Grid_Incomingの数式を、Material_DetailのOrder行を
   優先して使う形に書き換える）
+
+### 5.10.2 T_Shipmentsの一意キー修正（分割出荷の欠落防止）
+
+以前の`T_Shipments`は「材料名＋PO番号」だけで行を一意に管理していましたが、実際のCSA Report
+では同じ材料・同じPO番号の出荷が複数行に分かれる「分割出荷」が頻繁にあります（1つのPOが
+5行に分かれているケースも普通にあります）。このキーだと分割出荷の行が同じ行として扱われ、
+後から読んだ行が前の行を上書きしてしまい、実際には届いているはずの数量が静かに失われる不具合
+がありました。実際のCSA Reportデータを確認したところ、55組の（材料名，PO番号）でこの
+上書きが発生しうる状態が見つかっています。
+
+この不具合を修正するため、`T_Shipments`にVessel・Container・Original_ETD列（10〜12列目）を
+追加し、一意キーを「材料名＋PO番号＋コンテナ番号＋Original ETD」の複合キーに変更しました。
+それでも完全に同じ組み合わせが複数行ある場合（同じコンテナに複数バッチが混載されている等、
+ごく稀なケース）は、ファイル内の出現順の連番で最終的に区別します。これによりGrid_Incomingの
+計算（Material_Detailにブロックが無い材料のフォールバック時）や`SyncMaterialDetailOrders`の
+週別集計も、分割出荷分をすべて正しく合算するようになりました。
+
+**既存ブックへの導入方法**: `macros/RefreshData_Shipments.bas`を貼り替えた後、
+`AddShipmentSplitColumns`を一度だけ実行し、T_Shipmentsに上記3列を追加してください。
+その後`RefreshShipments`を実行し直すと、以前は上書きされて消えていた分割出荷の行が、
+複合キーで正しく区別されて自動的に追加され直されます（＝過去に失われていた数量が復元
+されます）。なお、ごく稀な「コンテナ・Original ETDまで完全に同じ」ケースの連番による
+区別は、TTAF側のレポート内での行の並び順が週次の再エクスポート間で安定していることに
+依存しており、数学的な保証はありませんが、従来の「常に上書きで消える」状態からは大きく
+改善しています。
 
 ## 6. 自動反映の仕組み
 
