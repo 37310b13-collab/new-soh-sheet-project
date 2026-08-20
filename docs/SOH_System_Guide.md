@@ -56,6 +56,7 @@
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
 | `AddPONoRowToExistingMaterialBlocks` | （ファイル選択なし・実行するだけ） | Material_Detailの既存ブロックにPO_No行を追加する、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
+| `FixGridIncomingOrderFormula` | （ファイル選択なし・実行するだけ） | Grid_Incomingの数式を、Material_DetailのOrder行を優先して使う形に書き換える、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
@@ -547,10 +548,14 @@ Material_Detailにブロックが無い材料（BOMで使われない梱包資�
 入力されていない出荷は、この自動追従の対象外です（Grid_Incomingは、そのようなケースでは
 従来通り`T_Shipments`を直接参照します）。
 
-**既存ブックへの導入方法**: 新しく`build_soh.py`でブックを作った場合はPO_No行が最初から
-入っていますが、既存のライブブックには入っていません。`macros/RefreshData_MaterialMgmt.bas`の
-`AddPONoRowToExistingMaterialBlocks`を一度だけ実行してください（ブロック数によっては
-数十秒〜数分かかりますが、フリーズではありません）。
+**既存ブックへの導入方法**: 新しく`build_soh.py`でブックを作った場合はPO_No行・
+Grid_Incomingの数式とも最初からこの形になっていますが、既存のライブブックには入っていません。
+`macros/RefreshData_MaterialMgmt.bas`の以下2つを、両方とも一度だけ実行してください
+（順序はどちらが先でも構いません。ブロック数によっては数十秒〜数分かかりますが、
+フリーズではありません）。
+- `AddPONoRowToExistingMaterialBlocks`（Material_DetailにPO_No行を追加）
+- `FixGridIncomingOrderFormula`（Grid_Incomingの数式を、Material_DetailのOrder行を
+  優先して使う形に書き換える）
 
 ## 6. 自動反映の仕組み
 

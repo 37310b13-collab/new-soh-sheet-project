@@ -65,6 +65,12 @@ Option Explicit
 '                 数分かかることがあるが、フリーズではないので待つこと。既に移行済みの
 '                 ブロック(既にPO_No行がある)は自動的にスキップするため、誤って複数回
 '                 実行しても安全。
+'   FixGridIncomingOrderFormula : 同じく発注管理機能の導入時に一度だけ実行する移行用
+'                 マクロ。Grid_Incoming(既存のライブブックでは、T_Shipmentsだけを合計する
+'                 古い数式のまま)を、Material_DetailのOrder行を優先して使う新しい数式に
+'                 書き換える。AddPONoRowToExistingMaterialBlocksとセットで実行すること
+'                 (順序はどちらが先でも構わない)。何度実行しても同じ結果になるため
+'                 再実行しても安全。
 ' ============================================================================
 
 ' rmCode/descVal/categoryValから、材料が属するグループ(0=Substrate, 1=その他Chemical,
@@ -539,6 +545,74 @@ ErrHandler:
     MsgBox "PO_No行の追加中にエラーが発生しました: (" & errNum2 & ") " & errMsg2 & vbCrLf & vbCrLf & _
            "途中まで反映されている可能性があります。シートの状態を確認してください" & vbCrLf & _
            "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+End Sub
+
+' Grid_Incomingの既存の数式(T_Shipmentsだけを合計する古い式)を、Material_DetailのOrder行を
+' 優先して使う新しい式に書き換える(一度だけ実行する移行用マクロ。build_soh.pyで新規に
+' 作られるブックは最初からこの式で生成されるが、既存のライブブックのGrid_Incomingシートは
+' AddPONoRowToExistingMaterialBlocksを実行しただけでは古い式のままなので、これも別途
+' 実行する必要がある)。何度実行しても同じ結果になるため再実行しても安全。
+Sub FixGridIncomingOrderFormula()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim inTbl As ListObject: Set inTbl = thisWb.Sheets("Grid_Incoming").ListObjects("Grid_Incoming")
+    Dim dataRange As Range: Set dataRange = inTbl.DataBodyRange
+    If dataRange Is Nothing Then
+        MsgBox "Grid_Incomingにデータ行がありません。", vbExclamation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+    Dim mdHelperCol As Long: mdHelperCol = MD_WEEK_START_COL + nWeeks + 1
+    Dim mdHelperColLetter As String: mdHelperColLetter = ColLetter(mdHelperCol)
+    Dim mdWeekFirstColLetter As String: mdWeekFirstColLetter = ColLetter(MD_WEEK_START_COL)
+    Dim mdWeekLastColLetter As String: mdWeekLastColLetter = ColLetter(MD_WEEK_START_COL + nWeeks - 1)
+
+    Dim firstDataRow As Long: firstDataRow = dataRange.Row
+    Dim nRows As Long: nRows = dataRange.Rows.Count
+    Dim nCols As Long: nCols = dataRange.Columns.Count  ' 1列目=Part Name, 2列目以降=Week1,Week2,...
+
+    Dim allFormulas As Variant: allFormulas = dataRange.Formula
+
+    Dim r As Long, c As Long, fixedCells As Long: fixedCells = 0
+    For r = 1 To nRows
+        Dim actualRow As Long: actualRow = firstDataRow + r - 1
+        For c = 2 To nCols
+            Dim w As Long: w = c - 1
+            Dim mdOrderMatch As String
+            mdOrderMatch = "MATCH($A" & actualRow & ",Material_Detail!$" & mdHelperColLetter & ":$" & mdHelperColLetter & ",0)"
+            Dim mdHasBlock As String
+            mdHasBlock = "COUNTIF(Material_Detail!$" & mdHelperColLetter & ":$" & mdHelperColLetter & ",$A" & actualRow & ")>0"
+            Dim mdOrderVal As String
+            mdOrderVal = "INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & "," & mdOrderMatch & "," & w & ")"
+            Dim mdPoVal As String
+            mdPoVal = "INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & "," & mdOrderMatch & "+1," & w & ")"
+            Dim mdReceived As String
+            mdReceived = "ISNUMBER(SEARCH(""[済]""," & mdPoVal & "))"
+            Dim shipmentsVal As String
+            shipmentsVal = "SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A" & actualRow & ",T_Shipments[Effective_Week]," & w & ")"
+            allFormulas(r, c) = "=IF(" & mdHasBlock & ",IF(" & mdReceived & ",0,IFERROR(" & mdOrderVal & ",0))," & shipmentsVal & ")"
+            fixedCells = fixedCells + 1
+        Next c
+    Next r
+
+    dataRange.Formula = allFormulas
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "Grid_Incomingの数式を更新しました。" & vbCrLf & "書き換えたセル数: " & fixedCells, vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum3 As Long: errNum3 = Err.Number
+    Dim errMsg3 As String: errMsg3 = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "更新処理でエラーが発生しました: (" & errNum3 & ") " & errMsg3, vbCritical
 End Sub
 
 Private Function IsMaterialCodeFree(rmTbl As ListObject, rmCode As String) As Boolean
