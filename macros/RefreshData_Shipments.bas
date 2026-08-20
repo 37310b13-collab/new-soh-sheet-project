@@ -83,6 +83,20 @@ Sub RefreshShipments()
     Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
+    ' 複合キー対応(Vessel/Container/Original_ETD列)の移行がまだの場合、このまま進めると
+    ' 列位置がずれて実行時エラーで異常終了する(不可解なエラーになるのを避けるため、
+    ' ここで分かりやすいメッセージを出して安全に中断する)。
+    If shipTbl.ListColumns.Count < 12 Then
+        srcWb.Close SaveChanges:=False
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
+        Application.DisplayAlerts = True
+        MsgBox "T_Shipmentsがまだ新しい列構成(Vessel/Container/Original_ETD)に移行されていません。" & vbCrLf & _
+               "先に「AddShipmentSplitColumns」マクロを一度だけ実行してから、" & vbCrLf & _
+               "あらためてRefreshShipmentsを実行してください。", vbExclamation
+        Exit Sub
+    End If
+
     Dim sh As Worksheet: Set sh = srcWb.Sheets("Shipping Schedule")
 
     Dim rmCodeIdx As Object: Set rmCodeIdx = CreateObject("Scripting.Dictionary")
@@ -163,11 +177,19 @@ NextRow:
     Next r
 
     ' ---- 既存行の更新をまとめて反映(行ごとに読み込み→書き換え→書き戻しを1回ずつ) ----
+    ' 【重要・過去からの不具合を今回発見して修正】8列目(Effective_Week)は数式セルのため、
+    ' 行全体を1回の.Range.Value=配列で書き戻すと、.Valueで読み込んだ時点の「計算済みの
+    ' 値」がそのまま書き込まれてしまい、数式そのものが壊れて固定値になってしまう
+    ' (以前はこのバグにより、一度でも更新された行のEffective_Weekがその時点の値のまま
+    ' 永久に凍結され、その後Latest_ETA/Received_Dateが変わっても週がまったく
+    ' 追従しなくなっていた)。8列目を挟んで前半(1〜7列)・後半(9〜12列)の2つに
+    ' 分けて書き戻すことで、8列目の数式には一切触れないようにする。
     Dim rowKey As Variant
     For Each rowKey In updateVals.Keys
         Dim rowN As Long: rowN = CLng(rowKey)
         Dim uVals As Variant: uVals = updateVals(rowKey)
-        Dim rowArr As Variant: rowArr = shipTbl.ListRows(rowN).Range.Value
+        Dim rowRng As Range: Set rowRng = shipTbl.ListRows(rowN).Range
+        Dim rowArr As Variant: rowArr = rowRng.Value
         rowArr(1, 4) = uVals(0)
         If Not IsEmpty(uVals(1)) Then rowArr(1, 5) = uVals(1)
         If Not IsEmpty(uVals(2)) Then rowArr(1, 6) = uVals(2)
@@ -176,7 +198,17 @@ NextRow:
         rowArr(1, 10) = uVals(5)
         rowArr(1, 11) = uVals(6)
         If Not IsEmpty(uVals(7)) Then rowArr(1, 12) = uVals(7)
-        shipTbl.ListRows(rowN).Range.Value = rowArr
+
+        Dim leftPart As Variant
+        ReDim leftPart(1 To 1, 1 To 7)
+        Dim ci As Long
+        For ci = 1 To 7: leftPart(1, ci) = rowArr(1, ci): Next ci
+        rowRng.Resize(1, 7).Value = leftPart
+
+        Dim rightPart As Variant
+        ReDim rightPart(1 To 1, 1 To 4)
+        For ci = 9 To 12: rightPart(1, ci - 8) = rowArr(1, ci): Next ci
+        rowRng.Cells(1, 9).Resize(1, 4).Value = rightPart
     Next rowKey
 
     ' ---- 新規行をまとめて追加(1回のResize+配列書き込み。Effective_Week列は計算列の
@@ -261,32 +293,64 @@ End Sub
 ' この列があるが、既存のライブブックには無い。既存行はこれらの列が空欄のまま追加されるが、
 ' 次にRefreshShipmentsを実行すると、以前は材料名+PO番号だけの一意キーで上書きされてしまい
 ' 失われていた分割出荷の行が、複合キーで正しく区別されて自動的に追加され直す
-' (モジュール冒頭コメント参照)。既に列がある場合は何もしないため、誤って複数回実行しても安全。
+' (モジュール冒頭コメント参照)。列が既にある場合は列追加をスキップするだけで、
+' 下記のEffective_Week修復は毎回必ず行う(誤って複数回実行しても安全)。
+'
+' 【重要・今回の再検証で新たに発見した別の不具合の修復も兼ねる】以前のRefreshShipmentsには、
+' 既存行を更新する際にEffective_Week(8列目、着荷予定週を計算する数式)を、その時点の
+' 計算結果の値でまるごと上書きしてしまい、数式自体を破壊する不具合があった(コード側は
+' 今回のモジュール貼り替えで修正済みだが、過去に実行された分は直らないまま残っている)。
+' これにより、一度でも更新されたことがある行は、ETAがその後どれだけ変わってもEffective_Week
+' が更新時点の値のまま凍結され、Material_Detailへの反映が追従しなくなっていた。
+' そのため、このマクロで全行のEffective_Week数式を一括で正しい状態に復元する。
 Sub AddShipmentSplitColumns()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
 
-    If shipTbl.ListColumns.Count >= 12 Then
-        MsgBox "既に移行済みです(Vessel/Container/Original_ETD列が既にあります)。", vbInformation
-        Exit Sub
-    End If
-
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
-    shipTbl.Resize shipTbl.Range.Resize(shipTbl.Range.Rows.Count, 12)
-    shipTbl.HeaderRowRange.Cells(1, 10).Value = "Vessel"
-    shipTbl.HeaderRowRange.Cells(1, 11).Value = "Container"
-    shipTbl.HeaderRowRange.Cells(1, 12).Value = "Original_ETD"
+    Dim alreadyHadColumns As Boolean: alreadyHadColumns = (shipTbl.ListColumns.Count >= 12)
+    If Not alreadyHadColumns Then
+        shipTbl.Resize shipTbl.Range.Resize(shipTbl.Range.Rows.Count, 12)
+        shipTbl.HeaderRowRange.Cells(1, 10).Value = "Vessel"
+        shipTbl.HeaderRowRange.Cells(1, 11).Value = "Container"
+        shipTbl.HeaderRowRange.Cells(1, 12).Value = "Original_ETD"
+    End If
+
+    Dim repaired As Long: repaired = 0
+    Dim n As Long: n = shipTbl.ListRows.Count
+    If n > 0 Then
+        Dim nWeeksCal As Long: nWeeksCal = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+        Dim fArr() As Variant
+        ReDim fArr(1 To n, 1 To 1)
+        Dim i As Long
+        For i = 1 To n
+            Dim absRow As Long: absRow = i + 1  ' ヘッダー1行分のオフセット
+            fArr(i, 1) = "=IFERROR(MAX(1,MIN(" & nWeeksCal & ",INT((IF(F" & absRow & "="""",E" & absRow & ",F" & absRow & _
+                ")-(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3)))/7)+1)),"""")"
+        Next i
+        shipTbl.ListColumns(8).DataBodyRange.Formula = fArr
+        repaired = n
+    End If
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "T_ShipmentsにVessel/Container/Original_ETD列を追加しました。" & vbCrLf & vbCrLf & _
-           "既存の行はこの3列が空欄のままです。次にRefreshShipmentsを実行すると、" & vbCrLf & _
-           "以前は同じ材料+PO番号で上書きされて消えていた分割出荷の行が、" & vbCrLf & _
-           "自動的に正しく追加され直します。", vbInformation
+    Dim msg As String
+    If alreadyHadColumns Then
+        msg = "T_Shipmentsは列構成(Vessel/Container/Original_ETD)は既に最新でした。"
+    Else
+        msg = "T_ShipmentsにVessel/Container/Original_ETD列を追加しました。" & vbCrLf & vbCrLf & _
+              "既存の行はこの3列が空欄のままです。次にRefreshShipmentsを実行すると、" & vbCrLf & _
+              "以前は同じ材料+PO番号で上書きされて消えていた分割出荷の行が、" & vbCrLf & _
+              "自動的に正しく追加され直します。" & vbCrLf & vbCrLf
+    End If
+    msg = msg & "あわせて、Effective_Week(着荷予定週)の数式を全" & repaired & "行分、正しい状態に" & vbCrLf & _
+          "復元しました(以前のRefreshShipmentsには、既存行を更新するたびにこの数式を計算済みの" & vbCrLf & _
+          "値で上書きして壊してしまう不具合があり、その影響を受けていた行を修復しています)。"
+    MsgBox msg, vbInformation
     Exit Sub
 
 ErrHandler:
