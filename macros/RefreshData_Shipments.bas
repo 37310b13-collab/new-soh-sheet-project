@@ -171,6 +171,12 @@ NextRow:
         shipTbl.ListRows(oldRowCount + 1).Range.Resize(nNew, 9).Formula = outArr
     End If
 
+    ' 【重要】Application.Calculation=xlCalculationManualのままなので、既存行のLatest_ETA/
+    ' Received_Date更新も新規行のEffective_Week数式も、このままではまだ再計算されていない
+    ' (SyncMaterialDetailOrdersがDataBodyRange.Valueで読むのは古いキャッシュ値のままになる
+    ' 恐れがある)。T_Shipmentsの範囲だけを明示的に再計算する(ブック全体の再計算は避ける)。
+    shipTbl.Range.Calculate
+
     ' T_Shipmentsの取り込みが終わった後、Material_DetailのOrder/PO_No行をCSA Reportの
     ' 最新のStatus/ETAに合わせて同期する(モジュール冒頭コメント参照)。
     Dim mdChanged As Long, mdFrozen As Long
@@ -400,51 +406,66 @@ NextShipRow:
             Next siKey
             If newWeeks.Count = 0 Then GoTo NextPoKey
 
-            ' --- 「あるべき状態」が今の状態と違うかどうかを判定する ---
-            Dim needsRewrite As Boolean: needsRewrite = (newWeeks.Count <> existingWeeks.Count)
-            If Not needsRewrite Then
-                Dim wk As Variant
-                For Each wk In newWeeks.Keys
-                    Dim foundWeek As Boolean: foundWeek = False
-                    Dim ewk As Variant
-                    For Each ewk In existingWeeks.Items
-                        If CLng(ewk) = CLng(wk) Then foundWeek = True: Exit For
-                    Next ewk
-                    If Not foundWeek Then needsRewrite = True: Exit For
-                    Dim existQty As Double: existQty = 0
-                    If IsNumeric(blockArr(1, CLng(wk))) Then existQty = CDbl(blockArr(1, CLng(wk)))
-                    Dim nInfo As Variant: nInfo = newWeeks(wk)
-                    If Abs(existQty - CDbl(nInfo(0))) > 0.0001 Then needsRewrite = True: Exit For
-                    If CBool(nInfo(1)) And InStr(CStr(blockArr(2, CLng(wk))), "[済]") = 0 Then needsRewrite = True: Exit For
-                Next wk
-            End If
-            If Not needsRewrite Then GoTo NextPoKey
+            ' --- 「あるべき状態」と今の状態を、週ごとに個別に比較する ---
+            ' (以前の「PO全体をまとめてクリア→まとめて書き直す」方式だと、分割出荷の一部だけ
+            ' 既に確定[済]で残りがまだ輸送中、というケースで、既に確定済みで何も変わっていない
+            ' 週まで毎回クリア→再書き込みされてしまい、コメントが無関係な週の移動として
+            ' 表示されたり、frozenCellsが同じ確定を何度も数えてしまう不具合があった。
+            ' そのため、週ごとに「今の内容と違うものだけ」を書き換える。)
+            ' weeksToClear: 今アクティブ(未確定)な週のうち、新しい状態には存在しない(=移動元)週
+            Dim weeksToClear As Object: Set weeksToClear = CreateObject("Scripting.Dictionary")
+            Dim ewk As Variant
+            For Each ewk In existingWeeks.Items
+                Dim ewkL As Long: ewkL = CLng(ewk)
+                If Not newWeeks.Exists(ewkL) Then weeksToClear(ewkL) = True
+            Next ewk
+            ' weeksToWrite: 新しい状態のうち、今のセルの内容(数量・確定マーク)と実際に違うものだけ
+            Dim weeksToWrite As Object: Set weeksToWrite = CreateObject("Scripting.Dictionary")  ' 週 -> Array(qty,frozen,poText)
+            Dim wk As Variant
+            For Each wk In newWeeks.Keys
+                Dim nwk As Long: nwk = CLng(wk)
+                Dim info As Variant: info = newWeeks(wk)
+                Dim wantQty As Double: wantQty = CDbl(info(0))
+                Dim wantFrozen As Boolean: wantFrozen = CBool(info(1))
+                Dim wantPoText As String: wantPoText = CStr(poKey)
+                If wantFrozen Then wantPoText = wantPoText & " [済]"
 
-            ' --- 古いセルをクリアし、新しい状態を書き込む(材料ブロックのメモリ上の配列だけを操作) ---
-            Dim oldWeekItem As Variant, oldWeeksSummary As String: oldWeeksSummary = ""
-            For Each oldWeekItem In existingWeeks.Items
-                Dim ow As Long: ow = CLng(oldWeekItem)
+                Dim curQty As Double: curQty = 0
+                If IsNumeric(blockArr(1, nwk)) Then curQty = CDbl(blockArr(1, nwk))
+                Dim curPoText As String: curPoText = Trim(CStr(blockArr(2, nwk)))
+
+                If Abs(curQty - wantQty) > 0.0001 Or curPoText <> wantPoText Then
+                    weeksToWrite(nwk) = Array(wantQty, wantFrozen, wantPoText)
+                End If
+            Next wk
+            If weeksToClear.Count = 0 And weeksToWrite.Count = 0 Then GoTo NextPoKey
+
+            ' --- 移動元(weeksToClear)をクリアする(材料ブロックのメモリ上の配列だけを操作) ---
+            Dim oldWeeksSummary As String: oldWeeksSummary = ""
+            Dim cwk2 As Variant
+            For Each cwk2 In weeksToClear.Keys
+                Dim ow As Long: ow = CLng(cwk2)
                 If Len(oldWeeksSummary) > 0 Then oldWeeksSummary = oldWeeksSummary & "、"
                 oldWeeksSummary = oldWeeksSummary & "週" & ow & "(" & Format(blockArr(1, ow), "0") & "kg)"
                 blockArr(1, ow) = Empty
                 blockArr(2, ow) = Empty
-            Next oldWeekItem
+            Next cwk2
 
             Dim changeNote As String
-            changeNote = "PO#" & poKey & ": " & oldWeeksSummary & " から自動更新されました(" & Format(Date, "yyyy-mm-dd") & ")"
-            Dim newWeekItem As Variant
-            For Each newWeekItem In newWeeks.Keys
-                Dim nw As Long: nw = CLng(newWeekItem)
-                Dim info As Variant: info = newWeeks(newWeekItem)
-                blockArr(1, nw) = CDbl(info(0))
-                Dim poText As String: poText = CStr(poKey)
-                If CBool(info(1)) Then
-                    poText = poText & " [済]"
-                    frozenCells = frozenCells + 1
-                End If
-                blockArr(2, nw) = poText
+            If Len(oldWeeksSummary) > 0 Then
+                changeNote = "PO#" & poKey & ": " & oldWeeksSummary & " から自動更新されました(" & Format(Date, "yyyy-mm-dd") & ")"
+            Else
+                changeNote = "PO#" & poKey & ": 自動更新されました(" & Format(Date, "yyyy-mm-dd") & ")"
+            End If
+            Dim wwk As Variant
+            For Each wwk In weeksToWrite.Keys
+                Dim nw As Long: nw = CLng(wwk)
+                Dim winfo As Variant: winfo = weeksToWrite(wwk)
+                blockArr(1, nw) = CDbl(winfo(0))
+                blockArr(2, nw) = CStr(winfo(2))
+                If CBool(winfo(1)) Then frozenCells = frozenCells + 1
                 commentsToAdd(nw) = changeNote
-            Next newWeekItem
+            Next wwk
 
             blockChanged = True
             changedCells = changedCells + 1
