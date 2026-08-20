@@ -10,7 +10,8 @@ Option Explicit
 '                      常に複数件のPOが並行して進むため)。
 '
 ' 列: D=CSA Product Code(材料コード)、G=CSA Order firm month(発注月)、I=CSA PO No.、
-' N=Confirmed Order Qty、P=Latest ETA、S=Received At TTAF、T=Status。
+' N=Confirmed Order Qty、Q=2 week transit to TTAF(Latest ETA[P列]+14日。実際の入荷予測に
+' 使うのはP列そのものではなくこちら)、S=Received At TTAF、T=Status。
 ' CSA Product CodeはTTAF PART NUMBERと異なり、既にこちらのRM_Codeとほぼ同じ表記のため、
 ' TTAF_Code/Description経由の照合(RefreshData_StockActuals側のResolveTTAFPart)ではなく、
 ' RM_Code同士を直接(大文字小文字・前後空白を無視して)照合する。
@@ -19,6 +20,22 @@ Option Explicit
 ' RefreshBOM(M_BOM)・RefreshWeeklyBatches(PP_Grid)と同じ理由で、新規行はまとめて件数を
 ' 数えてから1回のResizeで追加し、既存行の更新も行単位でまとめて読み書きする(1件ずつ
 ' ListRows.Addを呼ぶとExcelが応答なしになる恐れがあるため)。
+'
+' 【発注管理(Material_Detail連携)について】T_Shipmentsを取り込んだ後、
+' SyncMaterialDetailOrders を呼び、Material_DetailのOrder行(発注予定,kg)・PO_No行
+' (Order行の直下)を、CSA ReportのStatus列に合わせて自動更新する。
+'   ・Status="Unconfirmed"でETAが未定(TBC): Order_Month + M_RawMaterials[LeadTime_Weeks_要入力]
+'     から仮の週を計算し、その週にOrder/PO_Noセルを移動する(あくまで仮の予測)。
+'   ・Status="Unconfirmed"/"In-transit"でETAが判明: T_Shipments[Effective_Week](Q列の
+'     日付が反映済み)の週に移動する。ETAが更新されるたびに追従する。
+'   ・Status="TTAF Stock": 最後に分かっている週に固定し、PO_Noセルに"[済]"を付けて
+'     Grid_Incomingの計算対象から除外する(数字自体は履歴として残す)。
+'   ・同じPO番号で出荷が複数行に分かれている場合(分割出荷)、Order/PO_Noセルもその週数分に
+'     自動的に分割する。
+'   ・セルを動かした/分割した/確定させた場合は、変更内容をセルコメントに残す。
+' Material_Detailにブロックが無い材料(BOMで使われない梱包資材等)や、PO_Noが
+' Material_Detailのどこにも入力されていない出荷は対象外(Grid_Incoming側でT_Shipmentsを
+' 直接見るフォールバックが効く)。
 '
 ' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
 ' モジュール冒頭のコメントを参照してください。
@@ -89,7 +106,7 @@ Sub RefreshShipments()
         Dim qty As Variant: qty = data(r, 14)
         If Not IsNumeric(qty) Then qty = 0
 
-        Dim eta As Variant: eta = data(r, 16)
+        Dim eta As Variant: eta = data(r, 17)  ' Q列(2 week transit to TTAF)。P列そのものは使わない
         If Not IsDate(eta) Then eta = Empty
 
         Dim receivedDate As Variant: receivedDate = data(r, 19)
@@ -154,6 +171,11 @@ NextRow:
         shipTbl.ListRows(oldRowCount + 1).Range.Resize(nNew, 9).Formula = outArr
     End If
 
+    ' T_Shipmentsの取り込みが終わった後、Material_DetailのOrder/PO_No行をCSA Reportの
+    ' 最新のStatus/ETAに合わせて同期する(モジュール冒頭コメント参照)。
+    Dim mdChanged As Long, mdFrozen As Long
+    Call SyncMaterialDetailOrders(thisWb, rmTbl, shipTbl, mdChanged, mdFrozen)
+
     ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
     ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
     ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
@@ -164,7 +186,9 @@ NextRow:
 
     Dim msg As String
     msg = "T_Shipments を更新しました。" & vbCrLf & "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
-          "（PO No＋材料の組み合わせが同じ行は上書きされます。Order_Date欄は手入力のため上書きしません）"
+          "（PO No＋材料の組み合わせが同じ行は上書きされます。Order_Date欄は手入力のため上書きしません）" & vbCrLf & vbCrLf & _
+          "Material_DetailのOrder/PO_No自動更新: " & mdChanged & " 件(うちTTAF在庫として確定・計算対象から除外: " & mdFrozen & " 件)" & vbCrLf & _
+          "（変更箇所にはセルコメントを付けています）"
     If Len(unresolved) > 0 Then
         msg = msg & vbCrLf & vbCrLf & "材料コードが見つからず未反映の行:" & vbCrLf & unresolved
     End If
@@ -220,3 +244,226 @@ End Function
 ' Latest_ETA(5), Received_Date(6), Status(7), Effective_Week(8, 数式), Order_Month(9)。
 ' Effective_Week(8列目)の数式は、RefreshShipments側で新規行をまとめて書き込む際に
 ' build_soh.pyのweek_index_formula_clampedと同じ式を明示的に生成している。
+
+' Material_DetailのOrder行(発注予定,kg)・PO_No行(Order行の直下)を、T_Shipmentsの最新の
+' Status/Effective_Weekに合わせて自動更新する(モジュール冒頭コメント参照)。
+' 材料1件につきOrder行・PO_No行の2行だけをまとめて読み込み→メモリ上で書き換え→
+' まとめて書き戻す(セル単位の読み書きはしない。重量級テーブルではないため件数的に
+' 大きな問題にはなりにくいが、既存の設計方針に合わせておく)。
+Private Sub SyncMaterialDetailOrders(thisWb As Workbook, rmTbl As ListObject, shipTbl As ListObject, _
+        ByRef changedCells As Long, ByRef frozenCells As Long)
+    changedCells = 0
+    frozenCells = 0
+    Dim mdSheet As Worksheet
+    On Error Resume Next
+    Set mdSheet = thisWb.Sheets("Material_Detail")
+    On Error GoTo 0
+    If mdSheet Is Nothing Then Exit Sub
+
+    Dim shipN As Long: shipN = shipTbl.ListRows.Count
+    If shipN = 0 Then Exit Sub
+    Dim shipData As Variant: shipData = shipTbl.DataBodyRange.Value
+    ' shipData列: 1=Part Name,2=PO_No,3=Order_Date,4=Confirmed_Qty,5=Latest_ETA,
+    '             6=Received_Date,7=Status,8=Effective_Week,9=Order_Month
+
+    ' "材料名|PO番号" -> その組み合わせのshipData行番号一覧(分割出荷は複数行になる)
+    Dim byMatPo As Object: Set byMatPo = CreateObject("Scripting.Dictionary")
+    byMatPo.CompareMode = vbTextCompare
+    Dim i As Long
+    For i = 1 To shipN
+        Dim sPoNo As String: sPoNo = Trim(CStr(shipData(i, 2)))
+        If Len(sPoNo) = 0 Then GoTo NextShipRow
+        Dim mpKey As String: mpKey = Trim(CStr(shipData(i, 1))) & "|" & sPoNo
+        Dim lst As Object
+        If byMatPo.Exists(mpKey) Then
+            Set lst = byMatPo(mpKey)
+        Else
+            Set lst = CreateObject("Scripting.Dictionary")
+            byMatPo.Add mpKey, lst
+        End If
+        lst.Add lst.Count, i
+NextShipRow:
+    Next i
+    If byMatPo.Count = 0 Then Exit Sub
+
+    ' M_RawMaterialsのLeadTime_Weeks_要入力を材料名で引けるように1回だけ索引化
+    ' (ETA未定(TBC)の仮予測に使う)。
+    Dim ltIdx As Object: Set ltIdx = CreateObject("Scripting.Dictionary")
+    ltIdx.CompareMode = vbTextCompare
+    Dim rmN As Long: rmN = rmTbl.ListRows.Count
+    If rmN > 0 Then
+        Dim rmNameLt As Variant: rmNameLt = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 1).Value
+        Dim rmLtCol As Variant: rmLtCol = rmTbl.ListColumns("LeadTime_Weeks_要入力").DataBodyRange.Value
+        Dim li As Long
+        For li = 1 To rmN
+            Dim ltk As String: ltk = Trim(CStr(rmNameLt(li, 1)))
+            If Len(ltk) > 0 And Not ltIdx.Exists(ltk) Then
+                Dim ltv As Double: ltv = 0
+                If IsNumeric(rmLtCol(li, 1)) Then ltv = CDbl(rmLtCol(li, 1))
+                ltIdx(ltk) = ltv
+            End If
+        Next li
+    End If
+
+    ' Material_Detailの各ブロックの「Order」行位置を1回だけ収集する(PO_No行はその1つ下)。
+    Dim lastRow As Long: lastRow = mdSheet.Cells(mdSheet.Rows.Count, 2).End(xlUp).Row
+    Dim orderRowByMat As Object: Set orderRowByMat = CreateObject("Scripting.Dictionary")
+    orderRowByMat.CompareMode = vbTextCompare
+    Dim curMatCode As String: curMatCode = ""
+    Dim r As Long
+    For r = MD_HEADER_ROW + 1 To lastRow
+        Dim colAVal As String: colAVal = Trim(CStr(mdSheet.Cells(r, 1).Value))
+        If Len(colAVal) > 0 Then curMatCode = colAVal
+        If Len(curMatCode) > 0 And Trim(CStr(mdSheet.Cells(r, 2).Value)) = "Order(発注予定,kg)" Then
+            If Not orderRowByMat.Exists(curMatCode) Then orderRowByMat.Add curMatCode, r
+        End If
+    Next r
+    If orderRowByMat.Count = 0 Then Exit Sub
+
+    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+    Dim lastWeekCol As Long: lastWeekCol = MD_WEEK_START_COL + nWeeks - 1
+
+    ' 出荷情報の"材料名"側だけを抜き出し、重複を除いて1材料につき1回だけ処理する。
+    Dim matNamesSeen As Object: Set matNamesSeen = CreateObject("Scripting.Dictionary")
+    matNamesSeen.CompareMode = vbTextCompare
+    Dim mpKeyOuter As Variant
+    For Each mpKeyOuter In byMatPo.Keys
+        Dim sepPos As Long: sepPos = InStr(CStr(mpKeyOuter), "|")
+        Dim matName As String: matName = Left(CStr(mpKeyOuter), sepPos - 1)
+        If matNamesSeen.Exists(matName) Then GoTo NextMatKey
+        matNamesSeen.Add matName, True
+        If Not orderRowByMat.Exists(matName) Then GoTo NextMatKey  ' Material_Detailにブロックが無い材料
+
+        Dim orderRow As Long: orderRow = orderRowByMat(matName)
+        Dim poRow As Long: poRow = orderRow + 1
+        Dim blockArr As Variant
+        blockArr = mdSheet.Range(mdSheet.Cells(orderRow, MD_WEEK_START_COL), mdSheet.Cells(poRow, lastWeekCol)).Value
+        ' blockArr(1,w)=Order行の値, blockArr(2,w)=PO_No行の値 (w=1..nWeeks)
+
+        ' この材料のPO_No行に現れる、まだ確定していない("[済]"が付いていない)PO番号を
+        ' 週ごとに集め、PO番号ごとにグループ化する。
+        Dim activeByPo As Object: Set activeByPo = CreateObject("Scripting.Dictionary")
+        activeByPo.CompareMode = vbTextCompare
+        Dim w As Long
+        For w = 1 To nWeeks
+            Dim poCellVal As String: poCellVal = Trim(CStr(blockArr(2, w)))
+            If Len(poCellVal) > 0 And InStr(poCellVal, "[済]") = 0 Then
+                Dim poLst As Object
+                If activeByPo.Exists(poCellVal) Then
+                    Set poLst = activeByPo(poCellVal)
+                Else
+                    Set poLst = CreateObject("Scripting.Dictionary")
+                    activeByPo.Add poCellVal, poLst
+                End If
+                poLst.Add poLst.Count, w
+            End If
+        Next w
+        If activeByPo.Count = 0 Then GoTo NextMatKey
+
+        Dim blockChanged As Boolean: blockChanged = False
+        Dim commentsToAdd As Object: Set commentsToAdd = CreateObject("Scripting.Dictionary")  ' 週 -> コメント文字列
+
+        Dim poKey As Variant
+        For Each poKey In activeByPo.Keys
+            Dim thisMpKey As String: thisMpKey = matName & "|" & CStr(poKey)
+            If Not byMatPo.Exists(thisMpKey) Then GoTo NextPoKey  ' このPO番号の出荷情報はまだCSA Reportに無い
+
+            Dim shipRowsForPo As Object: Set shipRowsForPo = byMatPo(thisMpKey)
+            Dim existingWeeks As Object: Set existingWeeks = activeByPo(poKey)
+
+            ' --- CSA Reportの最新情報から、このPO番号の「あるべき状態」を組み立てる ---
+            Dim newWeeks As Object: Set newWeeks = CreateObject("Scripting.Dictionary")  ' 週 -> Array(qty, frozen)
+            Dim siKey As Variant
+            For Each siKey In shipRowsForPo.Keys
+                Dim shipRow As Long: shipRow = shipRowsForPo(siKey)
+                Dim qty As Double: qty = 0
+                If IsNumeric(shipData(shipRow, 4)) Then qty = CDbl(shipData(shipRow, 4))
+                Dim statusText As String: statusText = Trim(CStr(shipData(shipRow, 7)))
+                Dim targetWeek As Long: targetWeek = 0
+                If IsNumeric(shipData(shipRow, 8)) Then
+                    targetWeek = CLng(shipData(shipRow, 8))
+                Else
+                    ' ETAが未定(TBC)。Order_Month + LeadTime_Weeksから仮の週を計算する
+                    ' (月の中央=15日を起点にすることで、月初/月末どちらかに偏らないようにする)。
+                    Dim orderMonthVal As Variant: orderMonthVal = shipData(shipRow, 9)
+                    If IsDate(orderMonthVal) Then
+                        Dim ltWeeks As Double: ltWeeks = 0
+                        If ltIdx.Exists(matName) Then ltWeeks = ltIdx(matName)
+                        Dim provDate As Date: provDate = DateSerial(Year(CDate(orderMonthVal)), Month(CDate(orderMonthVal)), 15) + ltWeeks * 7
+                        targetWeek = WeekIndexForDate(thisWb, provDate)
+                    End If
+                End If
+                If targetWeek > 0 Then
+                    Dim frozenFlag As Boolean: frozenFlag = (statusText = "TTAF Stock")
+                    newWeeks(targetWeek) = Array(qty, frozenFlag)
+                End If
+            Next siKey
+            If newWeeks.Count = 0 Then GoTo NextPoKey
+
+            ' --- 「あるべき状態」が今の状態と違うかどうかを判定する ---
+            Dim needsRewrite As Boolean: needsRewrite = (newWeeks.Count <> existingWeeks.Count)
+            If Not needsRewrite Then
+                Dim wk As Variant
+                For Each wk In newWeeks.Keys
+                    Dim foundWeek As Boolean: foundWeek = False
+                    Dim ewk As Variant
+                    For Each ewk In existingWeeks.Items
+                        If CLng(ewk) = CLng(wk) Then foundWeek = True: Exit For
+                    Next ewk
+                    If Not foundWeek Then needsRewrite = True: Exit For
+                    Dim existQty As Double: existQty = 0
+                    If IsNumeric(blockArr(1, CLng(wk))) Then existQty = CDbl(blockArr(1, CLng(wk)))
+                    Dim nInfo As Variant: nInfo = newWeeks(wk)
+                    If Abs(existQty - CDbl(nInfo(0))) > 0.0001 Then needsRewrite = True: Exit For
+                    If CBool(nInfo(1)) And InStr(CStr(blockArr(2, CLng(wk))), "[済]") = 0 Then needsRewrite = True: Exit For
+                Next wk
+            End If
+            If Not needsRewrite Then GoTo NextPoKey
+
+            ' --- 古いセルをクリアし、新しい状態を書き込む(材料ブロックのメモリ上の配列だけを操作) ---
+            Dim oldWeekItem As Variant, oldWeeksSummary As String: oldWeeksSummary = ""
+            For Each oldWeekItem In existingWeeks.Items
+                Dim ow As Long: ow = CLng(oldWeekItem)
+                If Len(oldWeeksSummary) > 0 Then oldWeeksSummary = oldWeeksSummary & "、"
+                oldWeeksSummary = oldWeeksSummary & "週" & ow & "(" & Format(blockArr(1, ow), "0") & "kg)"
+                blockArr(1, ow) = Empty
+                blockArr(2, ow) = Empty
+            Next oldWeekItem
+
+            Dim changeNote As String
+            changeNote = "PO#" & poKey & ": " & oldWeeksSummary & " から自動更新されました(" & Format(Date, "yyyy-mm-dd") & ")"
+            Dim newWeekItem As Variant
+            For Each newWeekItem In newWeeks.Keys
+                Dim nw As Long: nw = CLng(newWeekItem)
+                Dim info As Variant: info = newWeeks(newWeekItem)
+                blockArr(1, nw) = CDbl(info(0))
+                Dim poText As String: poText = CStr(poKey)
+                If CBool(info(1)) Then
+                    poText = poText & " [済]"
+                    frozenCells = frozenCells + 1
+                End If
+                blockArr(2, nw) = poText
+                commentsToAdd(nw) = changeNote
+            Next newWeekItem
+
+            blockChanged = True
+            changedCells = changedCells + 1
+NextPoKey:
+        Next poKey
+
+        If blockChanged Then
+            mdSheet.Range(mdSheet.Cells(orderRow, MD_WEEK_START_COL), mdSheet.Cells(poRow, lastWeekCol)).Value = blockArr
+            Dim cwKey As Variant
+            For Each cwKey In commentsToAdd.Keys
+                Dim commentCol As Long: commentCol = MD_WEEK_START_COL + CLng(cwKey) - 1
+                Dim targetCell As Range: Set targetCell = mdSheet.Cells(orderRow, commentCol)
+                On Error Resume Next
+                targetCell.Comment.Delete
+                targetCell.AddComment CStr(commentsToAdd(cwKey))
+                targetCell.Comment.Shape.TextFrame.AutoSize = True
+                On Error GoTo 0
+            Next cwKey
+        End If
+NextMatKey:
+    Next mpKeyOuter
+End Sub

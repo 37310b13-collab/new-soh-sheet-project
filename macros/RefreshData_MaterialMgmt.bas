@@ -56,6 +56,15 @@ Option Explicit
 ' rm_master.sort()と同じ規則)。AddMaterialは常に末尾に追加するのではなく、新しい材料が
 ' 属するグループの末尾に挿入することでこの並び順を維持する(ClassifyGroup/
 ' FindGroupInsertPosition/FindRowByCodeを参照)。
+'
+'   AddPONoRowToExistingMaterialBlocks : 発注管理機能(RefreshData_Shipments.basの
+'                 SyncMaterialDetailOrders)を導入する際に、既存のMaterial_Detail
+'                 (各材料ブロックのOrder行の直下にPO_No行が無い、古い構成のシート)へ
+'                 一度だけ実行する移行用マクロ。全材料ブロックのOrder行を探し、その直下に
+'                 PO_No行(週ごとに空欄の入力欄)を挿入する。ブロック数が多いと数十秒〜
+'                 数分かかることがあるが、フリーズではないので待つこと。既に移行済みの
+'                 ブロック(既にPO_No行がある)は自動的にスキップするため、誤って複数回
+'                 実行しても安全。
 ' ============================================================================
 
 ' rmCode/descVal/categoryValから、材料が属するグループ(0=Substrate, 1=その他Chemical,
@@ -447,6 +456,91 @@ ErrHandler:
            "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
 End Sub
 
+' Material_Detailの既存ブロックに、Order行の直下へPO_No行を挿入する(一度だけ実行する
+' 移行用マクロ。モジュール冒頭コメント参照)。既にPO_No行があるブロックはスキップするため
+' 誤って複数回実行しても安全。
+Sub AddPONoRowToExistingMaterialBlocks()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim sh As Worksheet
+    On Error Resume Next
+    Set sh = thisWb.Sheets("Material_Detail")
+    On Error GoTo 0
+    If sh Is Nothing Then
+        MsgBox "Material_Detailシートが見つかりません。", vbExclamation
+        Exit Sub
+    End If
+
+    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
+    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+
+    ' 挿入対象のOrder行番号を、挿入で行番号がずれる前にすべて集めておく
+    ' (targetRows: 0,1,2,... -> 行番号。上から見つかった順=昇順に並ぶ)
+    Dim targetRows As Object: Set targetRows = CreateObject("Scripting.Dictionary")
+    Dim r As Long, n As Long: n = 0
+    For r = MD_HEADER_ROW + 1 To lastRow
+        If Trim(CStr(sh.Cells(r, 2).Value)) = "Order(発注予定,kg)" Then
+            If Trim(CStr(sh.Cells(r + 1, 2).Value)) <> "PO_No" Then
+                targetRows(n) = r
+                n = n + 1
+            End If
+        End If
+    Next r
+    If n = 0 Then
+        MsgBox "対象のブロックはありませんでした(既にすべて移行済みです)。", vbInformation
+        Exit Sub
+    End If
+
+    If MsgBox(n & "件のブロックにPO_No行を追加します。ブロック数によっては数十秒〜数分かかることがあります" & vbCrLf & _
+              "(応答なしのように見えてもフリーズではありません)。よろしいですか？", _
+              vbYesNo + vbQuestion, "PO_No行の追加") <> vbYes Then Exit Sub
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    ' 行番号が大きい(下にある)ブロックから順に処理する。挿入は自分より下の行にしか
+    ' 影響しないため、下から処理すればまだ処理していない上のブロックの行番号はずれない。
+    Dim i As Long
+    For i = n - 1 To 0 Step -1
+        Dim orderRow As Long: orderRow = targetRows(i)
+        Dim poRow As Long: poRow = orderRow + 1
+        sh.Rows(poRow).Insert Shift:=xlDown
+
+        On Error Resume Next
+        sh.Rows(orderRow).Copy
+        sh.Rows(poRow).PasteSpecial xlPasteFormats
+        Application.CutCopyMode = False
+        On Error GoTo 0
+
+        sh.Cells(poRow, 2).Value = "PO_No"
+        sh.Cells(poRow, 2).Font.Size = 9
+        sh.Cells(poRow, 2).Font.Color = RGB(128, 128, 128)
+        Dim w As Long, col As Long
+        For w = 1 To nWeeks
+            col = MD_WEEK_START_COL + w - 1
+            sh.Cells(poRow, col).Value = Empty
+            sh.Cells(poRow, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
+            sh.Cells(poRow, col).Font.Size = 9
+            sh.Cells(poRow, col).Font.Color = RGB(128, 128, 128)
+        Next w
+    Next i
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox n & "件のブロックにPO_No行を追加しました。", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum2 As Long: errNum2 = Err.Number
+    Dim errMsg2 As String: errMsg2 = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "PO_No行の追加中にエラーが発生しました: (" & errNum2 & ") " & errMsg2 & vbCrLf & vbCrLf & _
+           "途中まで反映されている可能性があります。シートの状態を確認してください" & vbCrLf & _
+           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+End Sub
+
 Private Function IsMaterialCodeFree(rmTbl As ListObject, rmCode As String) As Boolean
     IsMaterialCodeFree = True
     Dim n As Long: n = rmTbl.ListRows.Count
@@ -607,7 +701,7 @@ End Sub
 
 ' Material_Detailに新しい材料のブロックを追加する。追加直後はM_BOMに未登録のため、
 ' 中間体の行(No. of batches/使用量)は無く、「合計使用量(0のはず)・TTAF在庫・自社在庫・
-' Order・合計在庫・注記」の6行だけのミニブロックになる。RefreshBOM実行後、この材料が
+' Order・PO_No・合計在庫・注記」の7行だけのミニブロックになる。RefreshBOM実行後、この材料が
 ' 実際に使われている中間体が見つかれば、SyncMaterialDetailIntermediates(RefreshData_BOM
 ' モジュール、RefreshBOMの末尾で自動的に呼ばれる)がこのブロックに中間体の内訳行を
 ' 自動的に追加する（AddMaterialを再度実行する必要はない）。
@@ -624,9 +718,9 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     End If
 
     If anchorHeaderRow > 0 Then
-        ' 8行(空白1+ヘッダー1+内訳6)分のスペースを、anchorブロックの直前に挿入する。
+        ' 9行(空白1+ヘッダー1+内訳7)分のスペースを、anchorブロックの直前に挿入する。
         ' anchorが一番最初のブロック(直前に空白行が無い)かどうかで挿入位置が変わるが、
-        ' どちらの場合も「挿入後、元anchorヘッダーは8行下にずれる」点は共通のため、
+        ' どちらの場合も「挿入後、元anchorヘッダーは9行下にずれる」点は共通のため、
         ' 書式コピー元の行番号(formatSrcHeader等)は同じ式で求められる。
         Dim spacerExists As Boolean: spacerExists = (anchorHeaderRow > MD_HEADER_ROW + 1)
         Dim insertAt As Long
@@ -635,18 +729,18 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
         Else
             insertAt = anchorHeaderRow
         End If
-        sh.Rows(insertAt & ":" & (insertAt + 7)).Insert Shift:=xlDown
+        sh.Rows(insertAt & ":" & (insertAt + 8)).Insert Shift:=xlDown
         If spacerExists Then
             headerRow = insertAt + 1
         Else
             headerRow = insertAt
         End If
-        formatSrcHeader = anchorHeaderRow + 8
-        formatSrcContentFirst = anchorHeaderRow + 9
+        formatSrcHeader = anchorHeaderRow + 9
+        formatSrcContentFirst = anchorHeaderRow + 10
     Else
         headerRow = lastRow + 2  ' 直前ブロックとの間に空白行を1行はさむ
         formatSrcHeader = MD_HEADER_ROW + 1
-        formatSrcContentFirst = lastRow - 5
+        formatSrcContentFirst = lastRow - 6
     End If
 
     sh.Cells(headerRow, 1).Value = rmCode
@@ -692,6 +786,21 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
         sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
     Next w
 
+    ' PO_No行: Order行のすぐ下に、対応するPO番号を材料×週で入力する欄(発行され次第、
+    ' 後から追記でよい)。RefreshShipmentsが、この行とCSA Reportの出荷行を突き合わせ、
+    ' Statusに応じてOrder行のセルを自動的に移動/凍結する(build_soh.pyと同じレイアウト)。
+    r = r + 1
+    sh.Cells(r, 2).Value = "PO_No"
+    sh.Cells(r, 2).Font.Size = 9
+    sh.Cells(r, 2).Font.Color = RGB(128, 128, 128)
+    For w = 1 To nWeeks
+        col = MD_WEEK_START_COL + w - 1
+        sh.Cells(r, col).Value = Empty
+        sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
+        sh.Cells(r, col).Font.Size = 9
+        sh.Cells(r, col).Font.Color = RGB(128, 128, 128)
+    Next w
+
     r = r + 1
     sh.Cells(r, 2).Value = "合計在庫(週末時点,kg)"
     sh.Cells(r, 2).Font.Bold = True
@@ -705,13 +814,13 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Font.Italic = True
     sh.Cells(r, 2).Font.Color = RGB(128, 128, 128)
 
-    ' 罫線・書式のコピー: 末尾に追加する場合は既存の最初のヘッダー行・直前ブロックの末尾6行から、
-    ' 途中に挿入する場合は挿入で押し出されたanchorブロック自身のヘッダー行・先頭6行から複製する
-    ' (ブロックの長さは材料によって違うが、先頭のヘッダー行・その後6行の並びは常に同じ順序のため)。
+    ' 罫線・書式のコピー: 末尾に追加する場合は既存の最初のヘッダー行・直前ブロックの末尾7行から、
+    ' 途中に挿入する場合は挿入で押し出されたanchorブロック自身のヘッダー行・先頭7行から複製する
+    ' (ブロックの長さは材料によって違うが、先頭のヘッダー行・その後7行の並びは常に同じ順序のため)。
     On Error Resume Next
     sh.Rows(formatSrcHeader).Copy
     sh.Rows(headerRow).PasteSpecial xlPasteFormats
-    sh.Rows(formatSrcContentFirst & ":" & (formatSrcContentFirst + 5)).Copy
+    sh.Rows(formatSrcContentFirst & ":" & (formatSrcContentFirst + 6)).Copy
     sh.Rows((headerRow + 1) & ":" & r).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
     On Error GoTo 0

@@ -54,7 +54,8 @@
 | `RefreshBOM` | Raw Material - Look Up（改版時） | M_BOM |
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
-| `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映） |
+| `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件をPO No＋材料単位で一括反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
+| `AddPONoRowToExistingMaterialBlocks` | （ファイル選択なし・実行するだけ） | Material_Detailの既存ブロックにPO_No行を追加する、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
@@ -514,6 +515,42 @@ Solutionが増えた場合だけ、`操作パネル`シートの`T_SolutionNames
   対応づけられます。
 - 過去に存在した`T_PlannedOrders`シート（発注予定の完全手入力シート）は、この方式に置き換えた
   ことで役割が完全になくなったため、現在はワークブックから削除されています。
+
+### 5.10.1 発注管理（Order行・PO_No行の自動追従）
+
+`Material_Detail`の「Order(発注予定,kg)」行のすぐ下に「PO_No」行があります。運用の流れは:
+
+1. 欲しいタイミングの週セルに、Orderの数量を入力する（この時点でGrid_Incoming・Grid_Stock・
+   Dashboard・PO_Draft_*にすぐ反映されます。PO番号はまだ分からなくてOKです）。
+2. PO番号が発行されたら、PO_No行の同じ週のセルに追記する（後からでOK）。
+3. `RefreshShipments`を実行するたびに、そのPO番号の出荷状況(CSA Reportの`Status`列)に
+   合わせて自動的に処理されます。
+   - `Unconfirmed`でETAが未定(TBC): `Order_Month`(発注月)＋`M_RawMaterials`の
+     `LeadTime_Weeks_要入力`から仮の週を計算し、その週にセルを移動する(あくまで仮の予測)。
+   - `Unconfirmed`/`In-transit`でETAが判明: `T_Shipments`の`Effective_Week`
+     (Latest ETA+14日＝CSA Reportの「2 week transit to TTAF」列を反映済み)の週に移動する。
+     ETAが更新されるたびに追従する。
+   - `TTAF Stock`(着荷確定): 最後に分かっている週で数量を確定し、PO_No行に「[済]」を付けて
+     Grid_Incomingの計算対象から除外する。**数字自体は削除せず残る**ので、過去の発注履歴・
+     発注頻度はいつでもMaterial_Detailを見返せば分かる。
+4. 同じPO番号の出荷が複数行に分かれている場合（分割納品）、Order/PO_Noのセルもその週数分に
+   自動的に分割される。
+5. セルが自動的に移動・分割・確定した場合、変更前の内容をセルコメントに残す。
+
+**過去の`T_PlannedOrders`時代の消込み条件（5.11章「消込み条件について」参照）との違い**:
+当時は「TTAF実在庫が納品予定週に追いついたか」という時間経過ベースの判定で問題が起きた経緯が
+あります。今回はCSA Reportの`Status`列という、その発注固有の状態を直接見るため、同じ問題は
+起きません。分割納品も、当時のFIFO(先入れ先出し)方式ではなくPO番号そのもので突き合わせるため、
+早着・延着どちらでも正確に対応できます。
+
+Material_Detailにブロックが無い材料（BOMで使われない梱包資材等）や、PO_Noがどこにも
+入力されていない出荷は、この自動追従の対象外です（Grid_Incomingは、そのようなケースでは
+従来通り`T_Shipments`を直接参照します）。
+
+**既存ブックへの導入方法**: 新しく`build_soh.py`でブックを作った場合はPO_No行が最初から
+入っていますが、既存のライブブックには入っていません。`macros/RefreshData_MaterialMgmt.bas`の
+`AddPONoRowToExistingMaterialBlocks`を一度だけ実行してください（ブロック数によっては
+数十秒〜数分かかりますが、フリーズではありません）。
 
 ## 6. 自動反映の仕組み
 

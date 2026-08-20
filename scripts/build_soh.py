@@ -17,6 +17,15 @@ ANCHOR_YEAR = int(sys.argv[3]) if len(sys.argv) > 3 else 2026
 # 一致する原材料だけに絞り込み、それを1つでも使う中間体だけを連動して残す。
 SUPPLIER_FILTER = sys.argv[4] if len(sys.argv) > 4 else None
 
+# Material_Detailの列レイアウト(このシート自体はもっと後で作るが、Grid_Incomingが
+# Material_DetailのOrder行を直接参照する数式を組むため、列位置の定数だけ先に確定させておく)。
+MD_WEEK_START_COL_ = 4  # column D
+MD_HELPER_COL_ = MD_WEEK_START_COL_ + N_WEEKS
+MD_ORDER_HELPER_COL_ = MD_HELPER_COL_ + 1
+md_order_helper_col_letter = get_column_letter(MD_ORDER_HELPER_COL_)
+md_week_first_col_letter = get_column_letter(MD_WEEK_START_COL_)
+md_week_last_col_letter = get_column_letter(MD_WEEK_START_COL_ + N_WEEKS - 1)
+
 
 def monday_containing_jan1(year):
     jan1 = datetime.date(year, 1, 1)
@@ -636,8 +645,24 @@ for i, r in enumerate(rm_master):
             f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))"
             f"+IFERROR(INDEX(M_RawMaterials[固定週次消費量_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)"
         )
+        # Grid_Incomingは、その材料がMaterial_Detailにブロックを持っていれば(=BOMで
+        # 何らかの中間体に使われていれば)、Material_DetailのOrder行(発注予定,kg)の値を
+        # そのまま使う。Order行はRefreshShipments実行のたびに、CSA Reportの出荷状況
+        # (未確定→輸送中→TTAF在庫)に合わせて自動的に位置が更新される「仮/確定の入荷予定」の
+        # 単一の窓口になっているため、T_Shipmentsを二重に足し込む必要はない。
+        # Material_Detailにブロックが無い材料(BOMで使われない、Original Towel等の梱包資材)は
+        # Order行という窓口が無いため、従来通りT_Shipmentsを直接見る。
+        # PO_No行(Order行の1つ下)に"[済]"が付いていれば、TTAF在庫として着荷済み確定
+        # (RefreshShipmentsが付与)なので、数字自体はMaterial_Detailに残したまま
+        # Grid_Incomingの計算からだけ除外する(以降は自社/TTAF実績側が担うため)。
+        _md_order_match = f"MATCH($A{rr},Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},0)"
+        _md_has_block = f"COUNTIF(Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},$A{rr})>0"
+        _md_order_val = f"INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{_md_order_match},{w})"
+        _md_po_val = f"INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{_md_order_match}+1,{w})"
+        _md_received = f'ISNUMBER(SEARCH("[済]",{_md_po_val}))'
+        _shipments_val = f"SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"
         ws_in.cell(row=rr, column=1 + w).value = (
-            f"=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"
+            f"=IF({_md_has_block},IF({_md_received},0,IFERROR({_md_order_val},0)),{_shipments_val})"
         )
         # T_StockCountは棚卸(手動・低頻度)のためCOUNTIFS/SUMIFSのままでよい。
         # T_SelfStock/T_TTAFStockは「材料×週」のグリッド形式(直接セル参照)になったため、
@@ -702,21 +727,21 @@ ws = wb.create_sheet("Material_Detail")
 # VBAのWorksheet_Change(macros/RefreshData_Display.basのJumpToSelectedWeekを呼び出す。導入は
 # 任意・手動設定)がウィンドウを横スクロールし、本物の該当週列を固定ペインのすぐ右に
 # 表示する（複製データではないため、Dashboard等との数値の食い違いが原理的に起こらない）。
-WEEK_START_COL = 4  # column D
+# 列レイアウトの定数(MD_WEEK_START_COL_等)はファイル冒頭で確定済み(Grid_IncomingがOrder行を
+# 直接参照する数式を組むのに必要なため)。ここではそのローカル名だけを揃える。
+WEEK_START_COL = MD_WEEK_START_COL_
 def mdetail_week_col(w):
     return get_column_letter(WEEK_START_COL + w - 1)
 # 週データ列の1つ右: 「No. of batches」行がPP_Grid内の何行目に対応するかを1回だけMATCHして
 # キャッシュしておく内部ヘルパー列(M_BOMのPPGridRowと同じ考え方)。週ごとに毎回MATCHし直すと
 # 711(BOMペア数)×104週分のMATCHが発生し重くなるため、行位置は1回だけ求めてINDEXで使い回す
 # （列位置はPP_Gridの列並びが固定のため、週番号からそのままw+1として直接指定できる）。
-HELPER_COL_MD = WEEK_START_COL + N_WEEKS
+HELPER_COL_MD = MD_HELPER_COL_
 # HELPER_COL_MDのもう1つ右: 「Order(発注予定,kg)」行にだけPart Nameを複製しておく見えない
-# 列。PO_Draft_*シートがMATCHでこの行を直接特定し、手入力された発注数量を拾うために使う
-# (ブロックの長さが材料ごとに違うため、ヘッダー行から固定オフセットではOrder行を特定できない)。
-MD_ORDER_HELPER_COL = HELPER_COL_MD + 1
-md_order_helper_col_letter = get_column_letter(MD_ORDER_HELPER_COL)
-md_week_first_col_letter = get_column_letter(WEEK_START_COL)
-md_week_last_col_letter = get_column_letter(WEEK_START_COL + N_WEEKS - 1)
+# 列。PO_Draft_*シートとGrid_IncomingがMATCHでこの行を直接特定し、手入力された発注数量を
+# 拾うために使う(ブロックの長さが材料ごとに違うため、ヘッダー行から固定オフセットでは
+# Order行を特定できない)。
+MD_ORDER_HELPER_COL = MD_ORDER_HELPER_COL_
 
 MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 3, 4, 5, 6
 
@@ -865,6 +890,18 @@ for _r in rm_master:
     for w in range(1, N_WEEKS + 1):
         cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=None)
         cell.fill = INPUT_FILL
+
+    # PO_No行: Order行のすぐ下に、対応するPO番号を材料×週で入力する欄。発注時点ではまだ
+    # PO番号が発行されていないことが多いため、空欄のまま(後から追記でよい)。
+    # RefreshShipments(macros/RefreshData_Shipments.bas)が、CSA Reportの出荷行とここに
+    # 入力されたPO番号を突き合わせ、Statusに応じてOrder行のセルを自動的に移動/凍結する。
+    row_num += 1
+    ws.cell(row=row_num, column=2, value="PO_No")
+    ws.cell(row=row_num, column=2).font = Font(size=9, color="808080")
+    for w in range(1, N_WEEKS + 1):
+        cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=None)
+        cell.fill = INPUT_FILL
+        cell.font = Font(size=9, color="808080")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
