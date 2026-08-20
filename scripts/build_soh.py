@@ -681,7 +681,7 @@ for i, r in enumerate(rm_master):
         ttaf_val = f"'T_TTAFStock'!{cl}{ss_row}"
 
         if w == 1:
-            prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
+            prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             prior = f"{week_col(w-1)}{rr}"
         # T_Shipments(Grid_Incoming)は、TTAF供給材料については「TTAFが外部の仕入先から新しく
@@ -702,7 +702,7 @@ for i, r in enumerate(rm_master):
         # ため)。Dashboardの「理論在庫」行として、実際の値(Grid_Stock=「実在庫」行)との
         # 乖離を確認するために参照する。
         if w == 1:
-            theo_prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
+            theo_prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             month_changed = f"INDEX(Cal_Weeks[MonthYearLabel],{w})<>INDEX(Cal_Weeks[MonthYearLabel],{w-1})"
             theo_prior = f"IF({month_changed},'Grid_Stock'!{week_col(w-1)}{rr},{week_col(w-1)}{rr})"

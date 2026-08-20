@@ -268,7 +268,7 @@ Sub AddMaterial()
         hasTTAF = "('T_TTAFStock'!" & cl & ssRow & "<>"""")"
         ttafVal = "'T_TTAFStock'!" & cl & ssRow
         If w = 1 Then
-            priorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
+            priorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
         Else
             priorExpr = ColLetter(col - 1) & grow
         End If
@@ -283,7 +283,7 @@ Sub AddMaterial()
         ' 挙動が食い違ってしまうため、必ず同じ式を使うこと)。
         Dim theoPriorExpr As String
         If w = 1 Then
-            theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
+            theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
         Else
             Dim monthChangedExpr As String
             monthChangedExpr = "INDEX(Cal_Weeks[MonthYearLabel]," & w & ")<>INDEX(Cal_Weeks[MonthYearLabel]," & (w - 1) & ")"
@@ -323,6 +323,52 @@ ErrHandler:
     MsgBox "材料の追加中にエラーが発生しました: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
            "途中まで反映されている可能性があります。シートの状態を確認してください" & vbCrLf & _
            "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+End Sub
+
+' 【一度だけ実行する移行用マクロ】Grid_Stock・Grid_TheoreticalStockの週1列(ブック内で
+' 一番古い週)の数式は、T_OpeningStockテーブルの列名を"T_OpeningStock[Opening_Qty]"と
+' 誤って参照していた(正しい列名は"Opening_Qty_要入力")。この誤りはbuild_soh.py側にも
+' 同じ形であったため、既存の全材料の週1列の数式にも同じ誤りが書き込まれている。
+' 実際には、既存材料は週1時点で既に自社在庫・TTAF在庫の実績データが揃っているため、
+' この壊れた参照を含む分岐は普段は実行されず(IFの他の分岐が優先される)気づかれていなかった。
+' AddMaterialで新規に材料を追加した際、その材料には週1時点の実績データがまだ無いため
+' この壊れた分岐に実際に到達し、実行時エラー(1004)になることが判明した(この不具合の
+' 発見を受けてAddMaterial自体は既に修正済み。このマクロは、修正前の状態で既に書き込まれて
+' しまっている既存材料の週1列の数式を、後から一括で直すためのもの)。
+' 週1列の数式全体をテキスト置換するだけで、他の部分(IFの分岐構造等)は変更しない。
+Sub FixOpeningStockColumnReference()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim fixedCount As Long: fixedCount = 0
+
+    Dim sheetNames As Variant: sheetNames = Array("Grid_Stock", "Grid_TheoreticalStock")
+    Dim si As Long
+    For si = LBound(sheetNames) To UBound(sheetNames)
+        Dim tbl As ListObject: Set tbl = thisWb.Sheets(CStr(sheetNames(si))).ListObjects(CStr(sheetNames(si)))
+        Dim dataRange As Range: Set dataRange = tbl.DataBodyRange
+        If Not dataRange Is Nothing Then
+            Dim nRows As Long: nRows = dataRange.Rows.Count
+            ' 2列目(Part Nameの次の列)=週1
+            Dim col1 As Range: Set col1 = dataRange.Columns(2)
+            Dim formulas As Variant: formulas = col1.Formula
+            Dim r As Long
+            For r = 1 To nRows
+                Dim f As String: f = CStr(formulas(r, 1))
+                If InStr(f, "T_OpeningStock[Opening_Qty]") > 0 Then
+                    formulas(r, 1) = Replace(f, "T_OpeningStock[Opening_Qty]", "T_OpeningStock[Opening_Qty_要入力]")
+                    fixedCount = fixedCount + 1
+                End If
+            Next r
+            col1.Formula = formulas
+        End If
+    Next si
+
+    MsgBox "Grid_Stock・Grid_TheoreticalStockの週1列の数式を " & fixedCount & " 件修正しました" & vbCrLf & _
+           "(T_OpeningStockの列名参照の誤りを修正。他の週の列には影響しません)。", vbInformation
+    Exit Sub
+
+ErrHandler:
+    MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
 End Sub
 
 Sub RemoveMaterial()

@@ -63,6 +63,7 @@
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
+| `FixOpeningStockColumnReference` | （ファイル選択なし・実行するだけ） | Grid_Stock・Grid_TheoreticalStockの週1列の数式にあったT_OpeningStock列名参照の誤りを修正する移行用マクロ（詳細は5.7.1章。何度実行しても安全） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 
@@ -397,6 +398,25 @@ Order・合計在庫・注記の6行のみ）になります。その後**通常
 該当行を削除します。**`T_Shipments`・`T_StockCount`・`T_SelfStock_Log`/
 `T_TTAFStock_Log`・`M_BOM`のデータは削除しません**（履歴として残しておき、万一同じPart Nameを
 `AddMaterial`で再登録した場合は自動的に再びつながる設計です）。
+
+### 5.7.1 T_OpeningStock列名参照の誤りの修正
+
+`AddMaterial`実行時に「実行時エラー(1004) アプリケーション定義またはオブジェクト定義のエラーです」
+というエラーで途中停止することがある不具合が見つかりました。原因は、Grid_Stock・
+Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が、`T_OpeningStock`テーブルの
+列名を`Opening_Qty`と誤って参照していたこと（正しい列名は`Opening_Qty_要入力`）です。
+この誤りは`build_soh.py`側にも同じ形であったため、既存の全材料の週1列の数式にも
+同じ誤りが書き込まれていました。
+
+実際には、既存材料は週1時点で既に自社在庫・TTAF在庫の実績データが揃っているため、この
+壊れた参照を含む分岐は普段は実行されず(数式内のIFの他の分岐が優先される)、これまで
+気づかれていませんでした。しかし`AddMaterial`で追加したばかりの材料には週1時点の
+実績データがまだ無いため、この壊れた分岐に実際に到達し、エラーになっていました。
+
+`AddMaterial`自体は既に修正済みです。ただし、修正前の状態で既に書き込まれてしまっている
+**既存材料**の週1列の数式は、コードを直しただけでは直りません。`FixOpeningStockColumnReference`
+マクロを一度実行すると、Grid_Stock・Grid_TheoreticalStockの全材料の週1列の数式が一括で
+正しい状態に修正されます（他の週の列には影響しません。誤って複数回実行しても安全です）。
 
 **中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
 行、生産計画上の製品コード）の増減にも対応しています。
