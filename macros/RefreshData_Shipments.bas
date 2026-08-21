@@ -509,8 +509,10 @@ End Sub
 Private Function BuildKnownAliasIndex() As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     idx.CompareMode = vbTextCompare
-    ' CSA Reportの"PET FILM(900*1000)"は、M_RawMaterials上は"PP Film"として登録されている。
-    idx(NormalizeText("PET FILM(900*1000)")) = "PP Film"
+    ' 現時点で登録している既知の別名は無い(過去に"PET FILM(900*1000)"->"PP Film"を登録して
+    ' いたが、両者は別物であることが判明したため削除した。新しいケースが見つかったら
+    ' ここに idx(NormalizeText("CSA側の表記")) = "M_RawMaterials側の正式なPart Name" の
+    ' 形で1行追加する)。
     Set BuildKnownAliasIndex = idx
 End Function
 
