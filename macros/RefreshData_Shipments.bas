@@ -101,6 +101,7 @@ Sub RefreshShipments()
 
     Dim rmCodeIdx As Object: Set rmCodeIdx = CreateObject("Scripting.Dictionary")
     Call BuildRMCodeIndex(rmTbl, rmCodeIdx)
+    Dim knownAliasIdx As Object: Set knownAliasIdx = BuildKnownAliasIndex()
 
     Dim shipIdx As Object: Set shipIdx = BuildShipmentRowIndex(shipTbl)
 
@@ -129,7 +130,26 @@ Sub RefreshShipments()
 
         Dim kRow As String: kRow = NormalizeText(rmCodeRaw)
         Dim matchedPart As String: matchedPart = ""
-        If rmCodeIdx.Exists(kRow) Then matchedPart = rmCodeIdx(kRow)
+        If rmCodeIdx.Exists(kRow) Then
+            matchedPart = rmCodeIdx(kRow)
+        Else
+            ' "0"(ゼロ)/"O"(オー)表記ゆれの読み替えを試す(RefreshData_StockActualsの
+            ' ResolveTTAFPartと同じ理由。TTAF側の元データで度々見つかる表記ゆれ。
+            ' 例: CSA ReportのCSA Product Codeが"0JN"、M_RawMaterials側は正式に"OJN")。
+            Dim kZeroToO As String: kZeroToO = Replace(kRow, "0", "O")
+            If kZeroToO <> kRow And rmCodeIdx.Exists(kZeroToO) Then
+                matchedPart = rmCodeIdx(kZeroToO)
+            Else
+                Dim kOToZero As String: kOToZero = Replace(kRow, "O", "0")
+                If kOToZero <> kRow And rmCodeIdx.Exists(kOToZero) Then matchedPart = rmCodeIdx(kOToZero)
+            End If
+            ' それでも見つからなければ、記号ゆれでは吸収しきれない既知の別名(BuildKnownAliasIndex
+            ' 参照)を試す。
+            If Len(matchedPart) = 0 And knownAliasIdx.Exists(kRow) Then
+                Dim aliasKey As String: aliasKey = NormalizeText(CStr(knownAliasIdx(kRow)))
+                If rmCodeIdx.Exists(aliasKey) Then matchedPart = rmCodeIdx(aliasKey)
+            End If
+        End If
 
         If Len(matchedPart) = 0 Then
             If InStr(unresolved, rmCodeRaw) = 0 Then unresolved = unresolved & rmCodeRaw & "; "
@@ -480,6 +500,19 @@ Private Sub BuildRMCodeIndex(rmTbl As ListObject, rmCodeIdx As Object)
         Next i
     End If
 End Sub
+
+' CSA Report側の品名表記が、M_RawMaterials側の正式なPart Nameと大きく異なる既知のケースを
+' 個別に対応する(単純な記号ゆれ・0/O表記ゆれでは吸収しきれないもの)。
+' キーはCSA Product Code側の表記をNormalizeTextしたもの、値はM_RawMaterials側の正式な
+' Part Name(こちらもRefreshShipments側でNormalizeTextしてrmCodeIdxと突き合わせる)。
+' 新しいケースが見つかったら、ここに1行追加するだけで対応できる。
+Private Function BuildKnownAliasIndex() As Object
+    Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
+    idx.CompareMode = vbTextCompare
+    ' CSA Reportの"PET FILM(900*1000)"は、M_RawMaterials上は"PP Film"として登録されている。
+    idx(NormalizeText("PET FILM(900*1000)")) = "PP Film"
+    Set BuildKnownAliasIndex = idx
+End Function
 
 ' T_Shipmentsの複合キー(材料名+PO番号+コンテナ+OriginalETD+出現順連番)->行番号の
 ' インデックスを1回だけ作る。RefreshShipments側の複合キー生成と全く同じロジックで、
