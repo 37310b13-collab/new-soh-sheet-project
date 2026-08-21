@@ -512,6 +512,14 @@ Private Function BuildKnownAliasIndex() As Object
     ' CSA Reportの"PET FILM(900*1000)"は、M_RawMaterials上は"Ester Film"として登録されている
     ' (当初"PP Film"だと聞いていたが、確認の結果こちらが正しいと判明した)。
     idx(NormalizeText("PET FILM(900*1000)")) = "Ester Film"
+    ' CSA ReportのCSA Product Codeが"TPP-1469"となっている材料は、M_RawMaterials上は
+    ' "CHEM-1850"として正しく登録されている。これはTTAF側のCSA Report生成時の表記ミスで
+    ' あることが確認できており、TTAF側に修正を依頼済みだが、(1)修正が反映されるまでの
+    ' 期間、(2)修正後もこのPOがCSA Reportから外れるまでの間は過去の行に古い表記が
+    ' 残り続ける可能性があるため、両方の表記を受け付けられるようここに残しておく
+    ' (TTAF側が"CHEM-1850"表記に直った後も、rmCodeIdx側の完全一致でそのまま正しく
+    ' 解決されるので、この別名エントリを後から削除する必要はない)。
+    idx(NormalizeText("TPP-1469")) = "CHEM-1850"
     Set BuildKnownAliasIndex = idx
 End Function
 
