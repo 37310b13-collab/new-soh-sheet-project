@@ -10,7 +10,7 @@ Option Explicit
 '      （コピー＆貼り付けで導入する場合は、1行目の Attribute VB_Name = "..." を必ず削除してから
 '       貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります）
 '   3. Dashboardシート等にボタンを配置し、下記のExportChemical / ExportHazardous /
-'      ExportSubstrate をボタンのマクロ登録先として割り当てる
+'      ExportSubstrate / ExportSubstratePoland をボタンのマクロ登録先として割り当てる
 '
 ' 【動作】
 '   PO_Draft_* シートを別ブックとして複製し、数式を値に変換（発行時点でスナップ
@@ -28,6 +28,10 @@ End Sub
 
 Sub ExportSubstrate()
     ExportPODraft "PO_Draft_Substrate", "Substrate_Release"
+End Sub
+
+Sub ExportSubstratePoland()
+    ExportPODraft "PO_Draft_Substrate_Poland", "Substrate_Poland_Release"
 End Sub
 
 Private Sub ExportPODraft(ByVal sheetName As String, ByVal fileLabel As String)

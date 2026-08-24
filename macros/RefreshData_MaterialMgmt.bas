@@ -165,10 +165,20 @@ Sub AddMaterial()
     Dim ttafCodeVal As String
     ttafCodeVal = Trim(InputBox("TTAF_Code(TTAF側の部品番号)を入力してください。分からなければ空欄のままでOKです。", "材料の追加"))
 
+    ' Origin_Country: 現状はSubstrateの中でもPoland品だけ発注書(PO_Draft)を別シートに
+    ' 分けているため、Substrateの場合だけ確認する(Chemical/Hazardous Chemicalでは無関係)。
+    Dim originCountryVal As String: originCountryVal = ""
+    If categoryVal = "Substrate" Then
+        originCountryVal = Trim(InputBox("原産国(Origin_Country)を入力してください。" & vbCrLf & _
+            "Poland品はPO_Draft_Substrate_Polandシートに分けて発注書を作成します。" & vbCrLf & _
+            "分からなければ空欄のままでOKです(通常のPO_Draft_Substrateに入ります)。", "材料の追加"))
+    End If
+
     If MsgBox("以下の内容で材料を追加します。" & vbCrLf & vbCrLf & _
               "材料コード: " & rmCode & vbCrLf & "材料名: " & descVal & vbCrLf & _
               "仕入先: " & supplierVal & vbCrLf & "カテゴリ: " & categoryVal & vbCrLf & _
-              "TTAF_Code: " & ttafCodeVal & vbCrLf & vbCrLf & _
+              "TTAF_Code: " & ttafCodeVal & vbCrLf & _
+              IIf(categoryVal = "Substrate", "原産国: " & originCountryVal & vbCrLf, "") & vbCrLf & _
               "よろしいですか？", vbYesNo + vbQuestion, "材料の追加の確認") <> vbYes Then Exit Sub
 
     Application.ScreenUpdating = False
@@ -203,6 +213,7 @@ Sub AddMaterial()
     newRmRow.Range.Cells(1, 8).Value = 4
     newRmRow.Range.Cells(1, 9).Value = ttafCodeVal
     newRmRow.Range.Cells(1, 10).Value = 0  ' 固定週次消費量_要入力。必要であれば追加後にExcel上で書き換える
+    newRmRow.Range.Cells(1, 11).Value = originCountryVal
 
     ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock / T_OpeningStock ----
     Dim reqTbl As ListObject: Set reqTbl = thisWb.Sheets("Grid_Requirement").ListObjects("Grid_Requirement")
@@ -300,8 +311,8 @@ Sub AddMaterial()
     ' BOM未登録のため中間体行はまだ無い) ----
     Call AppendMaterialDetailBlock(thisWb.Sheets("Material_Detail"), rmCode, descVal, nWeeks, ssRow, grow, anchorRmCode)
 
-    ' ---- PO_Draft_{Category} ----
-    Dim poSheetName As String: poSheetName = POSheetNameForCategory(categoryVal)
+    ' ---- PO_Draft_{Category}(Substrateの場合はさらにOrigin_Countryで分岐) ----
+    Dim poSheetName As String: poSheetName = POSheetNameForMaterial(categoryVal, originCountryVal)
     If Len(poSheetName) > 0 Then
         Call AppendPODraftRow(thisWb.Sheets(poSheetName), rmCode, ttafCodeVal, nWeeks)
     End If
@@ -392,6 +403,7 @@ Sub RemoveMaterial()
     ' 失敗する不具合につながる(実際に報告された不具合)。
     rmCode = Trim(CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 1).Value))
     Dim categoryVal As String: categoryVal = CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 4).Value)
+    Dim originCountryVal As String: originCountryVal = CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 11).Value)
 
     If MsgBox("材料「" & rmCode & "」を削除します。" & vbCrLf & _
               "関係する全シート(M_RawMaterials・Grid_Requirement・Grid_Incoming・Grid_Stock・" & vbCrLf & _
@@ -415,7 +427,7 @@ Sub RemoveMaterial()
     Call DeleteMatchingGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, 1)
     Call DeleteMatchingGridRow(thisWb.Sheets("Dashboard"), rmCode, 1)
 
-    Dim poSheetName As String: poSheetName = POSheetNameForCategory(categoryVal)
+    Dim poSheetName As String: poSheetName = POSheetNameForMaterial(categoryVal, originCountryVal)
     If Len(poSheetName) > 0 Then
         Call DeleteMatchingGridRow(thisWb.Sheets(poSheetName), rmCode, 4)
     End If
@@ -685,12 +697,20 @@ Private Function FindMaterialRow(rmTbl As ListObject, rmCode As String) As Long
     Next i
 End Function
 
-Private Function POSheetNameForCategory(categoryVal As String) As String
+' Category(と、Substrateの場合はOrigin_Country)から、対応するPO_Draft_*シート名を返す。
+' 現状はSubstrate×Poland品だけを別シート(PO_Draft_Substrate_Poland)に分離している
+' (build_soh.pyのbuild_po_draft呼び出しと同じ切り分け)。
+Private Function POSheetNameForMaterial(categoryVal As String, originCountryVal As String) As String
     Select Case categoryVal
-        Case "Chemical": POSheetNameForCategory = "PO_Draft_Chemical"
-        Case "Hazardous Chemical": POSheetNameForCategory = "PO_Draft_Hazardous"
-        Case "Substrate": POSheetNameForCategory = "PO_Draft_Substrate"
-        Case Else: POSheetNameForCategory = ""
+        Case "Chemical": POSheetNameForMaterial = "PO_Draft_Chemical"
+        Case "Hazardous Chemical": POSheetNameForMaterial = "PO_Draft_Hazardous"
+        Case "Substrate"
+            If Trim(originCountryVal) = "Poland" Then
+                POSheetNameForMaterial = "PO_Draft_Substrate_Poland"
+            Else
+                POSheetNameForMaterial = "PO_Draft_Substrate"
+            End If
+        Case Else: POSheetNameForMaterial = ""
     End Select
 End Function
 
@@ -714,7 +734,8 @@ Sub SyncPODraftCategories()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
-    Dim poSheetNames As Variant: poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", "PO_Draft_Substrate")
+    Dim poSheetNames As Variant
+    poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", "PO_Draft_Substrate", "PO_Draft_Substrate_Poland")
     Const PO_HDR_TABLE_ROW As Long = 14  ' build_soh.pyのPO_HDR_TABLE_ROWと同じ固定値(見出し行)
 
     ' 現在PO_Draft_*の各シートに実際に存在する材料コード(D列)を、"どのシートにあるか"付きで収集する。
@@ -738,13 +759,14 @@ Sub SyncPODraftCategories()
     Dim movedCount As Long: movedCount = 0
     Dim addedCount As Long: addedCount = 0
     If rmN > 0 Then
-        Dim rmData As Variant: rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 9).Value  ' Part Name,Description,Supplier,Category,UOM,...,TTAF_Code(9列目)
+        Dim rmData As Variant: rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 11).Value  ' Part Name,Description,Supplier,Category,UOM,...,TTAF_Code(9列目),固定週次消費量(10列目),Origin_Country(11列目)
         Dim i As Long
         For i = 1 To rmN
             Dim rmCode As String: rmCode = Trim(CStr(rmData(i, 1)))
             Dim categoryVal As String: categoryVal = Trim(CStr(rmData(i, 4)))
             Dim ttafCodeVal As String: ttafCodeVal = Trim(CStr(rmData(i, 9)))
-            Dim correctSheet As String: correctSheet = POSheetNameForCategory(categoryVal)
+            Dim originCountryVal As String: originCountryVal = Trim(CStr(rmData(i, 11)))
+            Dim correctSheet As String: correctSheet = POSheetNameForMaterial(categoryVal, originCountryVal)
 
             Dim existingSheet As String: existingSheet = ""
             If currentSheetOf.Exists(rmCode) Then existingSheet = CStr(currentSheetOf(rmCode))
@@ -777,6 +799,84 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "処理中にエラーが発生しました: (" & errNum5 & ") " & errMsg5, vbCritical
+End Sub
+
+' 【一度だけ実行する移行用マクロ】M_RawMaterialsにOrigin_Country列(11列目)を追加する。
+' 既存行はこの列が空欄のまま追加される。Substrateのうち原産国がPolandの品目について、
+' この列に"Poland"と入力してからSyncPODraftCategoriesを実行すると、
+' PO_Draft_Substrate_Polandシートへ自動的に振り分けられる(POSheetNameForMaterial参照)。
+' 既に列がある場合は何もしないため、誤って複数回実行しても安全。
+Sub AddOriginCountryColumn()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+
+    If rmTbl.ListColumns.Count >= 11 Then
+        MsgBox "既に移行済みです(Origin_Country列が既にあります)。", vbInformation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    rmTbl.ListColumns.Add
+    rmTbl.HeaderRowRange.Cells(1, 11).Value = "Origin_Country"
+    Application.ScreenUpdating = True
+
+    MsgBox "M_RawMaterialsにOrigin_Country列を追加しました。" & vbCrLf & vbCrLf & _
+           "Substrateのうち原産国がPolandの品目について、この列に「Poland」と入力し、" & vbCrLf & _
+           "SyncPODraftCategoriesを実行すると、PO_Draft_Substrate_Polandシートへ" & vbCrLf & _
+           "自動的に振り分けられます(先にCreatePODraftSubstratePolandSheetでシート自体を" & vbCrLf & _
+           "作成しておく必要があります)。", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Application.ScreenUpdating = True
+    MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
+End Sub
+
+' 【一度だけ実行する移行用マクロ】PO_Draft_Substrateを原産国別に分けるためのシートを
+' 新規作成する(既存のPO_Draft_Substrateの書式・ヘッダー数式をそのまま複製し、データ行だけ
+' 空にする)。実際にPoland品をこのシートへ振り分けるには、このマクロの後、
+' AddOriginCountryColumn(未実行なら)→M_RawMaterialsでPoland品のOrigin_Country欄に
+' 「Poland」と入力→SyncPODraftCategories の順で実行する。既に存在する場合は何もしない。
+Sub CreatePODraftSubstratePolandSheet()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+
+    Dim existingSh As Worksheet
+    On Error Resume Next
+    Set existingSh = thisWb.Sheets("PO_Draft_Substrate_Poland")
+    On Error GoTo ErrHandler
+    If Not existingSh Is Nothing Then
+        MsgBox "PO_Draft_Substrate_Polandは既に存在します。", vbInformation
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+
+    Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate")
+    srcSh.Copy After:=srcSh
+    Dim newSh As Worksheet: Set newSh = thisWb.Sheets(srcSh.Index + 1)
+    newSh.Name = "PO_Draft_Substrate_Poland"
+    newSh.Cells(8, 2).Value = "Substrates (Poland)"  ' B8: タイトル表示
+
+    ' データ行(見出し行の次から、複製元の既存データの最終行まで)を削除して空にする
+    ' (Poland品は実データが確定してからSyncPODraftCategoriesで正しく追加し直される)。
+    Const PO_HDR_TABLE_ROW As Long = 14
+    Dim lastRow As Long: lastRow = newSh.Cells(newSh.Rows.Count, 4).End(xlUp).Row
+    If lastRow > PO_HDR_TABLE_ROW Then
+        newSh.Rows((PO_HDR_TABLE_ROW + 1) & ":" & lastRow).Delete
+    End If
+    newSh.Cells(PO_HDR_TABLE_ROW + 1, 2).Value = "(該当品目なし)"
+
+    Application.ScreenUpdating = True
+    MsgBox "PO_Draft_Substrate_Polandシートを作成しました。" & vbCrLf & vbCrLf & _
+           "続けて、AddOriginCountryColumn(未実行なら)→M_RawMaterialsでPoland品の" & vbCrLf & _
+           "Origin_Country欄に「Poland」と入力→SyncPODraftCategories の順で実行してください。", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Application.ScreenUpdating = True
+    MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
 End Sub
 
 ' T_SelfStock/T_TTAFStockに新しい材料の行を追加する。テーブル機能を使わない罫線グリッドの

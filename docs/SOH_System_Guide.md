@@ -64,7 +64,9 @@
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
 | `FixOpeningStockColumnReference` | （ファイル選択なし・実行するだけ） | Grid_Stock・Grid_TheoreticalStockの週1列の数式にあったT_OpeningStock列名参照の誤りを修正する移行用マクロ（詳細は5.7.1章。何度実行しても安全） |
-| `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際のCategoryに合わせて同期し直す（詳細は5.7.2章。いつでも安全に実行可） |
+| `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory・Origin_Country列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す（詳細は5.7.2〜5.7.3章。いつでも安全に実行可） |
+| `AddOriginCountryColumn` | （ファイル選択なし・実行するだけ） | M_RawMaterialsにOrigin_Country列を追加する移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
+| `CreatePODraftSubstratePolandSheet` | （ファイル選択なし・実行するだけ） | PO_Draft_Substrate_Polandシートを新規作成する移行用マクロ（詳細は5.7.3章。既に存在する場合は何もしない） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 
@@ -436,6 +438,39 @@ Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が�
 発注数量自体はMaterial_Detailへの参照で持っているため、行を移動しても発注情報が失われる
 ことはありません。既に正しい位置にある行には一切触れません。**Categoryを修正した後は、
 このマクロを実行する習慣をつけてください。**
+
+### 5.7.3 Substrateを原産国別にPO_Draftを分ける（Poland品の分離）
+
+TTAF供給のSubstrateのうち、原産国がPolandの品目だけ発注書(PO_Draft)を別シート
+（`PO_Draft_Substrate_Poland`）に分けて発行できるようにしています。仕組みは`Category`
+（Chemical/Hazardous Chemical/Substrateの3区分）とは独立した、`M_RawMaterials`の
+`Origin_Country`列（11列目）で判定します。Substrateかつ`Origin_Country`が「Poland」の
+品目だけが`PO_Draft_Substrate_Poland`に入り、それ以外のSubstrate（Origin_Countryが空欄・
+Poland以外）は従来通り`PO_Draft_Substrate`に入ります。
+
+**既存ブックへの導入方法**（`macros/RefreshData_MaterialMgmt.bas`を貼り替えた後、
+この順で一度だけ実行）:
+1. `AddOriginCountryColumn` — `M_RawMaterials`に`Origin_Country`列を追加（既存行は空欄）
+2. `CreatePODraftSubstratePolandSheet` — `PO_Draft_Substrate`の書式をそのまま複製した
+   `PO_Draft_Substrate_Poland`シートを新規作成（データ行は空の状態で作成される）
+3. `M_RawMaterials`で、Poland品（現状は`OJN`・`1JN`・`5SN`）の`Origin_Country`欄に
+   「Poland」と入力する
+4. `SyncPODraftCategories`を実行する（5.7.2章のマクロ。Origin_Countryも見るように
+   拡張済みなので、これを実行するとPoland品が自動的に`PO_Draft_Substrate`から
+   `PO_Draft_Substrate_Poland`へ移動する）
+
+`AddMaterial`でSubstrateの新規材料を追加する際は、原産国を尋ねるプロンプトが追加されて
+おり、「Poland」と入力すればそのまま`PO_Draft_Substrate_Poland`に登録されます（それ以外
+の原産国や空欄の場合は従来通り`PO_Draft_Substrate`に登録されます）。
+
+発注書の発行（PDFではなくスナップショット用ブックとしての書き出し）は、
+`PO_Export.bas`の`ExportSubstratePoland`マクロで行います（`ExportSubstrate`と同様の
+仕組みで、`PO_Issued`フォルダに`Substrate_Poland_Release_yyyymmdd_RevXX.xlsx`として
+保存されます）。
+
+現状はPoland品だけの分離ですが、将来的に他の原産国も分けたくなった場合は、
+`POSheetNameForMaterial`関数（VBA）と`build_po_draft`の呼び出し（`build_soh.py`）に
+同様の分岐を追加するだけで対応できます。
 
 **中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
 行、生産計画上の製品コード）の増減にも対応しています。
