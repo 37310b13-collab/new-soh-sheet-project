@@ -163,13 +163,16 @@ Sub AddMaterial()
     Dim ttafCodeVal As String
     ttafCodeVal = Trim(InputBox("TTAF_Code(TTAF側の部品番号)を入力してください。分からなければ空欄のままでOKです。", "材料の追加"))
 
-    ' Origin_Country: 現状はSubstrateの中でもPoland品だけ発注書(PO_Draft)を別シートに
-    ' 分けているため、Substrateの場合だけ確認する(Chemical/Hazardous Chemicalでは無関係)。
+    ' Origin_Country: Substrateは原産国(Japan/China/Poland)によって発注書(PO_Draft)の
+    ' シートが分かれるため、Substrateの場合だけ確認する(Chemical/Hazardous Chemicalでは
+    ' 無関係)。Japan/China/Poland以外(空欄・その他)の場合はどのPO_Draft_*にも入らない
+    ' (汎用の受け皿シートは無い設計。発注する際に正しい原産国を入力し直してください)。
     Dim originCountryVal As String: originCountryVal = ""
     If categoryVal = "Substrate" Then
-        originCountryVal = Trim(InputBox("原産国(Origin_Country)を入力してください。" & vbCrLf & _
-            "Poland品はPO_Draft_Substrate_Polandシートに分けて発注書を作成します。" & vbCrLf & _
-            "分からなければ空欄のままでOKです(通常のPO_Draft_Substrateに入ります)。", "材料の追加"))
+        originCountryVal = Trim(InputBox("原産国(Origin_Country)を「Japan」「China」「Poland」の" & vbCrLf & _
+            "いずれかで入力してください(大文字小文字は区別しません)。" & vbCrLf & _
+            "この3つ以外(空欄含む)は、発注書(PO_Draft)のどのシートにも表示されません。" & vbCrLf & _
+            "まだ発注しない・原産国が分からない場合は空欄のままでOKです。", "材料の追加"))
     End If
 
     If MsgBox("以下の内容で材料を追加します。" & vbCrLf & vbCrLf & _
@@ -689,31 +692,40 @@ Private Function FindMaterialRow(rmTbl As ListObject, rmCode As String) As Long
 End Function
 
 ' Category(と、Substrateの場合はOrigin_Country)から、対応するPO_Draft_*シート名を返す。
-' 現状はSubstrate×Poland品だけを別シート(PO_Draft_Substrate_Poland)に分離している
-' (build_soh.pyのbuild_po_draft呼び出しと同じ切り分け)。
+' SubstrateはOrigin_Country(Japan/China/Poland)で3シートに分離する(汎用の受け皿シートは
+' 無い設計。ユーザーの明示的な判断: 発注していない・原産国未確認の品目はどのPO_Draftにも
+' 載らなくてよい。再度発注する際にOrigin_Countryを入力してSyncPODraftCategoriesを実行すれば
+' 反映される)。build_soh.pyのbuild_po_draft呼び出しと同じ切り分け。
+' Origin_Countryは大文字小文字を区別せずに判定する(手入力での表記ゆれ、例:"poland"で
+' 一致しなくなり静かにPO_Draftから漏れる、という事態を避けるため)。
 Private Function POSheetNameForMaterial(categoryVal As String, originCountryVal As String) As String
+    Dim originKey As String: originKey = UCase(Trim(originCountryVal))
     Select Case categoryVal
         Case "Chemical": POSheetNameForMaterial = "PO_Draft_Chemical"
         Case "Hazardous Chemical": POSheetNameForMaterial = "PO_Draft_Hazardous"
         Case "Substrate"
-            If Trim(originCountryVal) = "Poland" Then
-                POSheetNameForMaterial = "PO_Draft_Substrate_Poland"
-            Else
-                POSheetNameForMaterial = "PO_Draft_Substrate"
-            End If
+            Select Case originKey
+                Case "POLAND": POSheetNameForMaterial = "PO_Draft_Substrate_Poland"
+                Case "JAPAN": POSheetNameForMaterial = "PO_Draft_Substrate_JPN"
+                Case "CHINA": POSheetNameForMaterial = "PO_Draft_Substrate_CHN"
+                Case Else: POSheetNameForMaterial = ""
+            End Select
         Case Else: POSheetNameForMaterial = ""
     End Select
 End Function
 
-' 【いつでも実行してよいメンテナンス用マクロ】PO_Draft_Chemical/_Hazardous/_Substrateの各行は、
-' AddMaterial実行時点(またはbuild_soh.py実行時点)のM_RawMaterials[Category]の値に基づいて、
-' その時1回だけ該当シートに追加される(数式でリアルタイムにCategoryを見て自動的に振り分け
-' 直される仕組みではない)。そのため、後からM_RawMaterialsのCategoryを書き換えても、
-' PO_Draft_*シート側の行は古いシートに残ったまま自動的には移動しない
-' (実際にこの不具合が報告され、発見された)。
-' このマクロを実行すると、M_RawMaterialsの現在のCategoryを正として、PO_Draft_*の3シートを
-' 全材料分スキャンし直し、Categoryと矛盾する行(間違ったシートに残っている行・まだどの
-' PO_Draft_*にも無い行)を、正しいシートに削除→再作成する形で移動させる。
+' 【いつでも実行してよいメンテナンス用マクロ】PO_Draft_Chemical/_Hazardous/_Substrate_*の
+' 各行は、AddMaterial実行時点(またはbuild_soh.py実行時点)のM_RawMaterials[Category]
+' (Substrateの場合はさらに[Origin_Country])の値に基づいて、その時1回だけ該当シートに
+' 追加される(数式でリアルタイムに見て自動的に振り分け直される仕組みではない)。そのため、
+' 後からM_RawMaterialsのCategoryやOrigin_Countryを書き換えても、PO_Draft_*シート側の行は
+' 古いシートに残ったまま自動的には移動しない(実際にこの不具合が報告され、発見された)。
+' このマクロを実行すると、M_RawMaterialsの現在のCategory・Origin_Countryを正として、
+' PO_Draft_*の全シートを全材料分スキャンし直し、矛盾する行(間違ったシートに残っている行・
+' まだどのPO_Draft_*にも無い行)を、正しいシートに削除→再作成する形で移動させる。
+' Substrateで原産国がJapan/China/Poland以外(空欄・その他)の品目は、意図的にどの
+' PO_Draft_*にも入らない(汎用の受け皿シートは無い設計。発注する際にOrigin_Countryを
+' 入力してから、このマクロを実行すればよい)。
 ' 発注数量そのもの(Material_Detailへの参照)は行の位置に依存しないため、移動しても
 ' 発注情報が失われることはない。既に正しい位置にある行には一切触れない。
 Sub SyncPODraftCategories()
@@ -726,7 +738,8 @@ Sub SyncPODraftCategories()
     Application.Calculation = xlCalculationManual
 
     Dim poSheetNames As Variant
-    poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", "PO_Draft_Substrate", "PO_Draft_Substrate_Poland")
+    poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", _
+        "PO_Draft_Substrate_Poland", "PO_Draft_Substrate_JPN", "PO_Draft_Substrate_CHN")
     Const PO_HDR_TABLE_ROW As Long = 14  ' build_soh.pyのPO_HDR_TABLE_ROWと同じ固定値(見出し行)
 
     ' 現在PO_Draft_*の各シートに実際に存在する材料コード(D列)を、"どのシートにあるか"付きで収集する。
@@ -792,17 +805,19 @@ ErrHandler:
     MsgBox "処理中にエラーが発生しました: (" & errNum5 & ") " & errMsg5, vbCritical
 End Sub
 
-' 【一度だけ実行する移行用マクロ】Substrateを原産国別(Poland)にPO_Draftを分けるための
-' セットアップをまとめて行う(元は別々の2つのマクロだったが、常にセットで実行するものなので
-' 1つにまとめた)。
+' 【一度だけ実行する移行用マクロ】Substrateを原産国別(Japan/China/Poland)にPO_Draftを
+' 分けるためのセットアップをまとめて行う。
 '   ①M_RawMaterialsにOrigin_Country列(11列目)を追加する
-'   ②PO_Draft_Substrateの書式・ヘッダー数式をそのまま複製した、PO_Draft_Substrate_Poland
-'     シートを新規作成する(データ行は空の状態で作成される)
-' どちらも既に完了している部分はスキップするため、誤って複数回実行しても安全。
-' このマクロの後、M_RawMaterialsでPoland品(現状はOJN・1JN・5SN)のOrigin_Country欄に
-' 「Poland」と入力し、SyncPODraftCategoriesを実行すると、実際にPO_Draft_Substrate_Poland
-' へ振り分けられる(POSheetNameForMaterial参照)。
-Sub SetupSubstratePolandPODraft()
+'   ②既存のPO_Draft_Substrateシートを、PO_Draft_Substrate_JPNへ改名する(汎用の受け皿
+'     シートは廃止する設計のため。書式・データともそのまま引き継がれる)
+'   ③PO_Draft_Substrate_JPNの書式・ヘッダー数式をそのまま複製した、PO_Draft_Substrate_CHN・
+'     PO_Draft_Substrate_Polandシートを新規作成する(データ行は空の状態で作成される)
+' どれも既に完了している部分はスキップするため、誤って複数回実行しても安全。
+' このマクロの後、M_RawMaterialsで各Substrate品目のOrigin_Country欄に「Japan」「China」
+' 「Poland」のいずれかを入力し、SyncPODraftCategoriesを実行すると、実際に対応する
+' PO_Draft_Substrate_*へ振り分けられる(POSheetNameForMaterial参照)。この3つ以外
+' (空欄・その他)の品目は、意図的にどのPO_Draft_*にも入らない。
+Sub SetupSubstratePODraftByCountry()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
 
@@ -817,50 +832,83 @@ Sub SetupSubstratePolandPODraft()
         columnAdded = True
     End If
 
-    ' ---- ②PO_Draft_Substrate_Polandシートの作成 ----
-    Dim existingSh As Worksheet
+    ' ---- ②PO_Draft_SubstrateをPO_Draft_Substrate_JPNへ改名(旧名のままの場合だけ) ----
+    Dim oldSh As Worksheet
     On Error Resume Next
-    Set existingSh = thisWb.Sheets("PO_Draft_Substrate_Poland")
+    Set oldSh = thisWb.Sheets("PO_Draft_Substrate")
     On Error GoTo ErrHandler
-    Dim sheetCreated As Boolean: sheetCreated = False
-    If existingSh Is Nothing Then
+    Dim jpnSh As Worksheet
+    On Error Resume Next
+    Set jpnSh = thisWb.Sheets("PO_Draft_Substrate_JPN")
+    On Error GoTo ErrHandler
+
+    Dim renamedJPN As Boolean: renamedJPN = False
+    If Not oldSh Is Nothing And jpnSh Is Nothing Then
         Application.ScreenUpdating = False
-
-        Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate")
-        srcSh.Copy After:=srcSh
-        Dim newSh As Worksheet: Set newSh = thisWb.Sheets(srcSh.Index + 1)
-        newSh.Name = "PO_Draft_Substrate_Poland"
-        newSh.Cells(8, 2).Value = "Substrates (Poland)"  ' B8: タイトル表示
-
-        ' データ行(見出し行の次から、複製元の既存データの最終行まで)を削除して空にする
-        ' (Poland品は実データが確定してからSyncPODraftCategoriesで正しく追加し直される)。
-        Const PO_HDR_TABLE_ROW As Long = 14
-        Dim lastRow As Long: lastRow = newSh.Cells(newSh.Rows.Count, 4).End(xlUp).Row
-        If lastRow > PO_HDR_TABLE_ROW Then
-            newSh.Rows((PO_HDR_TABLE_ROW + 1) & ":" & lastRow).Delete
-        End If
-        newSh.Cells(PO_HDR_TABLE_ROW + 1, 2).Value = "(該当品目なし)"
-
+        oldSh.Name = "PO_Draft_Substrate_JPN"
+        oldSh.Cells(8, 2).Value = "Substrates (Japan)"  ' B8: タイトル表示
         Application.ScreenUpdating = True
-        sheetCreated = True
+        renamedJPN = True
     End If
 
-    If Not columnAdded And Not sheetCreated Then
-        MsgBox "既に移行済みです(Origin_Country列・PO_Draft_Substrate_Polandシートとも既にあります)。", vbInformation
+    ' ---- ③PO_Draft_Substrate_CHN・_Polandシートの作成(それぞれ無ければ) ----
+    Dim chnCreated As Boolean: chnCreated = CreatePODraftCountrySheetIfMissing(thisWb, "PO_Draft_Substrate_CHN", "Substrates (China)")
+    Dim polandCreated As Boolean: polandCreated = CreatePODraftCountrySheetIfMissing(thisWb, "PO_Draft_Substrate_Poland", "Substrates (Poland)")
+
+    If Not columnAdded And Not renamedJPN And Not chnCreated And Not polandCreated Then
+        MsgBox "既に移行済みです(Origin_Country列・PO_Draft_Substrate_JPN/CHN/Polandシートとも既にあります)。", vbInformation
         Exit Sub
     End If
 
     MsgBox "Substrateの原産国別PO_Draft分割のセットアップが完了しました。" & vbCrLf & vbCrLf & _
            "Origin_Country列: " & IIf(columnAdded, "追加しました", "既にありました") & vbCrLf & _
-           "PO_Draft_Substrate_Polandシート: " & IIf(sheetCreated, "作成しました", "既にありました") & vbCrLf & vbCrLf & _
-           "続けて、M_RawMaterialsでPoland品のOrigin_Country欄に「Poland」と入力し、" & vbCrLf & _
-           "SyncPODraftCategoriesを実行してください。", vbInformation
+           "PO_Draft_Substrate_JPNシート: " & IIf(renamedJPN, "PO_Draft_Substrateから改名しました", "既にありました") & vbCrLf & _
+           "PO_Draft_Substrate_CHNシート: " & IIf(chnCreated, "作成しました", "既にありました") & vbCrLf & _
+           "PO_Draft_Substrate_Polandシート: " & IIf(polandCreated, "作成しました", "既にありました") & vbCrLf & vbCrLf & _
+           "続けて、M_RawMaterialsで各Substrate品目のOrigin_Country欄に「Japan」「China」" & vbCrLf & _
+           "「Poland」のいずれかを入力し、SyncPODraftCategoriesを実行してください" & vbCrLf & _
+           "(この3つ以外・空欄の品目は、どのPO_Draft_*にも表示されません)。", vbInformation
     Exit Sub
 
 ErrHandler:
     Application.ScreenUpdating = True
     MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
 End Sub
+
+' PO_Draft_Substrate_JPNの書式・ヘッダー数式を複製した、データ行が空のPO_Draft_*シートを
+' 作成する(newSheetNameのシートが既にあれば何もしない)。作成した場合True、既にあった
+' 場合Falseを返す。呼び出し元(SetupSubstratePODraftByCountry)でエラーハンドリング済みのため、
+' ここでは個別のOn Error GoToは持たない。
+Private Function CreatePODraftCountrySheetIfMissing(thisWb As Workbook, newSheetName As String, titleText As String) As Boolean
+    Dim existingSh As Worksheet
+    On Error Resume Next
+    Set existingSh = thisWb.Sheets(newSheetName)
+    On Error GoTo 0
+    If Not existingSh Is Nothing Then
+        CreatePODraftCountrySheetIfMissing = False
+        Exit Function
+    End If
+
+    Application.ScreenUpdating = False
+
+    Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate_JPN")
+    srcSh.Copy After:=srcSh
+    Dim newSh As Worksheet: Set newSh = thisWb.Sheets(srcSh.Index + 1)
+    newSh.Name = newSheetName
+    newSh.Cells(8, 2).Value = titleText  ' B8: タイトル表示
+
+    ' データ行(見出し行の次から、複製元の既存データの最終行まで)を削除して空にする
+    ' (実データが確定してからSyncPODraftCategoriesで正しく追加し直される)。
+    Const PO_HDR_TABLE_ROW As Long = 14
+    Dim lastRow As Long: lastRow = newSh.Cells(newSh.Rows.Count, 4).End(xlUp).Row
+    If lastRow > PO_HDR_TABLE_ROW Then
+        newSh.Rows((PO_HDR_TABLE_ROW + 1) & ":" & lastRow).Delete
+    End If
+    newSh.Cells(PO_HDR_TABLE_ROW + 1, 2).Value = "(該当品目なし)"
+
+    Application.ScreenUpdating = True
+    CreatePODraftCountrySheetIfMissing = True
+End Function
 
 ' T_SelfStock/T_TTAFStockに新しい材料の行を追加する。テーブル機能を使わない罫線グリッドの
 ' ため、行の追加は自前で行う。anchorRmCode(M_RawMaterials側で同じ挿入位置にあった材料の

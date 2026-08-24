@@ -227,9 +227,10 @@ ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 ws = wb.create_sheet("M_RawMaterials")
 # Origin_Country(11列目)は末尾に追加している(既存の列番号を一切ずらさないため。多くのVBA
 # マクロがM_RawMaterialsの列を固定の番号(4=Category,9=TTAF_Code等)で読んでいるので、
-# 途中に列を挿入すると全部ずれてしまう)。PO_Draft_Substrateを原産国別に分割する用途で
-# 追加した(現状はSubstrate×Poland品のみPO_Draft_Substrate_Polandへ分離する。詳細は
-# build_po_draftのorigin_country引数、およびPOSheetNameForMaterial(VBA)参照)。
+# 途中に列を挿入すると全部ずれてしまう)。Substrateの発注書(PO_Draft)を原産国別
+# (Japan/China/Poland)に分割する用途で追加した。汎用の受け皿シートは無い設計のため、
+# この3国以外・未設定の品目はどのPO_Draft_*にも載らない(詳細はbuild_po_draftの
+# origin_country引数、およびPOSheetNameForMaterial(VBA)参照)。
 ws.append(["Part Name", "Description", "Supplier", "Category", "UOM",
            "基準在庫下限_要入力", "基準在庫上限_要入力", "LeadTime_Weeks_要入力", "TTAF_Code",
            "固定週次消費量_要入力", "Origin_Country"])
@@ -1168,7 +1169,7 @@ PO_DATA_START_ROW = 15
 PO_FIRST_WEEK_COL = 8  # H列
 
 
-def build_po_draft(sheet_name, category, title, origin_country=None, exclude_origin_countries=None):
+def build_po_draft(sheet_name, category, title, origin_country=None):
     ws = wb.create_sheet(sheet_name)
     ws["B2"] = "TO：（サプライヤー／TTAF担当者名を入力）"
     ws["B3"] = "　　　　　（会社名）"
@@ -1224,12 +1225,11 @@ def build_po_draft(sheet_name, category, title, origin_country=None, exclude_ori
 
     data_row = PO_HDR_TABLE_ROW
     items = [r for r in rm_master if r["Category"] == category]
-    # 原産国での絞り込み(現状はSubstrate×Polandのみ、PO_Draft_Substrate_Polandへ分離する用途)。
-    # origin_country指定時はその国の品目だけ、exclude_origin_countries指定時はそれ以外全部。
+    # 原産国での絞り込み(Substrateのみ、Japan/China/Poland別のPO_Draftシートに分離する用途。
+    # 汎用の受け皿シートは無い設計のため、この3国以外・原産国未設定の品目はどのPO_Draft_*
+    # にも載らない)。
     if origin_country:
         items = [r for r in items if r.get("Origin_Country", "") == origin_country]
-    elif exclude_origin_countries:
-        items = [r for r in items if r.get("Origin_Country", "") not in exclude_origin_countries]
     for r in items:
         data_row += 1
         rm = r["RM_Code"]
@@ -1279,7 +1279,8 @@ def build_po_draft(sheet_name, category, title, origin_country=None, exclude_ori
 
 build_po_draft("PO_Draft_Chemical", "Chemical", "Chemicals : TTAF Supply")
 build_po_draft("PO_Draft_Hazardous", "Hazardous Chemical", "Hazardous Chemicals")
-build_po_draft("PO_Draft_Substrate", "Substrate", "Substrates", exclude_origin_countries={"Poland"})
+build_po_draft("PO_Draft_Substrate_JPN", "Substrate", "Substrates (Japan)", origin_country="Japan")
+build_po_draft("PO_Draft_Substrate_CHN", "Substrate", "Substrates (China)", origin_country="China")
 build_po_draft("PO_Draft_Substrate_Poland", "Substrate", "Substrates (Poland)", origin_country="Poland")
 
 # ============================================================ README
@@ -1467,7 +1468,8 @@ nav_targets = [
     ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
     ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
     ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
-    ("PO_Draft_Substrate", "発注書ドラフト（Substrate）"),
+    ("PO_Draft_Substrate_JPN", "発注書ドラフト（Substrate・Japan）"),
+    ("PO_Draft_Substrate_CHN", "発注書ドラフト（Substrate・China）"),
     ("PO_Draft_Substrate_Poland", "発注書ドラフト（Substrate・Poland）"),
     ("T_Shipments", "発注・着荷の入力（TTAF供給材料はTTAF倉庫への到着実績を表す）"),
     ("T_OpeningStock", "期首在庫の入力"),
@@ -1493,7 +1495,8 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "操作パネル", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
-         "PO_Draft_Substrate", "PO_Draft_Substrate_Poland", "T_Shipments", "T_OpeningStock", "T_StockCount",
+         "PO_Draft_Substrate_JPN", "PO_Draft_Substrate_CHN", "PO_Draft_Substrate_Poland",
+         "T_Shipments", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
