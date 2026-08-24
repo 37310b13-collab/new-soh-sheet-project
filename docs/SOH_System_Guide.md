@@ -55,8 +55,7 @@
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件を材料＋PO番号＋コンテナ＋Original ETDの複合キーで一括反映、分割出荷も欠落なく反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
-| `AddPONoRowToExistingMaterialBlocks` | （ファイル選択なし・実行するだけ） | Material_Detailの既存ブロックにPO_No行を追加する、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
-| `FixGridIncomingOrderFormula` | （ファイル選択なし・実行するだけ） | Grid_Incomingの数式を、Material_DetailのOrder行を優先して使う形に書き換える、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
+| `SetupOrderManagementMigration` | （ファイル選択なし・実行するだけ） | Material_DetailへのPO_No行追加と、Grid_Incomingの数式書き換えをまとめて行う、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
 | `AddShipmentSplitColumns` | （ファイル選択なし・実行するだけ） | T_ShipmentsにVessel/Container/Original_ETD列を追加し、あわせて全行のEffective_Week数式を復元する移行用マクロ（分割出荷の欠落防止・数式破壊バグの修復、詳細は5.10.2〜5.10.3章。何度実行しても安全） |
 | `CleanupOrphanedPreSplitShipmentRows` | （ファイル選択なし・実行するだけ） | `AddShipmentSplitColumns`実行後、最初の`RefreshShipments`で二重計上の原因になり得る移行前の旧形式行を削除する移行用マクロ（詳細は5.10.5章。何度実行しても安全） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
@@ -65,8 +64,7 @@
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
 | `FixOpeningStockColumnReference` | （ファイル選択なし・実行するだけ） | Grid_Stock・Grid_TheoreticalStockの週1列の数式にあったT_OpeningStock列名参照の誤りを修正する移行用マクロ（詳細は5.7.1章。何度実行しても安全） |
 | `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory・Origin_Country列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す（詳細は5.7.2〜5.7.3章。いつでも安全に実行可） |
-| `AddOriginCountryColumn` | （ファイル選択なし・実行するだけ） | M_RawMaterialsにOrigin_Country列を追加する移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
-| `CreatePODraftSubstratePolandSheet` | （ファイル選択なし・実行するだけ） | PO_Draft_Substrate_Polandシートを新規作成する移行用マクロ（詳細は5.7.3章。既に存在する場合は何もしない） |
+| `SetupSubstratePolandPODraft` | （ファイル選択なし・実行するだけ） | M_RawMaterialsへのOrigin_Country列追加と、PO_Draft_Substrate_Polandシートの新規作成をまとめて行う移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 
@@ -450,12 +448,12 @@ Poland以外）は従来通り`PO_Draft_Substrate`に入ります。
 
 **既存ブックへの導入方法**（`macros/RefreshData_MaterialMgmt.bas`を貼り替えた後、
 この順で一度だけ実行）:
-1. `AddOriginCountryColumn` — `M_RawMaterials`に`Origin_Country`列を追加（既存行は空欄）
-2. `CreatePODraftSubstratePolandSheet` — `PO_Draft_Substrate`の書式をそのまま複製した
-   `PO_Draft_Substrate_Poland`シートを新規作成（データ行は空の状態で作成される）
-3. `M_RawMaterials`で、Poland品（現状は`OJN`・`1JN`・`5SN`）の`Origin_Country`欄に
+1. `SetupSubstratePolandPODraft` — `M_RawMaterials`への`Origin_Country`列追加（既存行は
+   空欄）と、`PO_Draft_Substrate`の書式をそのまま複製した`PO_Draft_Substrate_Poland`
+   シートの新規作成（データ行は空の状態）をまとめて行う
+2. `M_RawMaterials`で、Poland品（現状は`OJN`・`1JN`・`5SN`）の`Origin_Country`欄に
    「Poland」と入力する
-4. `SyncPODraftCategories`を実行する（5.7.2章のマクロ。Origin_Countryも見るように
+3. `SyncPODraftCategories`を実行する（5.7.2章のマクロ。Origin_Countryも見るように
    拡張済みなので、これを実行するとPoland品が自動的に`PO_Draft_Substrate`から
    `PO_Draft_Substrate_Poland`へ移動する）
 
@@ -626,12 +624,9 @@ Material_Detailにブロックが無い材料（BOMで使われない梱包資�
 
 **既存ブックへの導入方法**: 新しく`build_soh.py`でブックを作った場合はPO_No行・
 Grid_Incomingの数式とも最初からこの形になっていますが、既存のライブブックには入っていません。
-`macros/RefreshData_MaterialMgmt.bas`の以下2つを、両方とも一度だけ実行してください
-（順序はどちらが先でも構いません。ブロック数によっては数十秒〜数分かかりますが、
-フリーズではありません）。
-- `AddPONoRowToExistingMaterialBlocks`（Material_DetailにPO_No行を追加）
-- `FixGridIncomingOrderFormula`（Grid_Incomingの数式を、Material_DetailのOrder行を
-  優先して使う形に書き換える）
+`macros/RefreshData_MaterialMgmt.bas`の`SetupOrderManagementMigration`を一度だけ
+実行してください（Material_DetailへのPO_No行追加と、Grid_Incomingの数式書き換えを
+まとめて行います。ブロック数によっては数十秒〜数分かかりますが、フリーズではありません）。
 
 ### 5.10.2 T_Shipmentsの一意キー修正（分割出荷の欠落防止）
 

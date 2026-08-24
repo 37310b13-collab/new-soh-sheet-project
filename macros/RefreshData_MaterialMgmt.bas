@@ -57,20 +57,18 @@ Option Explicit
 ' 属するグループの末尾に挿入することでこの並び順を維持する(ClassifyGroup/
 ' FindGroupInsertPosition/FindRowByCodeを参照)。
 '
-'   AddPONoRowToExistingMaterialBlocks : 発注管理機能(RefreshData_Shipments.basの
-'                 SyncMaterialDetailOrders)を導入する際に、既存のMaterial_Detail
-'                 (各材料ブロックのOrder行の直下にPO_No行が無い、古い構成のシート)へ
-'                 一度だけ実行する移行用マクロ。全材料ブロックのOrder行を探し、その直下に
-'                 PO_No行(週ごとに空欄の入力欄)を挿入する。ブロック数が多いと数十秒〜
-'                 数分かかることがあるが、フリーズではないので待つこと。既に移行済みの
-'                 ブロック(既にPO_No行がある)は自動的にスキップするため、誤って複数回
-'                 実行しても安全。
-'   FixGridIncomingOrderFormula : 同じく発注管理機能の導入時に一度だけ実行する移行用
-'                 マクロ。Grid_Incoming(既存のライブブックでは、T_Shipmentsだけを合計する
-'                 古い数式のまま)を、Material_DetailのOrder行を優先して使う新しい数式に
-'                 書き換える。AddPONoRowToExistingMaterialBlocksとセットで実行すること
-'                 (順序はどちらが先でも構わない)。何度実行しても同じ結果になるため
-'                 再実行しても安全。
+'   SetupOrderManagementMigration : 発注管理機能(RefreshData_Shipments.basの
+'                 SyncMaterialDetailOrders)を既存の運用中ブックに導入する際、一度だけ
+'                 実行する移行用マクロ。以下の2つを続けて行う。
+'                 ①既存のMaterial_Detail(各材料ブロックのOrder行の直下にPO_No行が無い、
+'                   古い構成のシート)の全材料ブロックのOrder行を探し、その直下にPO_No行
+'                   (週ごとに空欄の入力欄)を挿入する。ブロック数が多いと数十秒〜数分
+'                   かかることがあるが、フリーズではないので待つこと。
+'                 ②Grid_Incoming(既存のライブブックでは、T_Shipmentsだけを合計する古い
+'                   数式のまま)を、Material_DetailのOrder行を優先して使う新しい数式に
+'                   書き換える。
+'                 どちらも、既に移行済みの部分はスキップ(または同じ結果で上書き)する
+'                 ため、誤って複数回実行しても安全。
 ' ============================================================================
 
 ' rmCode/descVal/categoryValから、材料が属するグループ(0=Substrate, 1=その他Chemical,
@@ -520,23 +518,30 @@ ErrHandler:
            "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
 End Sub
 
-' Material_Detailの既存ブロックに、Order行の直下へPO_No行を挿入する(一度だけ実行する
-' 移行用マクロ。モジュール冒頭コメント参照)。既にPO_No行があるブロックはスキップするため
+' 【一度だけ実行する移行用マクロ】発注管理機能(5.10.1章)を既存の運用中ブックに導入する。
+' 以下の2つを続けて行う(元は別々の2つのマクロだったが、常にセットで実行するものなので
+' 1つにまとめた)。
+'   ①Material_Detailの既存ブロックに、Order行の直下へPO_No行を挿入する
+'   ②Grid_Incomingの既存の数式(T_Shipmentsだけを合計する古い式)を、Material_DetailのOrder行を
+'     優先して使う新しい式に書き換える
+' どちらも、既に移行済みの部分はスキップ(または同じ結果で上書き)するため、
 ' 誤って複数回実行しても安全。
-Sub AddPONoRowToExistingMaterialBlocks()
+Sub SetupOrderManagementMigration()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+
+    ' ---- ①Material_DetailにPO_No行を追加 ----
     Dim sh As Worksheet
     On Error Resume Next
     Set sh = thisWb.Sheets("Material_Detail")
-    On Error GoTo 0
+    On Error GoTo ErrHandler
     If sh Is Nothing Then
         MsgBox "Material_Detailシートが見つかりません。", vbExclamation
         Exit Sub
     End If
 
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
-    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
 
     ' 挿入対象のOrder行番号を、挿入で行番号がずれる前にすべて集めておく
     ' (targetRows: 0,1,2,... -> 行番号。上から見つかった順=昇順に並ぶ)
@@ -550,127 +555,113 @@ Sub AddPONoRowToExistingMaterialBlocks()
             End If
         End If
     Next r
-    If n = 0 Then
-        MsgBox "対象のブロックはありませんでした(既にすべて移行済みです)。", vbInformation
-        Exit Sub
+
+    Dim addedBlocks As Long: addedBlocks = 0
+    If n > 0 Then
+        If MsgBox(n & "件のブロックにPO_No行を追加します。ブロック数によっては数十秒〜数分かかることがあります" & vbCrLf & _
+                  "(応答なしのように見えてもフリーズではありません)。よろしいですか？", _
+                  vbYesNo + vbQuestion, "PO_No行の追加") <> vbYes Then Exit Sub
+
+        Application.ScreenUpdating = False
+        Application.Calculation = xlCalculationManual
+
+        ' 行番号が大きい(下にある)ブロックから順に処理する。挿入は自分より下の行にしか
+        ' 影響しないため、下から処理すればまだ処理していない上のブロックの行番号はずれない。
+        Dim i As Long
+        For i = n - 1 To 0 Step -1
+            Dim orderRow As Long: orderRow = targetRows(i)
+            Dim poRow As Long: poRow = orderRow + 1
+            sh.Rows(poRow).Insert Shift:=xlDown
+
+            On Error Resume Next
+            sh.Rows(orderRow).Copy
+            sh.Rows(poRow).PasteSpecial xlPasteFormats
+            Application.CutCopyMode = False
+            On Error GoTo ErrHandler
+
+            sh.Cells(poRow, 2).Value = "PO_No"
+            sh.Cells(poRow, 2).Font.Size = 9
+            sh.Cells(poRow, 2).Font.Color = RGB(128, 128, 128)
+            Dim w As Long, col As Long
+            For w = 1 To nWeeks
+                col = MD_WEEK_START_COL + w - 1
+                sh.Cells(poRow, col).Value = Empty
+                sh.Cells(poRow, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
+                sh.Cells(poRow, col).Font.Size = 9
+                sh.Cells(poRow, col).Font.Color = RGB(128, 128, 128)
+            Next w
+        Next i
+        addedBlocks = n
+
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
     End If
 
-    If MsgBox(n & "件のブロックにPO_No行を追加します。ブロック数によっては数十秒〜数分かかることがあります" & vbCrLf & _
-              "(応答なしのように見えてもフリーズではありません)。よろしいですか？", _
-              vbYesNo + vbQuestion, "PO_No行の追加") <> vbYes Then Exit Sub
-
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-
-    ' 行番号が大きい(下にある)ブロックから順に処理する。挿入は自分より下の行にしか
-    ' 影響しないため、下から処理すればまだ処理していない上のブロックの行番号はずれない。
-    Dim i As Long
-    For i = n - 1 To 0 Step -1
-        Dim orderRow As Long: orderRow = targetRows(i)
-        Dim poRow As Long: poRow = orderRow + 1
-        sh.Rows(poRow).Insert Shift:=xlDown
-
-        On Error Resume Next
-        sh.Rows(orderRow).Copy
-        sh.Rows(poRow).PasteSpecial xlPasteFormats
-        Application.CutCopyMode = False
-        On Error GoTo 0
-
-        sh.Cells(poRow, 2).Value = "PO_No"
-        sh.Cells(poRow, 2).Font.Size = 9
-        sh.Cells(poRow, 2).Font.Color = RGB(128, 128, 128)
-        Dim w As Long, col As Long
-        For w = 1 To nWeeks
-            col = MD_WEEK_START_COL + w - 1
-            sh.Cells(poRow, col).Value = Empty
-            sh.Cells(poRow, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
-            sh.Cells(poRow, col).Font.Size = 9
-            sh.Cells(poRow, col).Font.Color = RGB(128, 128, 128)
-        Next w
-    Next i
-
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-
-    MsgBox n & "件のブロックにPO_No行を追加しました。", vbInformation
-    Exit Sub
-
-ErrHandler:
-    Dim errNum2 As Long: errNum2 = Err.Number
-    Dim errMsg2 As String: errMsg2 = Err.Description
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-    MsgBox "PO_No行の追加中にエラーが発生しました: (" & errNum2 & ") " & errMsg2 & vbCrLf & vbCrLf & _
-           "途中まで反映されている可能性があります。シートの状態を確認してください" & vbCrLf & _
-           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
-End Sub
-
-' Grid_Incomingの既存の数式(T_Shipmentsだけを合計する古い式)を、Material_DetailのOrder行を
-' 優先して使う新しい式に書き換える(一度だけ実行する移行用マクロ。build_soh.pyで新規に
-' 作られるブックは最初からこの式で生成されるが、既存のライブブックのGrid_Incomingシートは
-' AddPONoRowToExistingMaterialBlocksを実行しただけでは古い式のままなので、これも別途
-' 実行する必要がある)。何度実行しても同じ結果になるため再実行しても安全。
-Sub FixGridIncomingOrderFormula()
-    On Error GoTo ErrHandler
-    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    ' ---- ②Grid_Incomingの数式を書き換え ----
     Dim inTbl As ListObject: Set inTbl = thisWb.Sheets("Grid_Incoming").ListObjects("Grid_Incoming")
     Dim dataRange As Range: Set dataRange = inTbl.DataBodyRange
-    If dataRange Is Nothing Then
-        MsgBox "Grid_Incomingにデータ行がありません。", vbExclamation
+    Dim fixedCells As Long: fixedCells = 0
+    If Not dataRange Is Nothing Then
+        Application.ScreenUpdating = False
+        Application.Calculation = xlCalculationManual
+
+        Dim mdHelperCol As Long: mdHelperCol = MD_WEEK_START_COL + nWeeks + 1
+        Dim mdHelperColLetter As String: mdHelperColLetter = ColLetter(mdHelperCol)
+        Dim mdWeekFirstColLetter As String: mdWeekFirstColLetter = ColLetter(MD_WEEK_START_COL)
+        Dim mdWeekLastColLetter As String: mdWeekLastColLetter = ColLetter(MD_WEEK_START_COL + nWeeks - 1)
+
+        Dim firstDataRow As Long: firstDataRow = dataRange.Row
+        Dim nRows As Long: nRows = dataRange.Rows.Count
+        Dim nCols As Long: nCols = dataRange.Columns.Count  ' 1列目=Part Name, 2列目以降=Week1,Week2,...
+
+        Dim allFormulas As Variant: allFormulas = dataRange.Formula
+
+        Dim rr As Long, c As Long
+        For rr = 1 To nRows
+            Dim actualRow As Long: actualRow = firstDataRow + rr - 1
+            For c = 2 To nCols
+                Dim wk As Long: wk = c - 1
+                Dim mdOrderMatch As String
+                mdOrderMatch = "MATCH($A" & actualRow & ",Material_Detail!$" & mdHelperColLetter & ":$" & mdHelperColLetter & ",0)"
+                Dim mdHasBlock As String
+                mdHasBlock = "COUNTIF(Material_Detail!$" & mdHelperColLetter & ":$" & mdHelperColLetter & ",$A" & actualRow & ")>0"
+                Dim mdOrderVal As String
+                mdOrderVal = "INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & "," & mdOrderMatch & "," & wk & ")"
+                Dim mdPoVal As String
+                mdPoVal = "INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & "," & mdOrderMatch & "+1," & wk & ")"
+                Dim mdReceived As String
+                mdReceived = "ISNUMBER(SEARCH(""[済]""," & mdPoVal & "))"
+                Dim shipmentsVal As String
+                shipmentsVal = "SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A" & actualRow & ",T_Shipments[Effective_Week]," & wk & ")"
+                allFormulas(rr, c) = "=IF(" & mdHasBlock & ",IF(" & mdReceived & ",0,IFERROR(" & mdOrderVal & ",0))," & shipmentsVal & ")"
+                fixedCells = fixedCells + 1
+            Next c
+        Next rr
+
+        dataRange.Formula = allFormulas
+
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
+    End If
+
+    If addedBlocks = 0 And fixedCells = 0 Then
+        MsgBox "対象がありませんでした(既にすべて移行済みです)。", vbInformation
         Exit Sub
     End If
 
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-
-    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
-    Dim mdHelperCol As Long: mdHelperCol = MD_WEEK_START_COL + nWeeks + 1
-    Dim mdHelperColLetter As String: mdHelperColLetter = ColLetter(mdHelperCol)
-    Dim mdWeekFirstColLetter As String: mdWeekFirstColLetter = ColLetter(MD_WEEK_START_COL)
-    Dim mdWeekLastColLetter As String: mdWeekLastColLetter = ColLetter(MD_WEEK_START_COL + nWeeks - 1)
-
-    Dim firstDataRow As Long: firstDataRow = dataRange.Row
-    Dim nRows As Long: nRows = dataRange.Rows.Count
-    Dim nCols As Long: nCols = dataRange.Columns.Count  ' 1列目=Part Name, 2列目以降=Week1,Week2,...
-
-    Dim allFormulas As Variant: allFormulas = dataRange.Formula
-
-    Dim r As Long, c As Long, fixedCells As Long: fixedCells = 0
-    For r = 1 To nRows
-        Dim actualRow As Long: actualRow = firstDataRow + r - 1
-        For c = 2 To nCols
-            Dim w As Long: w = c - 1
-            Dim mdOrderMatch As String
-            mdOrderMatch = "MATCH($A" & actualRow & ",Material_Detail!$" & mdHelperColLetter & ":$" & mdHelperColLetter & ",0)"
-            Dim mdHasBlock As String
-            mdHasBlock = "COUNTIF(Material_Detail!$" & mdHelperColLetter & ":$" & mdHelperColLetter & ",$A" & actualRow & ")>0"
-            Dim mdOrderVal As String
-            mdOrderVal = "INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & "," & mdOrderMatch & "," & w & ")"
-            Dim mdPoVal As String
-            mdPoVal = "INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & "," & mdOrderMatch & "+1," & w & ")"
-            Dim mdReceived As String
-            mdReceived = "ISNUMBER(SEARCH(""[済]""," & mdPoVal & "))"
-            Dim shipmentsVal As String
-            shipmentsVal = "SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A" & actualRow & ",T_Shipments[Effective_Week]," & w & ")"
-            allFormulas(r, c) = "=IF(" & mdHasBlock & ",IF(" & mdReceived & ",0,IFERROR(" & mdOrderVal & ",0))," & shipmentsVal & ")"
-            fixedCells = fixedCells + 1
-        Next c
-    Next r
-
-    dataRange.Formula = allFormulas
-
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-
-    MsgBox "Grid_Incomingの数式を更新しました。" & vbCrLf & "書き換えたセル数: " & fixedCells, vbInformation
+    MsgBox "発注管理機能の移行が完了しました。" & vbCrLf & vbCrLf & _
+           "PO_No行を追加したブロック数: " & addedBlocks & vbCrLf & _
+           "Grid_Incomingで書き換えたセル数: " & fixedCells, vbInformation
     Exit Sub
 
 ErrHandler:
-    Dim errNum3 As Long: errNum3 = Err.Number
-    Dim errMsg3 As String: errMsg3 = Err.Description
+    Dim errNum As Long: errNum = Err.Number
+    Dim errMsg As String: errMsg = Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum3 & ") " & errMsg3, vbCritical
+    MsgBox "移行処理でエラーが発生しました: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
+           "途中まで反映されている可能性があります。シートの状態を確認してください" & vbCrLf & _
+           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
 End Sub
 
 Private Function IsMaterialCodeFree(rmTbl As ListObject, rmCode As String) As Boolean
@@ -801,77 +792,69 @@ ErrHandler:
     MsgBox "処理中にエラーが発生しました: (" & errNum5 & ") " & errMsg5, vbCritical
 End Sub
 
-' 【一度だけ実行する移行用マクロ】M_RawMaterialsにOrigin_Country列(11列目)を追加する。
-' 既存行はこの列が空欄のまま追加される。Substrateのうち原産国がPolandの品目について、
-' この列に"Poland"と入力してからSyncPODraftCategoriesを実行すると、
-' PO_Draft_Substrate_Polandシートへ自動的に振り分けられる(POSheetNameForMaterial参照)。
-' 既に列がある場合は何もしないため、誤って複数回実行しても安全。
-Sub AddOriginCountryColumn()
+' 【一度だけ実行する移行用マクロ】Substrateを原産国別(Poland)にPO_Draftを分けるための
+' セットアップをまとめて行う(元は別々の2つのマクロだったが、常にセットで実行するものなので
+' 1つにまとめた)。
+'   ①M_RawMaterialsにOrigin_Country列(11列目)を追加する
+'   ②PO_Draft_Substrateの書式・ヘッダー数式をそのまま複製した、PO_Draft_Substrate_Poland
+'     シートを新規作成する(データ行は空の状態で作成される)
+' どちらも既に完了している部分はスキップするため、誤って複数回実行しても安全。
+' このマクロの後、M_RawMaterialsでPoland品(現状はOJN・1JN・5SN)のOrigin_Country欄に
+' 「Poland」と入力し、SyncPODraftCategoriesを実行すると、実際にPO_Draft_Substrate_Poland
+' へ振り分けられる(POSheetNameForMaterial参照)。
+Sub SetupSubstratePolandPODraft()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
-    If rmTbl.ListColumns.Count >= 11 Then
-        MsgBox "既に移行済みです(Origin_Country列が既にあります)。", vbInformation
-        Exit Sub
+    ' ---- ①Origin_Country列の追加 ----
+    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+    Dim columnAdded As Boolean: columnAdded = False
+    If rmTbl.ListColumns.Count < 11 Then
+        Application.ScreenUpdating = False
+        rmTbl.ListColumns.Add
+        rmTbl.HeaderRowRange.Cells(1, 11).Value = "Origin_Country"
+        Application.ScreenUpdating = True
+        columnAdded = True
     End If
 
-    Application.ScreenUpdating = False
-    rmTbl.ListColumns.Add
-    rmTbl.HeaderRowRange.Cells(1, 11).Value = "Origin_Country"
-    Application.ScreenUpdating = True
-
-    MsgBox "M_RawMaterialsにOrigin_Country列を追加しました。" & vbCrLf & vbCrLf & _
-           "Substrateのうち原産国がPolandの品目について、この列に「Poland」と入力し、" & vbCrLf & _
-           "SyncPODraftCategoriesを実行すると、PO_Draft_Substrate_Polandシートへ" & vbCrLf & _
-           "自動的に振り分けられます(先にCreatePODraftSubstratePolandSheetでシート自体を" & vbCrLf & _
-           "作成しておく必要があります)。", vbInformation
-    Exit Sub
-
-ErrHandler:
-    Application.ScreenUpdating = True
-    MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
-End Sub
-
-' 【一度だけ実行する移行用マクロ】PO_Draft_Substrateを原産国別に分けるためのシートを
-' 新規作成する(既存のPO_Draft_Substrateの書式・ヘッダー数式をそのまま複製し、データ行だけ
-' 空にする)。実際にPoland品をこのシートへ振り分けるには、このマクロの後、
-' AddOriginCountryColumn(未実行なら)→M_RawMaterialsでPoland品のOrigin_Country欄に
-' 「Poland」と入力→SyncPODraftCategories の順で実行する。既に存在する場合は何もしない。
-Sub CreatePODraftSubstratePolandSheet()
-    On Error GoTo ErrHandler
-    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-
+    ' ---- ②PO_Draft_Substrate_Polandシートの作成 ----
     Dim existingSh As Worksheet
     On Error Resume Next
     Set existingSh = thisWb.Sheets("PO_Draft_Substrate_Poland")
     On Error GoTo ErrHandler
-    If Not existingSh Is Nothing Then
-        MsgBox "PO_Draft_Substrate_Polandは既に存在します。", vbInformation
+    Dim sheetCreated As Boolean: sheetCreated = False
+    If existingSh Is Nothing Then
+        Application.ScreenUpdating = False
+
+        Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate")
+        srcSh.Copy After:=srcSh
+        Dim newSh As Worksheet: Set newSh = thisWb.Sheets(srcSh.Index + 1)
+        newSh.Name = "PO_Draft_Substrate_Poland"
+        newSh.Cells(8, 2).Value = "Substrates (Poland)"  ' B8: タイトル表示
+
+        ' データ行(見出し行の次から、複製元の既存データの最終行まで)を削除して空にする
+        ' (Poland品は実データが確定してからSyncPODraftCategoriesで正しく追加し直される)。
+        Const PO_HDR_TABLE_ROW As Long = 14
+        Dim lastRow As Long: lastRow = newSh.Cells(newSh.Rows.Count, 4).End(xlUp).Row
+        If lastRow > PO_HDR_TABLE_ROW Then
+            newSh.Rows((PO_HDR_TABLE_ROW + 1) & ":" & lastRow).Delete
+        End If
+        newSh.Cells(PO_HDR_TABLE_ROW + 1, 2).Value = "(該当品目なし)"
+
+        Application.ScreenUpdating = True
+        sheetCreated = True
+    End If
+
+    If Not columnAdded And Not sheetCreated Then
+        MsgBox "既に移行済みです(Origin_Country列・PO_Draft_Substrate_Polandシートとも既にあります)。", vbInformation
         Exit Sub
     End If
 
-    Application.ScreenUpdating = False
-
-    Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate")
-    srcSh.Copy After:=srcSh
-    Dim newSh As Worksheet: Set newSh = thisWb.Sheets(srcSh.Index + 1)
-    newSh.Name = "PO_Draft_Substrate_Poland"
-    newSh.Cells(8, 2).Value = "Substrates (Poland)"  ' B8: タイトル表示
-
-    ' データ行(見出し行の次から、複製元の既存データの最終行まで)を削除して空にする
-    ' (Poland品は実データが確定してからSyncPODraftCategoriesで正しく追加し直される)。
-    Const PO_HDR_TABLE_ROW As Long = 14
-    Dim lastRow As Long: lastRow = newSh.Cells(newSh.Rows.Count, 4).End(xlUp).Row
-    If lastRow > PO_HDR_TABLE_ROW Then
-        newSh.Rows((PO_HDR_TABLE_ROW + 1) & ":" & lastRow).Delete
-    End If
-    newSh.Cells(PO_HDR_TABLE_ROW + 1, 2).Value = "(該当品目なし)"
-
-    Application.ScreenUpdating = True
-    MsgBox "PO_Draft_Substrate_Polandシートを作成しました。" & vbCrLf & vbCrLf & _
-           "続けて、AddOriginCountryColumn(未実行なら)→M_RawMaterialsでPoland品の" & vbCrLf & _
-           "Origin_Country欄に「Poland」と入力→SyncPODraftCategories の順で実行してください。", vbInformation
+    MsgBox "Substrateの原産国別PO_Draft分割のセットアップが完了しました。" & vbCrLf & vbCrLf & _
+           "Origin_Country列: " & IIf(columnAdded, "追加しました", "既にありました") & vbCrLf & _
+           "PO_Draft_Substrate_Polandシート: " & IIf(sheetCreated, "作成しました", "既にありました") & vbCrLf & vbCrLf & _
+           "続けて、M_RawMaterialsでPoland品のOrigin_Country欄に「Poland」と入力し、" & vbCrLf & _
+           "SyncPODraftCategoriesを実行してください。", vbInformation
     Exit Sub
 
 ErrHandler:
