@@ -64,6 +64,7 @@
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
 | `FixOpeningStockColumnReference` | （ファイル選択なし・実行するだけ） | Grid_Stock・Grid_TheoreticalStockの週1列の数式にあったT_OpeningStock列名参照の誤りを修正する移行用マクロ（詳細は5.7.1章。何度実行しても安全） |
+| `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際のCategoryに合わせて同期し直す（詳細は5.7.2章。いつでも安全に実行可） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 
@@ -417,6 +418,24 @@ Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が�
 **既存材料**の週1列の数式は、コードを直しただけでは直りません。`FixOpeningStockColumnReference`
 マクロを一度実行すると、Grid_Stock・Grid_TheoreticalStockの全材料の週1列の数式が一括で
 正しい状態に修正されます（他の週の列には影響しません。誤って複数回実行しても安全です）。
+
+### 5.7.2 M_RawMaterialsのCategory変更をPO_Draft_*に反映する（`SyncPODraftCategories`）
+
+`PO_Draft_Chemical`・`PO_Draft_Hazardous`・`PO_Draft_Substrate`の各行は、`AddMaterial`実行時点
+（または`build_soh.py`実行時点）の`M_RawMaterials`の`Category`の値に基づいて、その時1回だけ
+該当シートに追加されます。**Categoryを数式でリアルタイムに参照して自動的に振り分け直す
+仕組みではありません。**
+
+そのため、材料を登録した後に`M_RawMaterials`側で`Category`を修正しても（例:
+「Hazardous Chemical」→「Chemical」に訂正）、`PO_Draft_*`シート側の行は元のシートに
+残ったままになり、自動的には移動しません（実際にこの不具合が報告され、発見されました）。
+
+`SyncPODraftCategories`マクロを実行すると、`M_RawMaterials`の現在の`Category`を正として
+`PO_Draft_*`の3シートを全材料分スキャンし直し、矛盾している行（間違ったシートに残っている行・
+まだどの`PO_Draft_*`にも無い行）を、正しいシートへ削除→再作成する形で移動させます。
+発注数量自体はMaterial_Detailへの参照で持っているため、行を移動しても発注情報が失われる
+ことはありません。既に正しい位置にある行には一切触れません。**Categoryを修正した後は、
+このマクロを実行する習慣をつけてください。**
 
 **中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
 行、生産計画上の製品コード）の増減にも対応しています。

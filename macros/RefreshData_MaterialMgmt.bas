@@ -694,6 +694,91 @@ Private Function POSheetNameForCategory(categoryVal As String) As String
     End Select
 End Function
 
+' 【いつでも実行してよいメンテナンス用マクロ】PO_Draft_Chemical/_Hazardous/_Substrateの各行は、
+' AddMaterial実行時点(またはbuild_soh.py実行時点)のM_RawMaterials[Category]の値に基づいて、
+' その時1回だけ該当シートに追加される(数式でリアルタイムにCategoryを見て自動的に振り分け
+' 直される仕組みではない)。そのため、後からM_RawMaterialsのCategoryを書き換えても、
+' PO_Draft_*シート側の行は古いシートに残ったまま自動的には移動しない
+' (実際にこの不具合が報告され、発見された)。
+' このマクロを実行すると、M_RawMaterialsの現在のCategoryを正として、PO_Draft_*の3シートを
+' 全材料分スキャンし直し、Categoryと矛盾する行(間違ったシートに残っている行・まだどの
+' PO_Draft_*にも無い行)を、正しいシートに削除→再作成する形で移動させる。
+' 発注数量そのもの(Material_Detailへの参照)は行の位置に依存しないため、移動しても
+' 発注情報が失われることはない。既に正しい位置にある行には一切触れない。
+Sub SyncPODraftCategories()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
+    Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim poSheetNames As Variant: poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", "PO_Draft_Substrate")
+    Const PO_HDR_TABLE_ROW As Long = 14  ' build_soh.pyのPO_HDR_TABLE_ROWと同じ固定値(見出し行)
+
+    ' 現在PO_Draft_*の各シートに実際に存在する材料コード(D列)を、"どのシートにあるか"付きで収集する。
+    Dim currentSheetOf As Object: Set currentSheetOf = CreateObject("Scripting.Dictionary")
+    currentSheetOf.CompareMode = vbTextCompare
+    Dim si As Long
+    For si = LBound(poSheetNames) To UBound(poSheetNames)
+        Dim shName As String: shName = CStr(poSheetNames(si))
+        Dim sh As Worksheet: Set sh = thisWb.Sheets(shName)
+        Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 4).End(xlUp).Row
+        Dim r As Long
+        For r = PO_HDR_TABLE_ROW + 1 To lastRow
+            Dim codeInSheet As String: codeInSheet = Trim(CStr(sh.Cells(r, 4).Value))
+            If Len(codeInSheet) > 0 And Not currentSheetOf.Exists(codeInSheet) Then
+                currentSheetOf(codeInSheet) = shName
+            End If
+        Next r
+    Next si
+
+    Dim rmN As Long: rmN = rmTbl.ListRows.Count
+    Dim movedCount As Long: movedCount = 0
+    Dim addedCount As Long: addedCount = 0
+    If rmN > 0 Then
+        Dim rmData As Variant: rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 9).Value  ' Part Name,Description,Supplier,Category,UOM,...,TTAF_Code(9列目)
+        Dim i As Long
+        For i = 1 To rmN
+            Dim rmCode As String: rmCode = Trim(CStr(rmData(i, 1)))
+            Dim categoryVal As String: categoryVal = Trim(CStr(rmData(i, 4)))
+            Dim ttafCodeVal As String: ttafCodeVal = Trim(CStr(rmData(i, 9)))
+            Dim correctSheet As String: correctSheet = POSheetNameForCategory(categoryVal)
+
+            Dim existingSheet As String: existingSheet = ""
+            If currentSheetOf.Exists(rmCode) Then existingSheet = CStr(currentSheetOf(rmCode))
+
+            If existingSheet <> correctSheet Then
+                If Len(existingSheet) > 0 Then
+                    Call DeleteMatchingGridRow(thisWb.Sheets(existingSheet), rmCode, 4)
+                    movedCount = movedCount + 1
+                Else
+                    addedCount = addedCount + 1
+                End If
+                If Len(correctSheet) > 0 Then
+                    Call AppendPODraftRow(thisWb.Sheets(correctSheet), rmCode, ttafCodeVal, nWeeks)
+                End If
+            End If
+        Next i
+    End If
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    MsgBox "PO_Draft_*シートの振り分けをM_RawMaterialsの現在のCategoryに合わせて同期しました。" & vbCrLf & vbCrLf & _
+           "シートを移動した材料: " & movedCount & " 件" & vbCrLf & _
+           "新たに追加した材料(どのPO_Draftにも無かった分): " & addedCount & " 件", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Dim errNum5 As Long: errNum5 = Err.Number
+    Dim errMsg5 As String: errMsg5 = Err.Description
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "処理中にエラーが発生しました: (" & errNum5 & ") " & errMsg5, vbCritical
+End Sub
+
 ' T_SelfStock/T_TTAFStockに新しい材料の行を追加する。テーブル機能を使わない罫線グリッドの
 ' ため、行の追加は自前で行う。anchorRmCode(M_RawMaterials側で同じ挿入位置にあった材料の
 ' コード)が指定されていれば、その材料の行の直前にExcelの行挿入(Rows.Insert)で割り込ませる
