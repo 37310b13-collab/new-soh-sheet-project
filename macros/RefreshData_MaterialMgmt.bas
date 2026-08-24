@@ -692,10 +692,12 @@ Private Function FindMaterialRow(rmTbl As ListObject, rmCode As String) As Long
 End Function
 
 ' Category(と、Substrateの場合はOrigin_Country)から、対応するPO_Draft_*シート名を返す。
-' SubstrateはOrigin_Country(Japan/China/Poland)で3シートに分離する(汎用の受け皿シートは
-' 無い設計。ユーザーの明示的な判断: 発注していない・原産国未確認の品目はどのPO_Draftにも
-' 載らなくてよい。再度発注する際にOrigin_Countryを入力してSyncPODraftCategoriesを実行すれば
-' 反映される)。build_soh.pyのbuild_po_draft呼び出しと同じ切り分け。
+' SubstrateはOrigin_CountryがPolandなら専用シート(PO_Draft_Substrate_Poland)、
+' Japan/Chinaならまとめて1枚のシート(PO_Draft_Substrate_JPN_CHN)に振り分ける
+' (汎用の受け皿シートは無い設計。ユーザーの明示的な判断: 発注していない・原産国未確認の
+' 品目はどのPO_Draftにも載らなくてよい。再度発注する際にOrigin_Countryを入力して
+' SyncPODraftCategoriesを実行すれば反映される)。build_soh.pyのbuild_po_draft呼び出しと
+' 同じ切り分け。
 ' Origin_Countryは大文字小文字を区別せずに判定する(手入力での表記ゆれ、例:"poland"で
 ' 一致しなくなり静かにPO_Draftから漏れる、という事態を避けるため)。
 Private Function POSheetNameForMaterial(categoryVal As String, originCountryVal As String) As String
@@ -706,8 +708,7 @@ Private Function POSheetNameForMaterial(categoryVal As String, originCountryVal 
         Case "Substrate"
             Select Case originKey
                 Case "POLAND": POSheetNameForMaterial = "PO_Draft_Substrate_Poland"
-                Case "JAPAN": POSheetNameForMaterial = "PO_Draft_Substrate_JPN"
-                Case "CHINA": POSheetNameForMaterial = "PO_Draft_Substrate_CHN"
+                Case "JAPAN", "CHINA": POSheetNameForMaterial = "PO_Draft_Substrate_JPN_CHN"
                 Case Else: POSheetNameForMaterial = ""
             End Select
         Case Else: POSheetNameForMaterial = ""
@@ -739,7 +740,7 @@ Sub SyncPODraftCategories()
 
     Dim poSheetNames As Variant
     poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", _
-        "PO_Draft_Substrate_Poland", "PO_Draft_Substrate_JPN", "PO_Draft_Substrate_CHN")
+        "PO_Draft_Substrate_Poland", "PO_Draft_Substrate_JPN_CHN")
     Const PO_HDR_TABLE_ROW As Long = 14  ' build_soh.pyのPO_HDR_TABLE_ROWと同じ固定値(見出し行)
 
     ' 現在PO_Draft_*の各シートに実際に存在する材料コード(D列)を、"どのシートにあるか"付きで収集する。
@@ -805,12 +806,13 @@ ErrHandler:
     MsgBox "処理中にエラーが発生しました: (" & errNum5 & ") " & errMsg5, vbCritical
 End Sub
 
-' 【一度だけ実行する移行用マクロ】Substrateを原産国別(Japan/China/Poland)にPO_Draftを
-' 分けるためのセットアップをまとめて行う。
+' 【一度だけ実行する移行用マクロ】Substrateを原産国別にPO_Draftを分けるためのセットアップを
+' まとめて行う。PolandだけPO_Draft_Substrate_Polandという専用シートに分け、Japan・Chinaは
+' PO_Draft_Substrate_JPN_CHNという1枚のシートにまとめる。
 '   ①M_RawMaterialsにOrigin_Country列(11列目)を追加する
-'   ②既存のPO_Draft_Substrateシートを、PO_Draft_Substrate_JPNへ改名する(汎用の受け皿
-'     シートは廃止する設計のため。書式・データともそのまま引き継がれる)
-'   ③PO_Draft_Substrate_JPNの書式・ヘッダー数式をそのまま複製した、PO_Draft_Substrate_CHN・
+'   ②既存のPO_Draft_Substrateシートを、PO_Draft_Substrate_JPN_CHNへ改名する(汎用の
+'     受け皿シートは廃止する設計のため。書式・データともそのまま引き継がれる)
+'   ③PO_Draft_Substrate_JPN_CHNの書式・ヘッダー数式をそのまま複製した、
 '     PO_Draft_Substrate_Polandシートを新規作成する(データ行は空の状態で作成される)
 ' どれも既に完了している部分はスキップするため、誤って複数回実行しても安全。
 ' このマクロの後、M_RawMaterialsで各Substrate品目のOrigin_Country欄に「Japan」「China」
@@ -832,38 +834,36 @@ Sub SetupSubstratePODraftByCountry()
         columnAdded = True
     End If
 
-    ' ---- ②PO_Draft_SubstrateをPO_Draft_Substrate_JPNへ改名(旧名のままの場合だけ) ----
+    ' ---- ②PO_Draft_SubstrateをPO_Draft_Substrate_JPN_CHNへ改名(旧名のままの場合だけ) ----
     Dim oldSh As Worksheet
     On Error Resume Next
     Set oldSh = thisWb.Sheets("PO_Draft_Substrate")
     On Error GoTo ErrHandler
-    Dim jpnSh As Worksheet
+    Dim jpnChnSh As Worksheet
     On Error Resume Next
-    Set jpnSh = thisWb.Sheets("PO_Draft_Substrate_JPN")
+    Set jpnChnSh = thisWb.Sheets("PO_Draft_Substrate_JPN_CHN")
     On Error GoTo ErrHandler
 
-    Dim renamedJPN As Boolean: renamedJPN = False
-    If Not oldSh Is Nothing And jpnSh Is Nothing Then
+    Dim renamedJPNCHN As Boolean: renamedJPNCHN = False
+    If Not oldSh Is Nothing And jpnChnSh Is Nothing Then
         Application.ScreenUpdating = False
-        oldSh.Name = "PO_Draft_Substrate_JPN"
-        oldSh.Cells(8, 2).Value = "Substrates (Japan)"  ' B8: タイトル表示
+        oldSh.Name = "PO_Draft_Substrate_JPN_CHN"
+        oldSh.Cells(8, 2).Value = "Substrates (Japan / China)"  ' B8: タイトル表示
         Application.ScreenUpdating = True
-        renamedJPN = True
+        renamedJPNCHN = True
     End If
 
-    ' ---- ③PO_Draft_Substrate_CHN・_Polandシートの作成(それぞれ無ければ) ----
-    Dim chnCreated As Boolean: chnCreated = CreatePODraftCountrySheetIfMissing(thisWb, "PO_Draft_Substrate_CHN", "Substrates (China)")
+    ' ---- ③PO_Draft_Substrate_Polandシートの作成(無ければ) ----
     Dim polandCreated As Boolean: polandCreated = CreatePODraftCountrySheetIfMissing(thisWb, "PO_Draft_Substrate_Poland", "Substrates (Poland)")
 
-    If Not columnAdded And Not renamedJPN And Not chnCreated And Not polandCreated Then
-        MsgBox "既に移行済みです(Origin_Country列・PO_Draft_Substrate_JPN/CHN/Polandシートとも既にあります)。", vbInformation
+    If Not columnAdded And Not renamedJPNCHN And Not polandCreated Then
+        MsgBox "既に移行済みです(Origin_Country列・PO_Draft_Substrate_JPN_CHN/Polandシートとも既にあります)。", vbInformation
         Exit Sub
     End If
 
     MsgBox "Substrateの原産国別PO_Draft分割のセットアップが完了しました。" & vbCrLf & vbCrLf & _
            "Origin_Country列: " & IIf(columnAdded, "追加しました", "既にありました") & vbCrLf & _
-           "PO_Draft_Substrate_JPNシート: " & IIf(renamedJPN, "PO_Draft_Substrateから改名しました", "既にありました") & vbCrLf & _
-           "PO_Draft_Substrate_CHNシート: " & IIf(chnCreated, "作成しました", "既にありました") & vbCrLf & _
+           "PO_Draft_Substrate_JPN_CHNシート: " & IIf(renamedJPNCHN, "PO_Draft_Substrateから改名しました", "既にありました") & vbCrLf & _
            "PO_Draft_Substrate_Polandシート: " & IIf(polandCreated, "作成しました", "既にありました") & vbCrLf & vbCrLf & _
            "続けて、M_RawMaterialsで各Substrate品目のOrigin_Country欄に「Japan」「China」" & vbCrLf & _
            "「Poland」のいずれかを入力し、SyncPODraftCategoriesを実行してください" & vbCrLf & _
@@ -875,7 +875,7 @@ ErrHandler:
     MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
 End Sub
 
-' PO_Draft_Substrate_JPNの書式・ヘッダー数式を複製した、データ行が空のPO_Draft_*シートを
+' PO_Draft_Substrate_JPN_CHNの書式・ヘッダー数式を複製した、データ行が空のPO_Draft_*シートを
 ' 作成する(newSheetNameのシートが既にあれば何もしない)。作成した場合True、既にあった
 ' 場合Falseを返す。呼び出し元(SetupSubstratePODraftByCountry)でエラーハンドリング済みのため、
 ' ここでは個別のOn Error GoToは持たない。
@@ -891,7 +891,7 @@ Private Function CreatePODraftCountrySheetIfMissing(thisWb As Workbook, newSheet
 
     Application.ScreenUpdating = False
 
-    Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate_JPN")
+    Dim srcSh As Worksheet: Set srcSh = thisWb.Sheets("PO_Draft_Substrate_JPN_CHN")
     srcSh.Copy After:=srcSh
     Dim newSh As Worksheet: Set newSh = thisWb.Sheets(srcSh.Index + 1)
     newSh.Name = newSheetName

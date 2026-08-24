@@ -10,7 +10,7 @@ Option Explicit
 '      （コピー＆貼り付けで導入する場合は、1行目の Attribute VB_Name = "..." を必ず削除してから
 '       貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります）
 '   3. Dashboardシート等にボタンを配置し、下記のExportChemical / ExportHazardous /
-'      ExportSubstrateJPN / ExportSubstrateCHN / ExportSubstratePoland を
+'      ExportSubstrateJPNCHN / ExportSubstratePoland を
 '      ボタンのマクロ登録先として割り当てる
 '
 ' 【動作】
@@ -27,12 +27,8 @@ Sub ExportHazardous()
     ExportPODraft "PO_Draft_Hazardous", "Hazardous_Chemical_Release"
 End Sub
 
-Sub ExportSubstrateJPN()
-    ExportPODraft "PO_Draft_Substrate_JPN", "Substrate_JPN_Release"
-End Sub
-
-Sub ExportSubstrateCHN()
-    ExportPODraft "PO_Draft_Substrate_CHN", "Substrate_CHN_Release"
+Sub ExportSubstrateJPNCHN()
+    ExportPODraft "PO_Draft_Substrate_JPN_CHN", "Substrate_JPN_CHN_Release"
 End Sub
 
 Sub ExportSubstratePoland()

@@ -64,7 +64,7 @@
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
 | `FixOpeningStockColumnReference` | （ファイル選択なし・実行するだけ） | Grid_Stock・Grid_TheoreticalStockの週1列の数式にあったT_OpeningStock列名参照の誤りを修正する移行用マクロ（詳細は5.7.1章。何度実行しても安全） |
 | `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory・Origin_Country列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す（詳細は5.7.2〜5.7.3章。いつでも安全に実行可） |
-| `SetupSubstratePODraftByCountry` | （ファイル選択なし・実行するだけ） | M_RawMaterialsへのOrigin_Country列追加、PO_Draft_SubstrateのPO_Draft_Substrate_JPNへの改名、PO_Draft_Substrate_CHN・_Polandシートの新規作成をまとめて行う移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
+| `SetupSubstratePODraftByCountry` | （ファイル選択なし・実行するだけ） | M_RawMaterialsへのOrigin_Country列追加、PO_Draft_SubstrateのPO_Draft_Substrate_JPN_CHNへの改名、PO_Draft_Substrate_Polandシートの新規作成をまとめて行う移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 
@@ -438,27 +438,29 @@ Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が�
 行を移動しても発注情報が失われることはありません。既に正しい位置にある行には一切触れません。
 **CategoryやOrigin_Countryを修正した後は、このマクロを実行する習慣をつけてください。**
 
-### 5.7.3 Substrateを原産国別にPO_Draftを分ける（Japan/China/Poland）
+### 5.7.3 Substrateを原産国別にPO_Draftを分ける（Poland専用・Japan+China）
 
-TTAF供給のSubstrateは、原産国（Japan/China/Poland）によって発注書(PO_Draft)のシートを
-分けています（`PO_Draft_Substrate_JPN`・`PO_Draft_Substrate_CHN`・`PO_Draft_Substrate_Poland`）。
-仕組みは`Category`（Chemical/Hazardous Chemical/Substrateの3区分）とは独立した、
-`M_RawMaterials`の`Origin_Country`列（11列目）で判定します。**汎用の受け皿シートは
-無い設計**のため、Origin_Countryが「Japan」「China」「Poland」のいずれでもない品目
-（空欄・その他の国・未確認）は、意図的にどの`PO_Draft_*`にも表示されません（発注していない・
-まだ原産国が確認できていない品目を、発注書のドラフトに載せない、という運用判断です）。
-Origin_Countryは大文字小文字を区別せずに判定します（「poland」でも「Poland」として扱われます）。
+TTAF供給のSubstrateは、原産国によって発注書(PO_Draft)のシートを分けています。
+Polandだけ専用シート（`PO_Draft_Substrate_Poland`）、Japan・Chinaはまとめて1枚のシート
+（`PO_Draft_Substrate_JPN_CHN`）です。仕組みは`Category`（Chemical/Hazardous Chemical/
+Substrateの3区分）とは独立した、`M_RawMaterials`の`Origin_Country`列（11列目）で
+判定します。**汎用の受け皿シートは無い設計**のため、Origin_Countryが「Japan」「China」
+「Poland」のいずれでもない品目（空欄・その他の国・未確認）は、意図的にどの`PO_Draft_*`
+にも表示されません（発注していない・まだ原産国が確認できていない品目を、発注書のドラフト
+に載せない、という運用判断です）。Origin_Countryは大文字小文字を区別せずに判定します
+（「poland」でも「Poland」として扱われます）。
 
 **既存ブックへの導入方法**（`macros/RefreshData_MaterialMgmt.bas`を貼り替えた後、
 この順で一度だけ実行）:
 1. `SetupSubstratePODraftByCountry` — `M_RawMaterials`への`Origin_Country`列追加、
-   既存の`PO_Draft_Substrate`シートの`PO_Draft_Substrate_JPN`への改名（書式・データを
-   そのまま引き継ぐ）、`PO_Draft_Substrate_CHN`・`PO_Draft_Substrate_Poland`シートの
-   新規作成（データ行は空の状態）をまとめて行う
+   既存の`PO_Draft_Substrate`シートの`PO_Draft_Substrate_JPN_CHN`への改名（書式・データ
+   をそのまま引き継ぐ）、`PO_Draft_Substrate_Poland`シートの新規作成（データ行は空の
+   状態）をまとめて行う
 2. `M_RawMaterials`で、各Substrate品目の`Origin_Country`欄に「Japan」「China」「Poland」の
    いずれかを入力する（発注していない・原産国が未確認の品目は空欄のままでよい）
 3. `SyncPODraftCategories`を実行する（5.7.2章のマクロ。Origin_Countryも見るように
-   拡張済みなので、これを実行すると各品目が正しい`PO_Draft_Substrate_*`へ振り分けられる）
+   拡張済みなので、これを実行すると各品目が正しい`PO_Draft_Substrate_*`へ振り分けられる。
+   Japan・Chinaのどちらを入力しても`PO_Draft_Substrate_JPN_CHN`に入る）
 
 `AddMaterial`でSubstrateの新規材料を追加する際は、原産国を尋ねるプロンプトが追加されて
 おり、「Japan」「China」「Poland」のいずれかを入力すればそのまま対応する
@@ -467,13 +469,13 @@ Origin_Countryは大文字小文字を区別せずに判定します（「poland
 実行してください）。
 
 発注書の発行（PDFではなくスナップショット用ブックとしての書き出し）は、`PO_Export.bas`の
-`ExportSubstrateJPN`・`ExportSubstrateCHN`・`ExportSubstratePoland`マクロで行います
-（`ExportChemical`と同様の仕組みで、`PO_Issued`フォルダにそれぞれ
-`Substrate_JPN_Release_yyyymmdd_RevXX.xlsx`等として保存されます）。
+`ExportSubstrateJPNCHN`・`ExportSubstratePoland`マクロで行います（`ExportChemical`と
+同様の仕組みで、`PO_Issued`フォルダにそれぞれ`Substrate_JPN_CHN_Release_yyyymmdd_RevXX.xlsx`
+等として保存されます）。
 
-現状はJapan/China/Polandの3国での分離ですが、将来的に他の原産国も分けたくなった場合は、
-`POSheetNameForMaterial`関数（VBA）と`build_po_draft`の呼び出し（`build_soh.py`）に
-同様の分岐を追加するだけで対応できます。
+現状はこの2区分（Poland専用・Japan+China）での分離ですが、将来的に区分を変えたくなった
+場合は、`POSheetNameForMaterial`関数（VBA）と`build_po_draft`の呼び出し（`build_soh.py`）に
+同様の分岐を追加・変更するだけで対応できます。
 
 **中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
 行、生産計画上の製品コード）の増減にも対応しています。
@@ -935,7 +937,7 @@ week3・week10分もまとめて消えてしまいます。これを避けるた
   週次使用量(=完成品Catコードの受注数量×1個あたり使用量)を取り込み、`M_RawMaterials`に
   Category="Substrate"として統合済みです。中間体を経由する化学原料と異なり、substrateは
   完成品コード(Cat)が直接「中間体」の役割を果たします（`M_Intermediates`にType="Cat"として
-  登録）。`PO_Draft_Substrate_JPN`/`_CHN`/`_Poland`にも、`Origin_Country`が入力済みの
+  登録）。`PO_Draft_Substrate_JPN_CHN`/`_Poland`にも、`Origin_Country`が入力済みの
 品目については実データが反映されています（5.7.3章参照）。
 - **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください
   （`T_SelfStock`・`T_TTAFStock`に実績があれば、その週以降は自動でリセットされます）。

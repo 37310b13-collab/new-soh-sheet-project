@@ -1226,10 +1226,12 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
     data_row = PO_HDR_TABLE_ROW
     items = [r for r in rm_master if r["Category"] == category]
     # 原産国での絞り込み(Substrateのみ、Japan/China/Poland別のPO_Draftシートに分離する用途。
-    # 汎用の受け皿シートは無い設計のため、この3国以外・原産国未設定の品目はどのPO_Draft_*
-    # にも載らない)。
+    # 汎用の受け皿シートは無い設計のため、対象国以外・原産国未設定の品目はどのPO_Draft_*
+    # にも載らない)。origin_countryは単一の国名文字列、または複数国をまとめる場合は
+    # 集合/リストで渡す(例: Japan・Chinaを1枚のシートにまとめる場合)。
     if origin_country:
-        items = [r for r in items if r.get("Origin_Country", "") == origin_country]
+        countries = {origin_country} if isinstance(origin_country, str) else set(origin_country)
+        items = [r for r in items if r.get("Origin_Country", "") in countries]
     for r in items:
         data_row += 1
         rm = r["RM_Code"]
@@ -1279,8 +1281,7 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
 
 build_po_draft("PO_Draft_Chemical", "Chemical", "Chemicals : TTAF Supply")
 build_po_draft("PO_Draft_Hazardous", "Hazardous Chemical", "Hazardous Chemicals")
-build_po_draft("PO_Draft_Substrate_JPN", "Substrate", "Substrates (Japan)", origin_country="Japan")
-build_po_draft("PO_Draft_Substrate_CHN", "Substrate", "Substrates (China)", origin_country="China")
+build_po_draft("PO_Draft_Substrate_JPN_CHN", "Substrate", "Substrates (Japan / China)", origin_country={"Japan", "China"})
 build_po_draft("PO_Draft_Substrate_Poland", "Substrate", "Substrates (Poland)", origin_country="Poland")
 
 # ============================================================ README
@@ -1468,8 +1469,7 @@ nav_targets = [
     ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
     ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
     ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
-    ("PO_Draft_Substrate_JPN", "発注書ドラフト（Substrate・Japan）"),
-    ("PO_Draft_Substrate_CHN", "発注書ドラフト（Substrate・China）"),
+    ("PO_Draft_Substrate_JPN_CHN", "発注書ドラフト（Substrate・Japan / China）"),
     ("PO_Draft_Substrate_Poland", "発注書ドラフト（Substrate・Poland）"),
     ("T_Shipments", "発注・着荷の入力（TTAF供給材料はTTAF倉庫への到着実績を表す）"),
     ("T_OpeningStock", "期首在庫の入力"),
@@ -1495,7 +1495,7 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "操作パネル", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
-         "PO_Draft_Substrate_JPN", "PO_Draft_Substrate_CHN", "PO_Draft_Substrate_Poland",
+         "PO_Draft_Substrate_JPN_CHN", "PO_Draft_Substrate_Poland",
          "T_Shipments", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
