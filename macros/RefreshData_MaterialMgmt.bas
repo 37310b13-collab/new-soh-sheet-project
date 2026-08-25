@@ -700,7 +700,7 @@ End Function
 ' 同じ切り分け。
 ' Origin_Countryは大文字小文字を区別せずに判定する(手入力での表記ゆれ、例:"poland"で
 ' 一致しなくなり静かにPO_Draftから漏れる、という事態を避けるため)。
-Private Function POSheetNameForMaterial(categoryVal As String, originCountryVal As String) As String
+Public Function POSheetNameForMaterial(categoryVal As String, originCountryVal As String) As String
     Dim originKey As String: originKey = UCase(Trim(originCountryVal))
     Select Case categoryVal
         Case "Chemical": POSheetNameForMaterial = "PO_Draft_Chemical"
@@ -741,7 +741,7 @@ Sub SyncPODraftCategories()
     Dim poSheetNames As Variant
     poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", _
         "PO_Draft_Substrate_Poland", "PO_Draft_Substrate_JPN_CHN")
-    Const PO_HDR_TABLE_ROW As Long = 14  ' build_soh.pyのPO_HDR_TABLE_ROWと同じ固定値(見出し行)
+    Const PO_HDR_TABLE_ROW As Long = 26  ' build_soh.pyのPO_HDR_UOM_FIRM_ROWと同じ固定値(見出し最終行。データはこの直下から)
 
     ' 現在PO_Draft_*の各シートに実際に存在する材料コード(D列)を、"どのシートにあるか"付きで収集する。
     Dim currentSheetOf As Object: Set currentSheetOf = CreateObject("Scripting.Dictionary")
@@ -899,7 +899,7 @@ Private Function CreatePODraftCountrySheetIfMissing(thisWb As Workbook, newSheet
 
     ' データ行(見出し行の次から、複製元の既存データの最終行まで)を削除して空にする
     ' (実データが確定してからSyncPODraftCategoriesで正しく追加し直される)。
-    Const PO_HDR_TABLE_ROW As Long = 14
+    Const PO_HDR_TABLE_ROW As Long = 26  ' build_soh.pyのPO_HDR_UOM_FIRM_ROWと同じ固定値(見出し最終行。データはこの直下から)
     Dim lastRow As Long: lastRow = newSh.Cells(newSh.Rows.Count, 4).End(xlUp).Row
     If lastRow > PO_HDR_TABLE_ROW Then
         newSh.Rows((PO_HDR_TABLE_ROW + 1) & ":" & lastRow).Delete
@@ -1054,9 +1054,9 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     End If
 
     If anchorHeaderRow > 0 Then
-        ' 9行(空白1+ヘッダー1+内訳7)分のスペースを、anchorブロックの直前に挿入する。
+        ' 8行(空白1+ヘッダー1+内訳6)分のスペースを、anchorブロックの直前に挿入する。
         ' anchorが一番最初のブロック(直前に空白行が無い)かどうかで挿入位置が変わるが、
-        ' どちらの場合も「挿入後、元anchorヘッダーは9行下にずれる」点は共通のため、
+        ' どちらの場合も「挿入後、元anchorヘッダーは8行下にずれる」点は共通のため、
         ' 書式コピー元の行番号(formatSrcHeader等)は同じ式で求められる。
         Dim spacerExists As Boolean: spacerExists = (anchorHeaderRow > MD_HEADER_ROW + 1)
         Dim insertAt As Long
@@ -1065,18 +1065,18 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
         Else
             insertAt = anchorHeaderRow
         End If
-        sh.Rows(insertAt & ":" & (insertAt + 8)).Insert Shift:=xlDown
+        sh.Rows(insertAt & ":" & (insertAt + 7)).Insert Shift:=xlDown
         If spacerExists Then
             headerRow = insertAt + 1
         Else
             headerRow = insertAt
         End If
-        formatSrcHeader = anchorHeaderRow + 9
-        formatSrcContentFirst = anchorHeaderRow + 10
+        formatSrcHeader = anchorHeaderRow + 8
+        formatSrcContentFirst = anchorHeaderRow + 9
     Else
         headerRow = lastRow + 2  ' 直前ブロックとの間に空白行を1行はさむ
         formatSrcHeader = MD_HEADER_ROW + 1
-        formatSrcContentFirst = lastRow - 6
+        formatSrcContentFirst = lastRow - 5
     End If
 
     sh.Cells(headerRow, 1).Value = rmCode
@@ -1145,18 +1145,13 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
         sh.Cells(r, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
     Next w
 
-    r = r + 1
-    sh.Cells(r, 2).Value = "（発注の目安はDashboardの基準在庫[下限/上限]と色分けを参照）"
-    sh.Cells(r, 2).Font.Italic = True
-    sh.Cells(r, 2).Font.Color = RGB(128, 128, 128)
-
-    ' 罫線・書式のコピー: 末尾に追加する場合は既存の最初のヘッダー行・直前ブロックの末尾7行から、
-    ' 途中に挿入する場合は挿入で押し出されたanchorブロック自身のヘッダー行・先頭7行から複製する
-    ' (ブロックの長さは材料によって違うが、先頭のヘッダー行・その後7行の並びは常に同じ順序のため)。
+    ' 罫線・書式のコピー: 末尾に追加する場合は既存の最初のヘッダー行・直前ブロックの末尾6行から、
+    ' 途中に挿入する場合は挿入で押し出されたanchorブロック自身のヘッダー行・先頭6行から複製する
+    ' (ブロックの長さは材料によって違うが、先頭のヘッダー行・その後6行の並びは常に同じ順序のため)。
     On Error Resume Next
     sh.Rows(formatSrcHeader).Copy
     sh.Rows(headerRow).PasteSpecial xlPasteFormats
-    sh.Rows(formatSrcContentFirst & ":" & (formatSrcContentFirst + 6)).Copy
+    sh.Rows(formatSrcContentFirst & ":" & (formatSrcContentFirst + 5)).Copy
     sh.Rows((headerRow + 1) & ":" & r).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
     On Error GoTo 0
@@ -1171,10 +1166,20 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     On Error GoTo 0
 End Sub
 
-' 該当カテゴリのPO_Draft_*シートの一番下に新しい材料の行を追加する。
-Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As String, nWeeks As Long)
-    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 4).End(xlUp).Row  ' D列(Part Name)基準
+' 該当カテゴリのPO_Draft_*シートの一番下に新しい材料の行を追加する。基準週セルへの参照は
+' BaseWeekRef(RefreshData_Utilities)経由で取得する。かつては"$P$7"を直接埋め込んでいたため、
+' 基準週セルをP7から動かしたシート(例: 手動レイアウト変更でP13に移動)では、AddMaterialや
+' SyncPODraftCategoriesで新規追加された行だけ古い(空の)セルを参照してしまう不具合があった。
+Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As String, nWeeks As Long)
+    ' 最終行の判定はD列(CSA Code)ではなくE列(UOM)基準で行う。新レイアウトではB20:B26/
+    ' C20:C26/D20:D26が縦に結合されたヘッダーセルのため、データ行が1件も無い状態だと
+    ' D列でのEnd(xlUp)が結合の先頭(20行目、ヘッダーの途中)を拾ってしまい、新しい行を
+    ' ヘッダーの真ん中に書き込んでしまう不具合があった。E列は結合されておらず、
+    ' ヘッダー最終行(UOMラベル)・データ行(kg)のどちらも必ず値を持つため、この問題が起きない
+    ' (旧レイアウトでもE列に同じUOM見出し・kgがあるため、どちらのレイアウトでも正しく動く)。
+    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 5).End(xlUp).Row
     Dim newRow As Long: newRow = lastRow + 1
+    Dim baseWeekRef As String: baseWeekRef = BaseWeekRef(sh)
     ' Grid_Stock内の行位置はMATCHで毎回動的に求める(材料の追加・削除で行位置がずれても
     ' 数式側が自動的に正しい行を追従できるようにするため)。
     Dim growMatch As String: growMatch = "MATCH($D" & newRow & ",Grid_Stock[Part Name],0)"
@@ -1184,7 +1189,7 @@ Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As S
     sh.Cells(newRow, 4).Value = rmCode
     sh.Cells(newRow, 5).Value = "kg"
     sh.Cells(newRow, 6).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),0)"
-    sh.Cells(newRow, 7).Value = "=INDEX(Grid_Stock[#Data]," & growMatch & ",$P$7)"
+    sh.Cells(newRow, 7).Value = "=INDEX(Grid_Stock[#Data]," & growMatch & "," & baseWeekRef & ")"
 
     Const PO_FIRST_WEEK_COL As Long = 8
     Const PO_N_WEEKS As Long = 13
@@ -1200,7 +1205,7 @@ Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As S
     For w = 1 To PO_N_WEEKS
         col = PO_FIRST_WEEK_COL + w - 1
         sh.Cells(newRow, col).Value = "=IFERROR(INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & _
-            "," & mdOrderMatch & ",$P$7+" & (w - 1) & "),0)"
+            "," & mdOrderMatch & "," & baseWeekRef & "+" & (w - 1) & "),0)"
     Next w
     Dim totalCol As Long: totalCol = PO_FIRST_WEEK_COL + PO_N_WEEKS
     sh.Cells(newRow, totalCol).Value = "=SUM(" & ColLetter(PO_FIRST_WEEK_COL) & newRow & ":" & ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1) & newRow & ")"
@@ -1208,6 +1213,22 @@ Private Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As S
     sh.Rows(lastRow).Copy
     sh.Rows(newRow).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
+
+    ' Firm(1〜4週目)/Forecast(5〜13週目)の色分けは、直前行からの書式コピーだけに頼らない
+    ' (空のシートに最初の1行目を追加する場合、直前行=ヘッダー行になってしまい、
+    ' 色が付かないまま追加されてしまうため)。build_soh.pyのbuild_po_draft()と同じ配色。
+    Dim firmForecastCol As Long
+    For firmForecastCol = PO_FIRST_WEEK_COL To PO_FIRST_WEEK_COL + PO_N_WEEKS - 1
+        With sh.Cells(newRow, firmForecastCol)
+            If firmForecastCol < PO_FIRST_WEEK_COL + 4 Then
+                .Interior.Color = RGB(255, 193, 193)  ' Firm: FFC1C1
+                .Font.Color = RGB(192, 0, 0)           ' 濃い赤: C00000
+            Else
+                .Interior.Color = RGB(235, 241, 222)  ' Forecast: EBF1DE
+                .Font.Color = RGB(0, 97, 0)            ' 濃い緑: 006100
+            End If
+        End With
+    Next firmForecastCol
 End Sub
 
 ' テーブル(ListObject)から、指定した材料コードに一致する行を削除する。

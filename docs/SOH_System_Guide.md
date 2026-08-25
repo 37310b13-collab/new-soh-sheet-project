@@ -39,11 +39,12 @@
 
 ## 2. Python不要・Excel(VBA)だけで完結する更新の仕組み
 
-`macros/`フォルダに、機能ごとに分割した7つのVBAモジュール(`RefreshData_*.bas`)を
+`macros/`フォルダに、機能ごとに分割した8つのVBAモジュール(`RefreshData_*.bas`)を
 用意しています。以前は1つの巨大な標準モジュールでしたが、メンテナンス性のため
 `RefreshData_Utilities`（共通ヘルパー）・`RefreshData_ProductionPlan`・`RefreshData_BOM`・
 `RefreshData_StockActuals`・`RefreshData_Shipments`・`RefreshData_Display`・
-`RefreshData_MaterialMgmt`の7モジュールに分割しています（マクロ名・動作は分割前と同じ）。
+`RefreshData_MaterialMgmt`・`RefreshData_PODraft`の8モジュールに分割しています
+（マクロ名・動作は分割前と同じ）。
 更新マクロはいずれも、対象ファイルを選ぶだけで該当シートの値だけを更新し、
 **それ以外の入力済みデータ（T_Shipments・T_OpeningStock・T_StockCount・基準在庫の設定値など）
 には一切触れません。**
@@ -67,6 +68,7 @@
 | `SetupSubstratePODraftByCountry` | （ファイル選択なし・実行するだけ） | M_RawMaterialsへのOrigin_Country列追加、PO_Draft_SubstrateのPO_Draft_Substrate_JPN_CHNへの改名、PO_Draft_Substrate_Polandシートの新規作成をまとめて行う移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
+| `SetupPODraftLetterheadLayout` | （ファイル選択なし・実行するだけ） | PO_Draft_Hazardousに手動で作り込んだレターヘッド形式レイアウト（月/週見出しの不具合修正・基準週参照の名前付き範囲化・Firm/Forecast色分け・SafetyStock/CurrentStockの印刷範囲除外）を修正した上で、PO_Draft_Chemical・PO_Draft_Substrate_JPN_CHN・PO_Draft_Substrate_Polandの3シートにも複製する、一度だけ実行する移行用マクロ（詳細は5.7.4章。何度実行しても安全） |
 
 **TTAF供給材料の在庫予測の考え方（重要）**: TTAFは仕入先であると同時に、原材料を預けている
 倉庫でもあります。`T_Shipments`（Status=TTAF Stock）は「TTAFが外部の仕入先から新しく仕入れて
@@ -108,13 +110,13 @@ TTAF倉庫に到着する」実績・予定を表します。これはTTAF倉庫
 **導入方法**
 1. `SOH_Master.xlsx`を「名前を付けて保存」→ファイルの種類を「Excel マクロ有効ブック(*.xlsm)」にする
 2. Alt+F11 でVBEを開く → 「ファイル」→「ファイルのインポート」→ `macros/`フォルダの
-   `RefreshData_*.bas`7ファイルをすべて選択（複数選択して一括インポート可。1ファイルずつでも
+   `RefreshData_*.bas`8ファイルをすべて選択（複数選択して一括インポート可。1ファイルずつでも
    構いません。インポートする順序は結果に影響しません）
    （`.bas`ファイルを直接選ぶことで、モジュール名も含めて正しく読み込まれます）
    - コードをコピー＆貼り付けする場合は、**各ファイル1行目の`Attribute VB_Name = "..."`を
      必ず削除してから**貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイル
      エラーになります（標準モジュールを挿入→中身を貼り付け、の手順を使う場合はこの点にご注意
-     ください。また7つのモジュールはそれぞれ別の標準モジュールとして挿入してください）
+     ください。また8つのモジュールはそれぞれ別の標準モジュールとして挿入してください）
 3. `macros/PO_Export.bas`（完全に任意、下記参照）も使う場合は同様にインポート
 4. Alt+F8 → `RefreshWeeklyBatches`を選択して実行 → ファイル選択ダイアログで最新の
    「Powder & Slurry & Pgm Plan」ファイルを選ぶ
@@ -389,7 +391,7 @@ Excel(VBA)だけで完結できるようにしています。ブックの再生�
 
 追加直後はこの材料をまだどの中間体も使っていない（`M_BOM`に実績が無い）ため、
 `Material_Detail`のブロックは中間体の内訳行が無い簡易版（合計使用量・TTAF在庫・自社在庫・
-Order・合計在庫・注記の6行のみ）になります。その後**通常どおり`RefreshBOM`を1回実行するだけで**、
+Order・PO_No・合計在庫の6行のみ）になります。その後**通常どおり`RefreshBOM`を1回実行するだけで**、
 実際にこの材料を使う中間体の使用実績が見つかり次第、`Material_Detail`の該当ブロックに
 「No. of batches」「使用量(kg)」の内訳行が自動的に追加され、他の材料と同じ見た目になります
 （`AddMaterial`を2回実行する必要はありません）。既存の材料が新しい中間体で使われ始めた場合も
@@ -476,6 +478,80 @@ Substrateの3区分）とは独立した、`M_RawMaterials`の`Origin_Country`�
 現状はこの2区分（Poland専用・Japan+China）での分離ですが、将来的に区分を変えたくなった
 場合は、`POSheetNameForMaterial`関数（VBA）と`build_po_draft`の呼び出し（`build_soh.py`）に
 同様の分岐を追加・変更するだけで対応できます。
+
+### 5.7.4 発注書のレターヘッド形式レイアウトとFirm/Forecast色分け（`SetupPODraftLetterheadLayout`）
+
+`PO_Draft_*`シートは元々、`build_soh.py`が生成するシンプルな罫線グリッド（TO/FROM欄は
+仮の文字列、見出しは14行目、データは15行目から）でしたが、実運用では`PO_Draft_Hazardous`
+シートに、CATALERのレターヘッド・実際のTO/FROM/CC欄・発行日/Issue Month/Firm Month・
+Revision番号・基準週(WeekIndex)入力欄・SafetyStock/CurrentStockの参照欄などを手動で
+作り込んだ、より実用的なレイアウトへ作り替えられました。以降、このレイアウトを
+「レターヘッド形式レイアウト」と呼び、全`PO_Draft_*`シートの標準としています
+（`build_soh.py`も新規ブック生成時から最初からこの形式で生成します）。
+
+**レイアウトの行構成**（列は共通: B=Part Name, C=TTAF Code, D=CSA Code, E=UOM/Month/Year,
+F=SafetyStock, G=CurrentStock, H〜T=週1〜13, U=Total）:
+
+| 行 | 内容 |
+|---|---|
+| 8〜9行目 | TO（宛先） |
+| 10行目 | N列=Firm Month: ／ P列=`=TEXT(H20,"mmmm")`（見出し1週目の月を表示） |
+| 11行目 | CC（必要であれば入力） ／ N列=Revision ／ P列=Revision番号（名前付き範囲`PORevision`） |
+| 13行目 | FROM（発行者） ／ N列=基準週(WeekIndex)ラベル ／ P列=基準週の値（名前付き範囲`BaseWeek`） |
+| 14行目 | FROM（自社名） |
+| 17〜18行目 | タイトル（結合セル） |
+| 20行目 | 見出し1段目（Part Name/TTAF Code/CSA Code/Month-Year。20〜26行を縦結合） |
+| 21〜24行目 | 非表示の補助行（WeekStart・WeekOfYear・空白スペーサー） |
+| 25行目 | 見出し2段目（Week/SafetyStock/CurrentStock/週ラベル/Total） |
+| 26行目 | 見出し3段目（UOM／Firm・Forecastの帯ラベル） |
+| 27行目〜 | データ行（材料ごとに1行） |
+
+**名前付き範囲`BaseWeek`・`PORevision`**: 基準週セル（P13）とRevisionセル（P11）は、
+すべての数式・マクロからシート固有（ローカルスコープ）の名前付き範囲`BaseWeek`・
+`PORevision`経由で参照します。実セルの位置がP13・P11から将来動いても、名前の参照先
+だけ直せば全ての数式（`AppendPODraftRow`が新規追加する行、月/週見出しの数式）が
+自動的に追従します。かつては`$P$7`をVBA側に直接埋め込んでいたため、基準週セルを
+手動でP7からP13へ移動した際、既に登録済みだった一部の材料（例: ND TAC/CHEM-1280）の
+数式だけが古い`$P$7`参照のまま取り残され、空欄のP7セルを参照し続けて発注数量が
+常に0のまま更新されなくなる不具合がありました。
+
+**修正した不具合（`SetupPODraftLetterheadLayout`で修正）**:
+1. **月/週見出し(20行目)が消える不具合**: 元は1〜4週目・5〜8週目・9〜13週目という
+   固定幅でセル結合し、直前のグループ最終週と月が違う時だけラベルを表示する方式に
+   なっていましたが、月によって実際にまたがる週数は変わる（例: 2026年11月は5週に
+   またがる）ため、固定幅の結合では境界がずれる月で見出しが消えてしまう不具合が
+   必ず発生していました。結合をやめ、「週ごとに1セル、直前の週と月が違う時だけ表示」
+   という本来の方式（元の`build_po_draft`と同じ）に統一しました。
+2. **`$P$7`の取り残し**: 上記の通り、全データ行の`$P$7`・`$P$13`直接参照を
+   名前付き範囲`BaseWeek`へ統一しました。
+3. **Firm/Forecastの色分け**: Firm(1〜4週目)は赤系（背景`FFC1C1`・文字`C00000`）、
+   Forecast(5〜13週目)は緑系（背景`EBF1DE`・文字`006100`）で、発注数量セルを塗り分けます。
+4. **SafetyStock/CurrentStock(F/G列)の印刷対策**: 従来は列を非表示にすることで印刷対象
+   から外していましたが、非表示を解除すると印刷にも写ってしまうリスクがありました。
+   列の非表示は解除して常に参照できる状態に戻した上で、印刷範囲（`PageSetup.PrintArea`）
+   自体からF・G列を除外する方式に変更しました（Excelの印刷範囲は複数の矩形を指定できる
+   ため、`$A$1:$E$n,$H$1:$U$n`のように非表示に頼らず狙った列だけ除外できます）。
+
+**`SetupPODraftLetterheadLayout`の動作**: 一度だけ実行する移行用マクロです。
+①`PO_Draft_Hazardous`自身の上記の不具合を修正し、②`PO_Draft_Chemical`・
+`PO_Draft_Substrate_JPN_CHN`・`PO_Draft_Substrate_Poland`の3シートに同じレイアウトを
+複製します。複製時、TO/FROM/CC欄は`PO_Draft_Hazardous`の実際の宛先をそのままコピーせず
+仮の文字列に戻します（カテゴリによって担当者・取引先が異なる可能性があるため、複製後に
+実際の宛先を入力してください）。Revision・基準週(WeekIndex)は複製前の各シート自身の値を
+引き継ぎます。データ行（材料一覧）は複製前の内容を使い回さず、`M_RawMaterials`の現在の
+Category・Origin_Countryを基準に作り直します（`SyncPODraftCategories`と同じ判定基準）。
+ロゴ画像・バナー等の装飾は、Excelのシートコピー機能により自動的に複製されますが、
+バナーに日付文字列が手入力されている場合は、複製後に各シートで内容を確認・修正して
+ください。既に移行済みの部分（シートごとに名前付き範囲`BaseWeek`の有無で判定）は
+スキップするため、誤って複数回実行しても安全です。
+
+**発注書の発行(`ExportPODraft`)とRevision**: `PO_Export.bas`の`ExportPODraft`は、
+名前付き範囲`PORevision`があればそれを、無ければ（未移行の旧レイアウトのシート）
+従来通り`P5`セルをRevision番号として読み取ります。レターヘッド形式レイアウトへの
+移行後、`PORevision`を見ずに常に`P5`を読んでいると、常に空欄の`P5`を0扱いのまま読み、
+発行のたびに`P5`（レターヘッドの空白セル）へ`1`を書き込んで静かに壊してしまうところ
+でした。`SetupPODraftLetterheadLayout`実行後は、この心配なく`ExportChemical`等を
+実行できます。
 
 **中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
 行、生産計画上の製品コード）の増減にも対応しています。

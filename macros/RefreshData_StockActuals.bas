@@ -260,6 +260,15 @@ Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object
             If Len(partName) > 0 And Not rmNameIdx.Exists(partName) Then rmNameIdx(partName) = partName
         Next i
     End If
+
+    ' 既知の表記ゆれの手動エイリアス(RefreshData_ShipmentsのBuildKnownAliasIndexと同じ考え方)。
+    ' 「Stock invoiced to CSA」シートのTTAF PART NUMBER列(A列)は、ND TAC(CHEM-1280)だけ
+    ' 他の材料と違い数値のTTAF_Code(83988002202、CSA ReportのShipping Scheduleと一致)ではなく
+    ' 文字列"NDTAC"になっている(TTAF側の入力ゆれ)。現状はDescription("ND TAC")側の一致で
+    ' 拾えているため実害は出ていないが、将来Description表記が変わった場合に備え、
+    ' TTAF_Code側でも直接一致するようにしておく。
+    Dim aliasKey As String: aliasKey = NormalizeText("NDTAC")
+    If Not ttafCodeIdx.Exists(aliasKey) Then ttafCodeIdx(aliasKey) = "CHEM-1280"
 End Sub
 
 ' RefreshSelfStockが使う。「CHEMICAL SOH」シートのB列(CSA/コード)がM_RawMaterialsの

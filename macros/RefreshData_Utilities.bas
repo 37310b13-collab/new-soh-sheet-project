@@ -212,3 +212,21 @@ Public Function ColLetter(colNum As Long) As String
     Loop
     ColLetter = s
 End Function
+
+' PO_Draft_*シートの数式(発注数量・在庫参照)で使う、基準週セルへの参照文字列を返す。
+' シート固有(ローカルスコープ)の名前付き範囲"BaseWeek"が定義されていればその名前をそのまま
+' 返す(セルがP7からP13等に移動しても、名前の参照先さえ直しておけば数式は書き換え不要になる。
+' RefreshData_MaterialMgmt.basのAppendPODraftRowが$P$7を直接埋め込んでいたために、基準週セルを
+' 移動した既存シート(手動でP7→P13に移動した場合等)で新規追加行だけ壊れる不具合があった)。
+' まだSetupPODraftLetterheadLayout(RefreshData_PODraft)を実行していない未移行のシートでは
+' "BaseWeek"という名前が無いため、その場合だけ従来通り$P$7にフォールバックする。
+Public Function BaseWeekRef(sh As Worksheet) As String
+    On Error Resume Next
+    Dim nm As Name: Set nm = sh.Names("BaseWeek")
+    On Error GoTo 0
+    If Not nm Is Nothing Then
+        BaseWeekRef = "BaseWeek"
+    Else
+        BaseWeekRef = "$P$7"
+    End If
+End Function

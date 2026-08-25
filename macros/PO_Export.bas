@@ -49,7 +49,15 @@ Private Sub ExportPODraft(ByVal sheetName As String, ByVal fileLabel As String)
     Set srcWs = ThisWorkbook.Worksheets(sheetName)
 
     ' --- Revision番号を読み取り、発行後にインクリメントする ---
-    Set revCell = srcWs.Range("P5")
+    ' 名前付き範囲"PORevision"があればそれを使う(SetupPODraftLetterheadLayoutで新レイアウトに
+    ' 移行済みのシートはRevisionセルがP11にある)。無い場合(未移行の旧レイアウト)は
+    ' 従来通りP5にフォールバックする。ここを直さないまま新レイアウトへ移行すると、
+    ' 常に空欄のP5を読んで(revNo=0扱いのまま)、発行のたびにP5へ"1"を書き込んでしまい、
+    ' レターヘッドの空白セルを静かに壊してしまうところだった。
+    On Error Resume Next
+    Set revCell = srcWs.Range("PORevision")
+    On Error GoTo ErrHandler
+    If revCell Is Nothing Then Set revCell = srcWs.Range("P5")
     If IsNumeric(revCell.Value) Then
         revNo = CLng(revCell.Value)
     Else

@@ -5,6 +5,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.workbook.defined_name import DefinedName
 
 import os
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1156,74 +1157,165 @@ ws.conditional_formatting.add(
 )
 print("Dashboard: week-by-week grid for", len(rm_master), "materials x", N_WEEKS, "weeks")
 
-# ============================================================ PO Draft sheets (Chemical Release format)
+# ============================================================ PO Draft sheets (letterhead format)
 # 注文書は2年先まで不要。翌月(Firm)＋翌々月・翌々翌月(Forecast)の3ヶ月＝約13週分だけを表示する。
-# 表示開始週はP7セル(基準週WeekIndex)で指定し、ここを変えるだけで対象月をずらせる（数式のみ、マクロ不要）。
+# 表示開始週はBaseWeek(名前付き範囲。実体はP13セル)で指定し、ここを変えるだけで対象月をずらせる
+# （数式のみ、マクロ不要）。レイアウトは、運用中ブックでユーザーが手動で作り込んだレターヘッド
+# 付きデザイン(TO/FROM/CC・発注日・Firm/Forecast月表示・SafetyStock/CurrentStockを印刷範囲外に
+# 配置)を、新規ブック生成時にも最初から再現したもの。
 PO_N_WEEKS = 13
-PO_HDR_MONTHYEAR_ROW = 10
-PO_HDR_DATE_ROW = 11
-PO_HDR_WEEKNO_ROW = 12
-PO_HDR_FIRMFORECAST_ROW = 13
-PO_HDR_TABLE_ROW = 14
-PO_DATA_START_ROW = 15
+PO_TO_ROW = 8
+PO_TO2_ROW = 9
+PO_FIRMMONTH_ROW = 10
+PO_CC_ROW = 11
+PO_BASEWEEK_ROW = 13
+PO_FROM_ROW = 13
+PO_FROM2_ROW = 14
+PO_TITLE_ROW = 17
+PO_HDR_MONTHYEAR_ROW = 20
+PO_HDR_WEEKSTART_ROW = 21   # 非表示(補助行)
+PO_HDR_WEEKOFYEAR_ROW = 22  # 非表示(補助行)
+PO_HDR_SPACER_ROWS = (23, 24)  # 非表示(補助行、空白)
+PO_HDR_LABEL_ROW = 25       # Week/SafetyStock/CurrentStock/週ラベル/Total
+PO_HDR_UOM_FIRM_ROW = 26    # UOM/Firm/Forecast
+PO_DATA_START_ROW = 27
 PO_FIRST_WEEK_COL = 8  # H列
+PO_BASEWEEK_COL = 16   # P列
 
 
 def build_po_draft(sheet_name, category, title, origin_country=None):
     ws = wb.create_sheet(sheet_name)
-    ws["B2"] = "TO：（サプライヤー／TTAF担当者名を入力）"
-    ws["B3"] = "　　　　　（会社名）"
-    ws["B5"] = "FROM：（発行者名）"
-    ws["B6"] = "　　　　　（自社名）"
-    ws["N2"] = "Order Date:"
-    ws["P2"] = datetime.date.today()
-    ws["N3"] = "Issue Month:"
-    ws["N4"] = "Firm Month:"
-    ws["N5"] = "Revision"
-    ws["P5"] = "00"
-    ws["N7"] = "基準週(WeekIndex, 翌月の頭を推奨):"
+
+    # ---- レターヘッド(TO/FROM/CC・発注日・Firm/Forecast月・Revision・基準週) ----
+    ws.cell(row=PO_TO_ROW, column=2, value="TO：（サプライヤー／TTAF担当者名を入力）")
+    ws.cell(row=PO_TO2_ROW, column=2, value="　　　　　（会社名）")
+    ws.cell(row=PO_CC_ROW, column=2, value="CC：（必要であれば入力）")
+    ws.cell(row=PO_FROM_ROW, column=2, value="FROM：（発行者名）")
+    ws.cell(row=PO_FROM2_ROW, column=2, value="　　　　　（自社名）")
+
+    ws.cell(row=PO_TO_ROW, column=14, value="Order Date:")
+    order_date_cell = ws.cell(row=PO_TO_ROW, column=16, value="=TODAY()")
+    ws.merge_cells(start_row=PO_TO_ROW, start_column=16, end_row=PO_TO_ROW, end_column=18)
+    ws.cell(row=PO_TO2_ROW, column=14, value="Issue Month:")
+    ws.cell(row=PO_TO2_ROW, column=16, value='=TEXT(P8,"mmmm")')
+    ws.merge_cells(start_row=PO_TO2_ROW, start_column=16, end_row=PO_TO2_ROW, end_column=18)
+    ws.cell(row=PO_FIRMMONTH_ROW, column=14, value="Firm Month:")
+    ws.cell(row=PO_FIRMMONTH_ROW, column=16, value=f'=TEXT(H{PO_HDR_MONTHYEAR_ROW},"mmmm")')
+    ws.merge_cells(start_row=PO_FIRMMONTH_ROW, start_column=16, end_row=PO_FIRMMONTH_ROW, end_column=18)
+    ws.cell(row=PO_CC_ROW, column=14, value="Revision")
+    ws.merge_cells(start_row=PO_CC_ROW, start_column=14, end_row=PO_CC_ROW, end_column=15)
+    revision_cell = ws.cell(row=PO_CC_ROW, column=16, value="00")
+    ws.merge_cells(start_row=PO_CC_ROW, start_column=16, end_row=PO_CC_ROW, end_column=18)
+
+    ws.cell(row=PO_BASEWEEK_ROW, column=14, value="基準週(WeekIndex, 翌月の頭を推奨):")
     # デフォルト値は「来月1日」が属する週のWeekIndex
     default_firm_month = (datetime.date.today().replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
     default_start_week = date_to_week_index(default_firm_month, N_WEEKS)
-    ws["P7"] = default_start_week
-    ws["P7"].fill = INPUT_FILL
-    ws["P7"].font = Font(bold=True)
-    ws["B8"] = title
-    ws["B8"].font = Font(bold=True, size=12)
+    base_week_cell = ws.cell(row=PO_BASEWEEK_ROW, column=PO_BASEWEEK_COL, value=default_start_week)
+    base_week_cell.fill = INPUT_FILL
+    base_week_cell.font = Font(bold=True)
+    base_week_addr = f"${get_column_letter(PO_BASEWEEK_COL)}${PO_BASEWEEK_ROW}"
+
+    # シート固有(ローカルスコープ)の名前付き範囲。基準週セルが将来移動しても、この名前の
+    # 参照先だけ直せば全ての数式(AppendPODraftRow含む)が追従する(RefreshData_Utilities.bas
+    # のBaseWeekRefが読む名前と同じ)。
+    ws.defined_names["BaseWeek"] = DefinedName("BaseWeek", attr_text=f"'{sheet_name}'!{base_week_addr}")
+    ws.defined_names["PORevision"] = DefinedName(
+        "PORevision", attr_text=f"'{sheet_name}'!${get_column_letter(16)}${PO_CC_ROW}")
+
+    title_cell = ws.cell(row=PO_TITLE_ROW, column=2, value=title)
+    title_cell.font = Font(bold=True, size=12)
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells(start_row=PO_TITLE_ROW, start_column=2, end_row=PO_TITLE_ROW + 1,
+                    end_column=PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)
+
+    # ---- 表ヘッダー(20〜26行目) ----
+    thin = Side(style="thin", color="BFBFBF")
+    hdr_border = Border(bottom=thin)
+    hdr_fill = PatternFill("solid", fgColor="D9E1F2")
+    firm_fill = PatternFill("solid", fgColor="FFC1C1")
+    forecast_fill = PatternFill("solid", fgColor="EBF1DE")
+    firm_font = Font(bold=False, color="C00000")
+    forecast_font = Font(bold=False, color="006100")
+
+    left_labels_top = {2: "Part Name", 3: "TTAF Code", 4: "CSA Code", 5: "Month/Year"}
+    for c, lbl in left_labels_top.items():
+        cell = ws.cell(row=PO_HDR_MONTHYEAR_ROW, column=c, value=lbl)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = hdr_border
+        if c in (2, 3, 4):
+            ws.merge_cells(start_row=PO_HDR_MONTHYEAR_ROW, start_column=c,
+                            end_row=PO_HDR_UOM_FIRM_ROW, end_column=c)
 
     for w in range(1, PO_N_WEEKS + 1):
         col = PO_FIRST_WEEK_COL + w - 1
+        # 月/週見出しは、固定幅のセル結合(H:K/L:O/P:Tのようなグループ化)にはしない。月が
+        # 何週にまたがるかは月ごとに違う(例: 2026年11月は5週にまたがる)ため、固定幅の
+        # 結合だと境界がずれる月で見出しが消えてしまう不具合が必ず起きる(実際に発生し、
+        # 発見・修正した不具合)。週ごとに1セル・「直前の週と月が違う時だけ表示」という
+        # build_soh.py本来の方式に統一することで、月の長さに関わらず常に正しく表示される。
         if w == 1:
-            my_formula = "=INDEX(Cal_Weeks[MonthYearLabel],$P$7)"
+            my_formula = "=INDEX(Cal_Weeks[MonthYearLabel],BaseWeek)"
         else:
             my_formula = (
-                f'=IF(INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-1})<>INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-2}),'
-                f'INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-1}),"")'
+                f'=IF(INDEX(Cal_Weeks[MonthYearLabel],BaseWeek+{w-1})<>INDEX(Cal_Weeks[MonthYearLabel],BaseWeek+{w-2}),'
+                f'INDEX(Cal_Weeks[MonthYearLabel],BaseWeek+{w-1}),"")'
             )
-        ws.cell(row=PO_HDR_MONTHYEAR_ROW, column=col, value=my_formula)
-        dcell = ws.cell(row=PO_HDR_DATE_ROW, column=col, value=f"=INDEX(Cal_Weeks[WeekStart],$P$7+{w-1})")
-        dcell.number_format = "m/d"
-        ws.cell(row=PO_HDR_WEEKNO_ROW, column=col, value=f"=INDEX(Cal_Weeks[WeekOfYear],$P$7+{w-1})")
-        ws.cell(row=PO_HDR_FIRMFORECAST_ROW, column=col,
-                value=(f'=IF(INDEX(Cal_Weeks[MonthYearLabel],$P$7+{w-1})=INDEX(Cal_Weeks[MonthYearLabel],$P$7),'
-                       f'"Firm","Forecast")'))
-        ws.cell(row=PO_HDR_TABLE_ROW, column=col, value=f"=INDEX(Cal_Weeks[Label],$P$7+{w-1})")
+        my_cell = ws.cell(row=PO_HDR_MONTHYEAR_ROW, column=col, value=my_formula)
+        my_cell.font = Font(bold=True)
+        my_cell.alignment = Alignment(horizontal="center")
+        my_cell.border = hdr_border
+        my_cell.fill = firm_fill if w <= 4 else forecast_fill
+
+        ws.cell(row=PO_HDR_WEEKSTART_ROW, column=col, value=f"=INDEX(Cal_Weeks[WeekStart],BaseWeek+{w-1})")
+        ws.cell(row=PO_HDR_WEEKOFYEAR_ROW, column=col, value=f"=INDEX(Cal_Weeks[WeekOfYear],BaseWeek+{w-1})")
+
+        lbl_cell = ws.cell(row=PO_HDR_LABEL_ROW, column=col, value=f"=INDEX(Cal_Weeks[Label],BaseWeek+{w-1})")
+        lbl_cell.font = Font(bold=True)
+        lbl_cell.alignment = Alignment(horizontal="center", vertical="center")
+        lbl_cell.border = hdr_border
+        lbl_cell.fill = hdr_fill
         ws.column_dimensions[get_column_letter(col)].width = 8
 
-    left_headers = ["Part Name", "TTAF Code", "CSA Code", "UOM", "SafetyStock", "CurrentStock"]
-    for c, h in enumerate(left_headers, start=2):
-        ws.cell(row=PO_HDR_TABLE_ROW, column=c, value=h)
+    ws.row_dimensions[PO_HDR_WEEKSTART_ROW].hidden = True
+    ws.row_dimensions[PO_HDR_WEEKOFYEAR_ROW].hidden = True
+    for r in PO_HDR_SPACER_ROWS:
+        ws.row_dimensions[r].hidden = True
+
+    ws.cell(row=PO_HDR_LABEL_ROW, column=5, value="Week")
+    for c, lbl in ((6, "SafetyStock"), (7, "CurrentStock")):
+        cell = ws.cell(row=PO_HDR_LABEL_ROW, column=c, value=lbl)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = hdr_border
+        cell.fill = hdr_fill
     total_col = PO_FIRST_WEEK_COL + PO_N_WEEKS
-    ws.cell(row=PO_HDR_TABLE_ROW, column=total_col, value="Total")
+    total_hdr_cell = ws.cell(row=PO_HDR_LABEL_ROW, column=total_col, value="Total")
+    total_hdr_cell.font = Font(bold=True)
+    total_hdr_cell.border = hdr_border
+    total_hdr_cell.fill = hdr_fill
+
+    ws.cell(row=PO_HDR_UOM_FIRM_ROW, column=5, value="UOM").font = Font(bold=True)
+    ws.cell(row=PO_HDR_UOM_FIRM_ROW, column=5).alignment = Alignment(horizontal="center", vertical="center")
+    ws.cell(row=PO_HDR_UOM_FIRM_ROW, column=5).border = hdr_border
+    firm_lbl = ws.cell(row=PO_HDR_UOM_FIRM_ROW, column=PO_FIRST_WEEK_COL, value="Firm")
+    firm_lbl.font = Font(bold=True)
+    firm_lbl.alignment = Alignment(horizontal="center", vertical="center")
+    firm_lbl.border = hdr_border
+    ws.merge_cells(start_row=PO_HDR_UOM_FIRM_ROW, start_column=PO_FIRST_WEEK_COL,
+                    end_row=PO_HDR_UOM_FIRM_ROW, end_column=PO_FIRST_WEEK_COL + 3)
+    forecast_lbl = ws.cell(row=PO_HDR_UOM_FIRM_ROW, column=PO_FIRST_WEEK_COL + 4, value="Forecast")
+    forecast_lbl.font = Font(bold=True)
+    forecast_lbl.alignment = Alignment(horizontal="center", vertical="center")
+    forecast_lbl.border = hdr_border
+    ws.merge_cells(start_row=PO_HDR_UOM_FIRM_ROW, start_column=PO_FIRST_WEEK_COL + 4,
+                    end_row=PO_HDR_UOM_FIRM_ROW, end_column=total_col - 1)
 
     last_col_idx = total_col
-    for row_i in (PO_HDR_MONTHYEAR_ROW, PO_HDR_DATE_ROW, PO_HDR_WEEKNO_ROW, PO_HDR_FIRMFORECAST_ROW, PO_HDR_TABLE_ROW):
-        for c in range(2, last_col_idx + 1):
-            cell = ws.cell(row=row_i, column=c)
-            cell.fill = PatternFill("solid", fgColor="D9E1F2")
-            cell.font = Font(bold=(row_i in (PO_HDR_MONTHYEAR_ROW, PO_HDR_TABLE_ROW)))
 
-    data_row = PO_HDR_TABLE_ROW
+    # ---- データ行(27行目〜) ----
+    data_row = PO_HDR_UOM_FIRM_ROW
     items = [r for r in rm_master if r["Category"] == category]
     # 原産国での絞り込み(Substrateのみ、Japan/China/Poland別のPO_Draftシートに分離する用途。
     # 汎用の受け皿シートは無い設計のため、対象国以外・原産国未設定の品目はどのPO_Draft_*
@@ -1244,7 +1336,7 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
         ws.cell(row=data_row, column=4, value=rm)
         ws.cell(row=data_row, column=5, value="kg")
         ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[Part Name],0)),0)')
-        ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_match},$P$7)")
+        ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_match},BaseWeek)")
         # 発注数量は自動計算せず、Material_DetailのOrder(発注予定,kg)行に手入力された値を
         # そのまま転記するだけ。MD_ORDER_HELPER_COL列(Order行にだけPart Nameが複製されている
         # 見えない列)をMATCHでたどることで、材料ごとにブロックの長さが違っても正しい行を
@@ -1252,30 +1344,42 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
         md_order_match = f'MATCH($D{data_row},Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},0)'
         for w in range(1, PO_N_WEEKS + 1):
             col = PO_FIRST_WEEK_COL + w - 1
-            ws.cell(row=data_row, column=col,
-                    value=f"=IFERROR(INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{md_order_match},$P$7+{w-1}),0)")
+            cell = ws.cell(row=data_row, column=col,
+                    value=f"=IFERROR(INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{md_order_match},BaseWeek+{w-1}),0)")
+            if w <= 4:
+                cell.fill = firm_fill
+                cell.font = firm_font
+            else:
+                cell.fill = forecast_fill
+                cell.font = forecast_font
         rng_start = get_column_letter(PO_FIRST_WEEK_COL)
         rng_end = get_column_letter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)
         ws.cell(row=data_row, column=total_col, value=f"=SUM({rng_start}{data_row}:{rng_end}{data_row})")
 
     last_row = data_row
-    # ヘッダー行が数式(Cal_Weeks参照)のため、Excelのテーブル機能(ListObject)は使わず
+    # 表本体が数式(Cal_Weeks参照)のため、Excelのテーブル機能(ListObject)は使わず
     # 罫線・縞模様の手動書式にする（テーブル見出しは文字列必須で、数式は入れられないため）。
-    thin = Side(style="thin", color="BFBFBF")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     if items:
-        for rr2 in range(PO_HDR_TABLE_ROW, last_row + 1):
-            stripe = (rr2 - PO_HDR_TABLE_ROW) % 2 == 1
+        for rr2 in range(PO_HDR_UOM_FIRM_ROW, last_row + 1):
+            stripe = (rr2 - PO_HDR_UOM_FIRM_ROW) % 2 == 1
             for c in range(2, last_col_idx + 1):
                 cell = ws.cell(row=rr2, column=c)
                 cell.border = border
-                if rr2 > PO_HDR_TABLE_ROW and stripe:
+                if rr2 > PO_HDR_UOM_FIRM_ROW and stripe and c not in range(PO_FIRST_WEEK_COL, total_col):
                     cell.fill = PatternFill("solid", fgColor="F2F2F2")
     else:
-        ws.cell(row=PO_HDR_TABLE_ROW + 1, column=2, value="(該当品目なし)")
+        ws.cell(row=PO_HDR_UOM_FIRM_ROW + 1, column=2, value="(該当品目なし)")
+
+    # ---- SafetyStock/CurrentStock(F/G列)・Total(U列)は画面上は表示するが、印刷範囲の
+    # 外に出す(発注書として発行・印刷する際に、社内参照用の欄が紛れ込まないようにするため)。
     ws.column_dimensions["B"].width = 30
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 12
+    print_col_end = get_column_letter(PO_FIRST_WEEK_COL - 3)  # F列(SafetyStock)・G列(CurrentStock)の直前(E列)まで
+    print_col_start2 = get_column_letter(PO_FIRST_WEEK_COL)   # H列(週データ)から
+    print_col_end2 = get_column_letter(total_col)              # Total列まで含める
+    ws.print_area = f"$A$1:${print_col_end}${last_row},${print_col_start2}$1:${print_col_end2}${last_row}"
     ws.freeze_panes = f"{get_column_letter(PO_FIRST_WEEK_COL)}{PO_DATA_START_ROW}"
     print(f"{sheet_name}: {len(items)} items")
 
