@@ -55,6 +55,7 @@ Option Explicit
 
 Private Const PO_HDR_ROW As Long = 26        ' 見出し最終行(この直下からデータ行)。build_soh.pyのPO_HDR_UOM_FIRM_ROWと対応
 Private Const PO_DATA_START_ROW As Long = 27 ' build_soh.pyのPO_DATA_START_ROWと対応
+Private Const PO_TITLE_ROW As Long = 17      ' build_soh.pyのPO_TITLE_ROWと対応(17〜18行目を結合)
 Private Const PO_MONTHYEAR_ROW As Long = 20  ' build_soh.pyのPO_HDR_MONTHYEAR_ROWと対応
 Private Const PO_FIRST_WEEK_COL As Long = 8  ' H列
 Private Const PO_N_WEEKS As Long = 13
@@ -96,16 +97,37 @@ ErrHandler:
            "途中まで反映されている可能性があります。心配な場合は保存せずに閉じて開き直してください。", vbCritical
 End Sub
 
-Private Function HasLocalName(sh As Worksheet, nm As String) As Boolean
-    Dim n As Name
+' シート固有(ローカルスコープ)の名前付き範囲"BaseWeek"・"PORevision"を、必ずそのシート自身の
+' セルを指すように作る(既にあれば参照先を上書きする。無ければ新規作成する)。RefersToには
+' 必ずシート名を明示的に含める("='" & sh.Name & "'!..." の形)。シート名を省略すると、
+' Names.Add実行時にたまたまアクティブだった別のシートを指してしまうことがあり
+' (実際にこの不具合で実行時エラー1004が発生した)、この関数はその対策として、既に
+' 移行済みかどうかに関わらず毎回呼び出して参照先を正しく上書きする設計にしている。
+Private Sub EnsureLocalBaseWeekNames(sh As Worksheet)
+    Dim bwName As Name
     On Error Resume Next
-    Set n = sh.Names(nm)
+    Set bwName = sh.Names("BaseWeek")
     On Error GoTo 0
-    HasLocalName = Not (n Is Nothing)
-End Function
+    If bwName Is Nothing Then
+        sh.Names.Add Name:="BaseWeek", RefersTo:="='" & sh.Name & "'!" & PO_BASEWEEK_ADDR
+    Else
+        bwName.RefersTo = "='" & sh.Name & "'!" & PO_BASEWEEK_ADDR
+    End If
 
-' PO_Draft_Hazardous自身の不具合を修正する。既に修正済み(名前付き範囲"BaseWeek"が
-' 既にある)場合は何もせずFalseを返す。
+    Dim revName As Name
+    On Error Resume Next
+    Set revName = sh.Names("PORevision")
+    On Error GoTo 0
+    If revName Is Nothing Then
+        sh.Names.Add Name:="PORevision", RefersTo:="='" & sh.Name & "'!" & PO_REVISION_ADDR
+    Else
+        revName.RefersTo = "='" & sh.Name & "'!" & PO_REVISION_ADDR
+    End If
+End Sub
+
+' PO_Draft_Hazardous自身の不具合を修正する。既に修正済み(月/週見出し(20行目)の結合が
+' 既に解除されている)場合は、名前付き範囲の参照先だけ念のため確認・修正した上で、
+' Falseを返して残りの処理はスキップする。
 Private Function FixHazardousPODraftLayout(thisWb As Workbook) As Boolean
     Dim sh As Worksheet
     On Error Resume Next
@@ -115,17 +137,19 @@ Private Function FixHazardousPODraftLayout(thisWb As Workbook) As Boolean
         FixHazardousPODraftLayout = False
         Exit Function
     End If
-    If HasLocalName(sh, "BaseWeek") Then
+
+    ' 名前付き範囲は、既に移行済みかどうかに関わらず毎回作り直す(前回実行が
+    ' 途中でエラー停止していた場合、名前が正しく設定されていない可能性があるため)。
+    Call EnsureLocalBaseWeekNames(sh)
+
+    If Not sh.Cells(PO_MONTHYEAR_ROW, PO_FIRST_WEEK_COL).MergeCells Then
+        ' 月/週見出しが既に結合解除済み=既にこの関数の本体を実行済み
         FixHazardousPODraftLayout = False
         Exit Function
     End If
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-
-    ' ---- 名前付き範囲を追加(シート固有のローカルスコープ) ----
-    sh.Names.Add Name:="BaseWeek", RefersTo:="=" & PO_BASEWEEK_ADDR
-    sh.Names.Add Name:="PORevision", RefersTo:="=" & PO_REVISION_ADDR
 
     ' ---- 全データ行の$P$7/$P$13直接参照をBaseWeek名に統一する(G列=在庫参照、
     ' H〜T列=発注数量) ----
@@ -207,7 +231,8 @@ Private Function FixHazardousPODraftLayout(thisWb As Workbook) As Boolean
 End Function
 
 ' PO_Draft_Hazardous(修正済み)の構造を複製して、targetSheetNameのシートを新レイアウトに
-' 作り直す。既に新レイアウト(名前付き範囲"BaseWeek"が既にある)ならFalseを返して何もしない。
+' 作り直す。既に新レイアウト(タイトル行(17〜18行目)が既に結合されている)ならFalseを返して
+' 何もしない。
 Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetName As String, titleText As String) As Boolean
     Dim oldSh As Worksheet
     On Error Resume Next
@@ -217,7 +242,8 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
         ClonePODraftLetterheadIfNeeded = False
         Exit Function
     End If
-    If HasLocalName(oldSh, "BaseWeek") Then
+    If oldSh.Cells(PO_TITLE_ROW, 2).MergeCells Then
+        ' タイトル行が既に結合済み=既に新レイアウトへ移行済み
         ClonePODraftLetterheadIfNeeded = False
         Exit Function
     End If
@@ -226,7 +252,12 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
     On Error Resume Next
     Set hazSh = thisWb.Sheets("PO_Draft_Hazardous")
     On Error GoTo 0
-    If hazSh Is Nothing Or Not HasLocalName(hazSh, "BaseWeek") Then
+    If hazSh Is Nothing Then
+        MsgBox "PO_Draft_Hazardousシートが見つかりません。", vbExclamation
+        ClonePODraftLetterheadIfNeeded = False
+        Exit Function
+    End If
+    If Not hazSh.Cells(PO_TITLE_ROW, 2).MergeCells Then
         MsgBox "PO_Draft_Hazardousが先に新レイアウトへ修正されている必要があります。" & vbCrLf & _
                "SetupPODraftLetterheadLayoutをもう一度実行し直してください。", vbExclamation
         ClonePODraftLetterheadIfNeeded = False
@@ -241,7 +272,7 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
     Dim oldRevision As Variant: oldRevision = oldSh.Range("P5").Value
     If Not IsNumeric(oldRevision) Then oldRevision = "00"
     Dim oldBaseWeek As Variant: oldBaseWeek = oldSh.Range("P7").Value
-    If Not IsNumeric(oldBaseWeek) Then oldBaseWeek = hazSh.Range("BaseWeek").Value
+    If Not IsNumeric(oldBaseWeek) Then oldBaseWeek = hazSh.Range(PO_BASEWEEK_ADDR).Value
 
     Dim oldIdx As Long: oldIdx = oldSh.Index
     Application.DisplayAlerts = False
@@ -256,6 +287,10 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
     newSh.Move Before:=thisWb.Sheets(Application.WorksheetFunction.Min(oldIdx, thisWb.Sheets.Count))
     On Error GoTo 0
 
+    ' シートコピーで名前付き範囲が正しく複製されているとは限らないため、コピー先(newSh)
+    ' 自身を指すように明示的に作り直す(EnsureLocalBaseWeekNames参照)。
+    Call EnsureLocalBaseWeekNames(newSh)
+
     ' ---- レターヘッド: タイトル・TO/FROM/CCは仮の文字列に戻す(Hazardousの実際の宛先を
     ' そのまま複製しない。カテゴリによって担当者・取引先が異なる可能性があるため) ----
     newSh.Range("B8").Value = "TO：（サプライヤー／TTAF担当者名を入力）"
@@ -264,8 +299,8 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
     newSh.Range("B13").Value = "FROM：（発行者名）"
     newSh.Range("B14").Value = "　　　　　（自社名）"
     newSh.Range("B17").Value = titleText
-    newSh.Range("BaseWeek").Value = oldBaseWeek
-    newSh.Range("PORevision").Value = oldRevision
+    newSh.Range(PO_BASEWEEK_ADDR).Value = oldBaseWeek
+    newSh.Range(PO_REVISION_ADDR).Value = oldRevision
 
     ' ---- 複製元(Hazardous)のデータ行を削除し、M_RawMaterialsの現在のCategory・
     ' Origin_Countryを基準に、このシートに載るべき材料の行を作り直す
