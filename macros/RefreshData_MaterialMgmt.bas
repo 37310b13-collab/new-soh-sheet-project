@@ -1179,7 +1179,7 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     ' (旧レイアウトでもE列に同じUOM見出し・kgがあるため、どちらのレイアウトでも正しく動く)。
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 5).End(xlUp).Row
     Dim newRow As Long: newRow = lastRow + 1
-    Dim baseWeekRef As String: baseWeekRef = BaseWeekRef(sh)
+    Dim bwRefExpr As String: bwRefExpr = BaseWeekRef(sh)
     ' Grid_Stock内の行位置はMATCHで毎回動的に求める(材料の追加・削除で行位置がずれても
     ' 数式側が自動的に正しい行を追従できるようにするため)。
     Dim growMatch As String: growMatch = "MATCH($D" & newRow & ",Grid_Stock[Part Name],0)"
@@ -1189,7 +1189,7 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     sh.Cells(newRow, 4).Value = rmCode
     sh.Cells(newRow, 5).Value = "kg"
     sh.Cells(newRow, 6).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),0)"
-    sh.Cells(newRow, 7).Value = "=INDEX(Grid_Stock[#Data]," & growMatch & "," & baseWeekRef & ")"
+    sh.Cells(newRow, 7).Value = "=INDEX(Grid_Stock[#Data]," & growMatch & "," & bwRefExpr & ")"
 
     Const PO_FIRST_WEEK_COL As Long = 8
     Const PO_N_WEEKS As Long = 13
@@ -1205,7 +1205,7 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     For w = 1 To PO_N_WEEKS
         col = PO_FIRST_WEEK_COL + w - 1
         sh.Cells(newRow, col).Value = "=IFERROR(INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & _
-            "," & mdOrderMatch & "," & baseWeekRef & "+" & (w - 1) & "),0)"
+            "," & mdOrderMatch & "," & bwRefExpr & "+" & (w - 1) & "),0)"
     Next w
     Dim totalCol As Long: totalCol = PO_FIRST_WEEK_COL + PO_N_WEEKS
     sh.Cells(newRow, totalCol).Value = "=SUM(" & ColLetter(PO_FIRST_WEEK_COL) & newRow & ":" & ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1) & newRow & ")"
