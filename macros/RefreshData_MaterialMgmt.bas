@@ -1180,6 +1180,24 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 5).End(xlUp).Row
     Dim newRow As Long: newRow = lastRow + 1
     Dim bwRefExpr As String: bwRefExpr = BaseWeekRef(sh)
+
+    ' 書式は先に直前行(lastRow)からコピーし、値・数式はその"後"で書き込む。順序が逆だと、
+    ' コピー元がヘッダー行(26行目。H26:K26/L26:T26が"Firm"/"Forecast"ラベル用に結合されている)
+    ' だった場合に、その結合状態までコピーされてしまい、結合後に複数セルへ個別に書き込んだ
+    ' 値・数式が最後の1つ(K27やT27)だけを残して上書きされてしまう不具合があった
+    ' (空のPO_Draft_*シートに1件目を追加する時に発生し、その1件目からさらに2件目・3件目…と
+    ' 直前行の書式コピーが連鎖するため、結合が芋づる式に全行へ伝播してしまっていた)。
+    ' 対策として、書式コピーの直後に週データ列(H〜T)の結合を必ず解除してから、
+    ' 値・数式を書き込む。
+    sh.Rows(lastRow).Copy
+    sh.Rows(newRow).PasteSpecial xlPasteFormats
+    Application.CutCopyMode = False
+    Const PO_FIRST_WEEK_COL_ As Long = 8
+    Const PO_N_WEEKS_ As Long = 13
+    If sh.Range(sh.Cells(newRow, PO_FIRST_WEEK_COL_), sh.Cells(newRow, PO_FIRST_WEEK_COL_ + PO_N_WEEKS_ - 1)).MergeCells Then
+        sh.Range(sh.Cells(newRow, PO_FIRST_WEEK_COL_), sh.Cells(newRow, PO_FIRST_WEEK_COL_ + PO_N_WEEKS_ - 1)).UnMerge
+    End If
+
     ' Grid_Stock内の行位置はMATCHで毎回動的に求める(材料の追加・削除で行位置がずれても
     ' 数式側が自動的に正しい行を追従できるようにするため)。
     Dim growMatch As String: growMatch = "MATCH($D" & newRow & ",Grid_Stock[Part Name],0)"
@@ -1209,10 +1227,6 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     Next w
     Dim totalCol As Long: totalCol = PO_FIRST_WEEK_COL + PO_N_WEEKS
     sh.Cells(newRow, totalCol).Value = "=SUM(" & ColLetter(PO_FIRST_WEEK_COL) & newRow & ":" & ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1) & newRow & ")"
-
-    sh.Rows(lastRow).Copy
-    sh.Rows(newRow).PasteSpecial xlPasteFormats
-    Application.CutCopyMode = False
 
     ' Firm(1〜4週目)/Forecast(5〜13週目)の色分けは、直前行からの書式コピーだけに頼らない
     ' (空のシートに最初の1行目を追加する場合、直前行=ヘッダー行になってしまい、
