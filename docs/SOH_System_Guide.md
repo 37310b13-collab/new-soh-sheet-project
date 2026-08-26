@@ -56,16 +56,11 @@
 | `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_SelfStock_Log（非表示。目に見えるT_SelfStockは数式で自動反映） |
 | `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
 | `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件を材料＋PO番号＋コンテナ＋Original ETDの複合キーで一括反映、分割出荷も欠落なく反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
-| `SetupOrderManagementMigration` | （ファイル選択なし・実行するだけ） | Material_DetailへのPO_No行追加と、Grid_Incomingの数式書き換えをまとめて行う、一度だけ実行する移行用マクロ（詳細は5.10.1章） |
-| `AddShipmentSplitColumns` | （ファイル選択なし・実行するだけ） | T_ShipmentsにVessel/Container/Original_ETD列を追加し、あわせて全行のEffective_Week数式を復元する移行用マクロ（分割出荷の欠落防止・数式破壊バグの修復、詳細は5.10.2〜5.10.3章。何度実行しても安全） |
-| `CleanupOrphanedPreSplitShipmentRows` | （ファイル選択なし・実行するだけ） | `AddShipmentSplitColumns`実行後、最初の`RefreshShipments`で二重計上の原因になり得る移行前の旧形式行を削除する移行用マクロ（詳細は5.10.5章。何度実行しても安全） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
 | `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
-| `FixOpeningStockColumnReference` | （ファイル選択なし・実行するだけ） | Grid_Stock・Grid_TheoreticalStockの週1列の数式にあったT_OpeningStock列名参照の誤りを修正する移行用マクロ（詳細は5.7.1章。何度実行しても安全） |
 | `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory・Origin_Country列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す（詳細は5.7.2〜5.7.3章。いつでも安全に実行可） |
-| `SetupSubstratePODraftByCountry` | （ファイル選択なし・実行するだけ） | M_RawMaterialsへのOrigin_Country列追加、PO_Draft_SubstrateのPO_Draft_Substrate_JPN_CHNへの改名、PO_Draft_Substrate_Polandシートの新規作成をまとめて行う移行用マクロ（Substrateの原産国別PO_Draft分離のため。詳細は5.7.3章。何度実行しても安全） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
 | `SetupPODraftLetterheadLayout` | （ファイル選択なし・実行するだけ） | PO_Draft_Hazardousに手動で作り込んだレターヘッド形式レイアウト（月/週見出しの不具合修正・基準週参照の名前付き範囲化・Firm/Forecast色分け・SafetyStock/CurrentStockの印刷範囲除外）を修正した上で、PO_Draft_Chemical・PO_Draft_Substrate_JPN_CHN・PO_Draft_Substrate_Polandの3シートにも複製する、一度だけ実行する移行用マクロ（詳細は5.7.4章。何度実行しても安全） |
@@ -416,10 +411,10 @@ Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が�
 気づかれていませんでした。しかし`AddMaterial`で追加したばかりの材料には週1時点の
 実績データがまだ無いため、この壊れた分岐に実際に到達し、エラーになっていました。
 
-`AddMaterial`自体は既に修正済みです。ただし、修正前の状態で既に書き込まれてしまっている
-**既存材料**の週1列の数式は、コードを直しただけでは直りません。`FixOpeningStockColumnReference`
-マクロを一度実行すると、Grid_Stock・Grid_TheoreticalStockの全材料の週1列の数式が一括で
-正しい状態に修正されます（他の週の列には影響しません。誤って複数回実行しても安全です）。
+`AddMaterial`自体は既に修正済みです。修正前の状態で既に書き込まれてしまっていた
+**既存材料**の週1列の数式は、`FixOpeningStockColumnReference`マクロ（Grid_Stock・
+Grid_TheoreticalStockの全材料の週1列の数式を一括で修正。他の週の列には影響しない）で
+既に修正を適用済みです。このマクロは移行完了のためVBAコードからは削除済みです。
 
 ### 5.7.2 M_RawMaterialsのCategory変更をPO_Draft_*に反映する（`SyncPODraftCategories`）
 
@@ -452,17 +447,14 @@ Substrateの3区分）とは独立した、`M_RawMaterials`の`Origin_Country`�
 に載せない、という運用判断です）。Origin_Countryは大文字小文字を区別せずに判定します
 （「poland」でも「Poland」として扱われます）。
 
-**既存ブックへの導入方法**（`macros/RefreshData_MaterialMgmt.bas`を貼り替えた後、
-この順で一度だけ実行）:
-1. `SetupSubstratePODraftByCountry` — `M_RawMaterials`への`Origin_Country`列追加、
-   既存の`PO_Draft_Substrate`シートの`PO_Draft_Substrate_JPN_CHN`への改名（書式・データ
-   をそのまま引き継ぐ）、`PO_Draft_Substrate_Poland`シートの新規作成（データ行は空の
-   状態）をまとめて行う
-2. `M_RawMaterials`で、各Substrate品目の`Origin_Country`欄に「Japan」「China」「Poland」の
-   いずれかを入力する（発注していない・原産国が未確認の品目は空欄のままでよい）
-3. `SyncPODraftCategories`を実行する（5.7.2章のマクロ。Origin_Countryも見るように
-   拡張済みなので、これを実行すると各品目が正しい`PO_Draft_Substrate_*`へ振り分けられる。
-   Japan・Chinaのどちらを入力しても`PO_Draft_Substrate_JPN_CHN`に入る）
+**既存ブックへの導入**は完了済みです（`M_RawMaterials`への`Origin_Country`列追加、
+`PO_Draft_Substrate`→`PO_Draft_Substrate_JPN_CHN`への改名、`PO_Draft_Substrate_Poland`
+シートの新規作成をまとめて行う`SetupSubstratePODraftByCountry`移行用マクロを一度だけ
+実行し、移行完了のためVBAコードからは削除済みです）。今後、Substrate品目の原産国を
+変更・追記する場合は、`M_RawMaterials`の`Origin_Country`欄に「Japan」「China」「Poland」の
+いずれかを入力してから、`SyncPODraftCategories`を実行してください（5.7.2章のマクロ。
+Origin_Countryも見るように拡張済みなので、各品目が正しい`PO_Draft_Substrate_*`へ
+振り分けられる。Japan・Chinaのどちらを入力しても`PO_Draft_Substrate_JPN_CHN`に入る）。
 
 `AddMaterial`でSubstrateの新規材料を追加する際は、原産国を尋ねるプロンプトが追加されて
 おり、「Japan」「China」「Poland」のいずれかを入力すればそのまま対応する
@@ -705,11 +697,9 @@ Material_Detailにブロックが無い材料（BOMで使われない梱包資�
 入力されていない出荷は、この自動追従の対象外です（Grid_Incomingは、そのようなケースでは
 従来通り`T_Shipments`を直接参照します）。
 
-**既存ブックへの導入方法**: 新しく`build_soh.py`でブックを作った場合はPO_No行・
-Grid_Incomingの数式とも最初からこの形になっていますが、既存のライブブックには入っていません。
-`macros/RefreshData_MaterialMgmt.bas`の`SetupOrderManagementMigration`を一度だけ
-実行してください（Material_DetailへのPO_No行追加と、Grid_Incomingの数式書き換えを
-まとめて行います。ブロック数によっては数十秒〜数分かかりますが、フリーズではありません）。
+**既存ブックへの導入**は完了済みです（Material_DetailへのPO_No行追加と、Grid_Incomingの
+数式書き換えをまとめて行う`SetupOrderManagementMigration`移行用マクロを一度だけ実行し、
+移行完了のためVBAコードからは削除済みです）。
 
 ### 5.10.2 T_Shipmentsの一意キー修正（分割出荷の欠落防止）
 
@@ -727,14 +717,13 @@ Grid_Incomingの数式とも最初からこの形になっていますが、既�
 計算（Material_Detailにブロックが無い材料のフォールバック時）や`SyncMaterialDetailOrders`の
 週別集計も、分割出荷分をすべて正しく合算するようになりました。
 
-**既存ブックへの導入方法**: `macros/RefreshData_Shipments.bas`を貼り替えた後、
-`AddShipmentSplitColumns`を一度だけ実行し、T_Shipmentsに上記3列を追加してください。
-その後`RefreshShipments`を実行し直すと、以前は上書きされて消えていた分割出荷の行が、
-複合キーで正しく区別されて自動的に追加され直されます（＝過去に失われていた数量が復元
-されます）。なお、ごく稀な「コンテナ・Original ETDまで完全に同じ」ケースの連番による
-区別は、TTAF側のレポート内での行の並び順が週次の再エクスポート間で安定していることに
-依存しており、数学的な保証はありませんが、従来の「常に上書きで消える」状態からは大きく
-改善しています。
+**既存ブックへの導入**は完了済みです（T_Shipmentsへの上記3列追加を行う
+`AddShipmentSplitColumns`移行用マクロを一度だけ実行し、以前は上書きされて消えていた
+分割出荷の行が複合キーで正しく区別されて自動的に追加され直されました＝過去に失われて
+いた数量が復元されています。移行完了のためVBAコードからは削除済みです）。なお、
+ごく稀な「コンテナ・Original ETDまで完全に同じ」ケースの連番による区別は、TTAF側の
+レポート内での行の並び順が週次の再エクスポート間で安定していることに依存しており、
+数学的な保証はありませんが、従来の「常に上書きで消える」状態からは大きく改善しています。
 
 ### 5.10.3 Effective_Week数式の破壊バグ修正
 
@@ -754,12 +743,10 @@ Grid_Incomingの数式とも最初からこの形になっていますが、既�
 修正により、既存行の更新は8列目(Effective_Week)を避けて前半(1〜7列)・後半(9〜12列)の
 2つに分けて書き戻すようにし、数式に一切触れないようにしました。
 
-**既存ブックへの導入方法**: この修正はコードの貼り替えだけでは、過去に既に壊れてしまった
-行までは直りません。`AddShipmentSplitColumns`（5.10.2章）を実行すると、列の追加とあわせて
-T_Shipments全行のEffective_Week数式を正しい状態に一括で復元するようにしてあるので、
-`RefreshData_Shipments.bas`貼り替え後は`AddShipmentSplitColumns`を一度実行するだけで、
-この不具合の影響も含めて解消されます（既に5.10.2章の手順を実施済みでも、もう一度
-実行して問題ありません＝安全に再実行できます）。
+この修正はコードの貼り替えだけでは、過去に既に壊れてしまった行までは直りません。
+5.10.2章の`AddShipmentSplitColumns`は、列の追加とあわせてT_Shipments全行の
+Effective_Week数式も正しい状態に一括で復元するようにしてあったため、既存ブックへの
+導入時にこの不具合の影響もあわせて解消済みです。
 
 ### 5.10.4 T_Shipmentsの行数について（自動では削除されない）
 
@@ -794,17 +781,12 @@ T_Shipments全行のEffective_Week数式を正しい状態に一括で復元す�
 発注予定として二重計上してしまう可能性があります（既に「[済]」で確定済みのPO番号は、
 そもそも同期処理の対象から外れるため元々問題になりません）。
 
-これを防ぐため、`CleanupOrphanedPreSplitShipmentRows`マクロを用意しました。同じ材料+PO番号で
-新形式の行が既に存在する「移行前の古い行」だけを判別して削除します（実データで確認した限り、
-コンテナ番号・Original ETDが両方空欄になることは無いため、「両方空欄」で移行前の行を確実に
-判別できます）。まだ新形式の行が無いPO番号（今回のCSA Reportにまだ登場していない出荷）の
-行には触れません。
-
-**実行手順**: `AddShipmentSplitColumns`実行後、最初に`RefreshShipments`を実行したら、続けて
-`CleanupOrphanedPreSplitShipmentRows`を一度実行し、その後もう一度`RefreshShipments`を実行して
-Material_Detailを最新状態に同期し直してください（このクリーンアップは移行直後の一過性の
-対応のため、それ以降は実行不要です。誤って複数回実行しても、既にクリーンな状態であれば
-「削除対象なし」と表示されるだけで安全です）。
+これを防ぐため、同じ材料+PO番号で新形式の行が既に存在する「移行前の古い行」だけを判別して
+削除する`CleanupOrphanedPreSplitShipmentRows`移行用マクロを用意し、既存ブックへの導入時に
+一度だけ実行してこのリスクを解消しました（実データで確認した限り、コンテナ番号・
+Original ETDが両方空欄になることは無いため、「両方空欄」で移行前の行を確実に判別できる、
+という設計）。このクリーンアップは移行直後の一過性の対応のため、移行完了後はVBAコードから
+削除済みです。
 
 ## 6. 自動反映の仕組み
 

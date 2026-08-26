@@ -26,11 +26,9 @@ Option Explicit
 ' 複合キーで行を区別する。それでも完全に同じ組み合わせ(同じコンテナに複数バッチが
 ' 混載されている等、ごく稀なケース)が複数行ある場合だけ、ファイル内の出現順の連番で
 ' 最終的に区別する(DateKeyStr/BuildShipmentRowIndex参照)。
-' 既存の運用中ブックはT_Shipmentsがまだ9列(Vessel/Container/Original_ETD列が無い)の
-' ため、このモジュールを貼り替えた後、一度だけ AddShipmentSplitColumns を実行して列を
-' 追加してから RefreshShipments を実行し直すこと。これにより、以前は材料名+PO番号の
-' 重複で上書きされて消えていた分割出荷の行が、複合キーで正しく区別されて自動的に
-' 追加され直す(過去に失われた数量が復元される)。
+' 既存の運用中ブックのT_Shipmentsに、この複合キーに必要なVessel/Container/Original_ETD列
+' (10〜12列目)を追加する移行作業は完了済み(一度だけ実行するAddShipmentSplitColumns・
+' CleanupOrphanedPreSplitShipmentRowsマクロは、実施済みのためこのモジュールから削除した)。
 '
 ' T_ShipmentsはGrid_Incoming(材料×週のSUMIFS)から大量に参照される重量級テーブルのため、
 ' RefreshBOM(M_BOM)・RefreshWeeklyBatches(PP_Grid)と同じ理由で、新規行はまとめて件数を
@@ -91,9 +89,9 @@ Sub RefreshShipments()
         Application.Calculation = xlCalculationAutomatic
         Application.ScreenUpdating = True
         Application.DisplayAlerts = True
-        MsgBox "T_Shipmentsがまだ新しい列構成(Vessel/Container/Original_ETD)に移行されていません。" & vbCrLf & _
-               "先に「AddShipmentSplitColumns」マクロを一度だけ実行してから、" & vbCrLf & _
-               "あらためてRefreshShipmentsを実行してください。", vbExclamation
+        MsgBox "T_Shipmentsの列構成が想定と異なります(Vessel/Container/Original_ETD列が" & vbCrLf & _
+               "見つかりません)。build_soh.pyで生成し直したブックか、列構成が壊れている" & vbCrLf & _
+               "可能性があります。シートの構成を確認してください。", vbExclamation
         Exit Sub
     End If
 
@@ -306,184 +304,6 @@ ErrHandler:
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
     MsgBox "更新処理でエラーが発生しました: (" & errNum2 & ") " & errMsg2, vbCritical
-End Sub
-
-' T_Shipmentsに、分割出荷を区別するためのVessel/Container/Original_ETD列(10〜12列目)を
-' 追加する(一度だけ実行する移行用マクロ)。build_soh.pyで新規に作られるブックは最初から
-' この列があるが、既存のライブブックには無い。既存行はこれらの列が空欄のまま追加されるが、
-' 次にRefreshShipmentsを実行すると、以前は材料名+PO番号だけの一意キーで上書きされてしまい
-' 失われていた分割出荷の行が、複合キーで正しく区別されて自動的に追加され直す
-' (モジュール冒頭コメント参照)。列が既にある場合は列追加をスキップするだけで、
-' 下記のEffective_Week修復は毎回必ず行う(誤って複数回実行しても安全)。
-'
-' 【重要・今回の再検証で新たに発見した別の不具合の修復も兼ねる】以前のRefreshShipmentsには、
-' 既存行を更新する際にEffective_Week(8列目、着荷予定週を計算する数式)を、その時点の
-' 計算結果の値でまるごと上書きしてしまい、数式自体を破壊する不具合があった(コード側は
-' 今回のモジュール貼り替えで修正済みだが、過去に実行された分は直らないまま残っている)。
-' これにより、一度でも更新されたことがある行は、ETAがその後どれだけ変わってもEffective_Week
-' が更新時点の値のまま凍結され、Material_Detailへの反映が追従しなくなっていた。
-' そのため、このマクロで全行のEffective_Week数式を一括で正しい状態に復元する。
-Sub AddShipmentSplitColumns()
-    On Error GoTo ErrHandler
-    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
-
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-
-    Dim alreadyHadColumns As Boolean: alreadyHadColumns = (shipTbl.ListColumns.Count >= 12)
-    If Not alreadyHadColumns Then
-        shipTbl.Resize shipTbl.Range.Resize(shipTbl.Range.Rows.Count, 12)
-        shipTbl.HeaderRowRange.Cells(1, 10).Value = "Vessel"
-        shipTbl.HeaderRowRange.Cells(1, 11).Value = "Container"
-        shipTbl.HeaderRowRange.Cells(1, 12).Value = "Original_ETD"
-    End If
-
-    Dim repaired As Long: repaired = 0
-    Dim n As Long: n = shipTbl.ListRows.Count
-    If n > 0 Then
-        Dim nWeeksCal As Long: nWeeksCal = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
-        Dim fArr() As Variant
-        ReDim fArr(1 To n, 1 To 1)
-        Dim i As Long
-        For i = 1 To n
-            Dim absRow As Long: absRow = i + 1  ' ヘッダー1行分のオフセット
-            fArr(i, 1) = "=IFERROR(MAX(1,MIN(" & nWeeksCal & ",INT((IF(F" & absRow & "="""",E" & absRow & ",F" & absRow & _
-                ")-(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3)))/7)+1)),"""")"
-        Next i
-        shipTbl.ListColumns(8).DataBodyRange.Formula = fArr
-        repaired = n
-    End If
-
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-
-    Dim msg As String
-    If alreadyHadColumns Then
-        msg = "T_Shipmentsは列構成(Vessel/Container/Original_ETD)は既に最新でした。"
-    Else
-        msg = "T_ShipmentsにVessel/Container/Original_ETD列を追加しました。" & vbCrLf & vbCrLf & _
-              "既存の行はこの3列が空欄のままです。次にRefreshShipmentsを実行すると、" & vbCrLf & _
-              "以前は同じ材料+PO番号で上書きされて消えていた分割出荷の行が、" & vbCrLf & _
-              "自動的に正しく追加され直します。" & vbCrLf & vbCrLf
-    End If
-    msg = msg & "あわせて、Effective_Week(着荷予定週)の数式を全" & repaired & "行分、正しい状態に" & vbCrLf & _
-          "復元しました(以前のRefreshShipmentsには、既存行を更新するたびにこの数式を計算済みの" & vbCrLf & _
-          "値で上書きして壊してしまう不具合があり、その影響を受けていた行を修復しています)。"
-    MsgBox msg, vbInformation
-    Exit Sub
-
-ErrHandler:
-    Dim errNum3 As Long: errNum3 = Err.Number
-    Dim errMsg3 As String: errMsg3 = Err.Description
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum3 & ") " & errMsg3, vbCritical
-End Sub
-
-' 【一度だけ実行する移行用マクロ】AddShipmentSplitColumns実行後、最初のRefreshShipments実行で
-' 新形式(Vessel/Container/Original_ETDが入った)行が追加されると、移行前から存在した旧形式の行
-' (Container・Original_ETDが両方とも空欄)は、複合キーが一致しないため以後RefreshShipmentsで
-' 二度と更新されずそのまま残り続ける。もしその旧形式行のPO番号がMaterial_Detail側でまだ
-' 確定([済])していなければ、SyncMaterialDetailOrdersは同じPO番号の旧行・新行の両方を合算して
-' しまい、実際より多い数量を発注予定として計上してしまう(二重計上)。
-' そのため、旧形式の行のうち、同じ材料+PO番号の新形式の行が既に存在するものだけを削除する
-' (新形式の行の方が正しい最新データなので、旧形式は完全に不要になっている。まだ新形式の行が
-' 無いPO番号の旧行はそのまま残す=削除しない。既に[済]で確定済みのPO番号は、そもそも
-' SyncMaterialDetailOrdersの集計対象から外れるため元々問題にならないが、対象PO番号の判定は
-' 単純にするため、確定済みかどうかは見ずに「新形式の行が存在するかどうか」だけで判定する)。
-' 【重要】実データ477件で確認した限り、コンテナ番号・Original ETDが両方空欄になることは
-' 無いため、「両方空欄」を旧形式行の判定条件として安全に使える。
-Sub CleanupOrphanedPreSplitShipmentRows()
-    On Error GoTo ErrHandler
-    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
-
-    If shipTbl.ListColumns.Count < 12 Then
-        MsgBox "先に AddShipmentSplitColumns を実行してください。", vbExclamation
-        Exit Sub
-    End If
-
-    Dim n As Long: n = shipTbl.ListRows.Count
-    If n = 0 Then
-        MsgBox "T_Shipmentsにデータがありません。", vbInformation
-        Exit Sub
-    End If
-
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-
-    Dim data As Variant: data = shipTbl.DataBodyRange.Value
-
-    ' 新形式の行(コンテナ・Original ETDのどちらかが入力済み)がある「材料+PO番号」を集める
-    Dim hasNewFormat As Object: Set hasNewFormat = CreateObject("Scripting.Dictionary")
-    hasNewFormat.CompareMode = vbTextCompare
-    Dim i As Long
-    For i = 1 To n
-        Dim containerV As String: containerV = Trim(CStr(data(i, 11)))
-        Dim origEtdV As Variant: origEtdV = data(i, 12)
-        If Len(containerV) > 0 Or IsDate(origEtdV) Then
-            Dim mpKey As String: mpKey = Trim(CStr(data(i, 1))) & "|" & Trim(CStr(data(i, 2)))
-            If Not hasNewFormat.Exists(mpKey) Then hasNewFormat.Add mpKey, True
-        End If
-    Next i
-
-    ' 旧形式(コンテナ・Original ETDが両方空欄)の行のうち、新形式の行が既にある
-    ' 材料+PO番号のものだけを削除対象にする
-    Dim rowsToDelete As Object: Set rowsToDelete = CreateObject("Scripting.Dictionary")
-    For i = 1 To n
-        Dim containerV2 As String: containerV2 = Trim(CStr(data(i, 11)))
-        Dim origEtdV2 As Variant: origEtdV2 = data(i, 12)
-        If Len(containerV2) = 0 And Not IsDate(origEtdV2) Then
-            Dim poV As String: poV = Trim(CStr(data(i, 2)))
-            Dim mpKey2 As String: mpKey2 = Trim(CStr(data(i, 1))) & "|" & poV
-            If Len(poV) > 0 And hasNewFormat.Exists(mpKey2) Then rowsToDelete(i) = True
-        End If
-    Next i
-
-    Dim delCount As Long: delCount = rowsToDelete.Count
-    If delCount = 0 Then
-        Application.Calculation = xlCalculationAutomatic
-        Application.ScreenUpdating = True
-        MsgBox "削除対象の旧形式行はありませんでした(既にクリーンな状態です)。", vbInformation
-        Exit Sub
-    End If
-
-    ' 行番号の大きい方から順に削除する(小さい番号から消すとインデックスがずれるため)
-    Dim delRows() As Long
-    ReDim delRows(1 To delCount)
-    Dim delRow As Variant, di As Long: di = 0
-    For Each delRow In rowsToDelete.Keys
-        di = di + 1
-        delRows(di) = CLng(delRow)
-    Next delRow
-    Dim a As Long, b As Long, tmp As Long
-    For a = 1 To delCount - 1
-        For b = a + 1 To delCount
-            If delRows(b) > delRows(a) Then
-                tmp = delRows(a): delRows(a) = delRows(b): delRows(b) = tmp
-            End If
-        Next b
-    Next a
-    For a = 1 To delCount
-        shipTbl.ListRows(delRows(a)).Delete
-    Next a
-
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-
-    MsgBox "二重計上の原因になり得る旧形式の行を " & delCount & " 件削除しました。" & vbCrLf & vbCrLf & _
-           "(移行前から存在し、同じ材料+PO番号の新形式の行に置き換わった行のみを削除しています。" & vbCrLf & _
-           "まだ新形式の行が無いPO番号の行には触れていません。削除後、あらためて" & vbCrLf & _
-           "RefreshShipmentsを実行してMaterial_Detailを最新状態に同期してください)", vbInformation
-    Exit Sub
-
-ErrHandler:
-    Dim errNum4 As Long: errNum4 = Err.Number
-    Dim errMsg4 As String: errMsg4 = Err.Description
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-    MsgBox "処理中にエラーが発生しました: (" & errNum4 & ") " & errMsg4, vbCritical
 End Sub
 
 ' M_RawMaterialsのPart Name(=RM_Code)自体を正規化テキストでインデックス化する。
