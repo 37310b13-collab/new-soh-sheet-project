@@ -75,21 +75,40 @@ ErrHandler:
            "エラー内容をそのまま報告してください。", vbCritical
 End Sub
 
-' シート内の全セルを走査し、数式に"[1]"(外部ブック参照マーカー)が含まれていれば、
-' 同じブック内の参照に戻す(修正したセル数を返す)。
-'   "[1]!TableName[Column]" 形式(構造化参照) -> "TableName[Column]"
-'   "[1]SheetName!Cell"     形式(シート直接参照) -> "SheetName!Cell"
-' の両方に対応するため、"[1]!"を先に、次に残った"[1]"を置換する(この順序が重要)。
+' シート内の全セルを走査し、数式に含まれる外部ブックへの参照を、同じブック内の参照に
+' 戻す(修正したセル数を返す)。外部参照はExcelの状態により表示形式が変わるため、
+' 正規表理現で複数の形式に対応する:
+'   "[1]!TableName[Column]"                        (短縮形・構造化参照)
+'   "[1]SheetName!Cell"                             (短縮形・シート参照)
+'   "'PATH\[FileName.xlsm]SheetName'!Cell"          (フルパス形・シート参照。
+'                                                     参照元ブックが開いている時などに
+'                                                     Excelがこの形式で表示することがある)
+'   "'PATH\FileName.xlsm'!TableName[Column]"        (フルパス形・構造化参照)
 Private Function StripExternalLinkMarker(sh As Worksheet) As Long
+    Dim reSheetFull As Object, reNameFull As Object, reShort As Object
+    Set reSheetFull = CreateObject("VBScript.RegExp")
+    reSheetFull.Global = True
+    reSheetFull.Pattern = "'[^']*\[[^\]]*\]([^']*)'!"
+
+    Set reNameFull = CreateObject("VBScript.RegExp")
+    reNameFull.Global = True
+    reNameFull.Pattern = "'[^'\[]*'!"
+
+    Set reShort = CreateObject("VBScript.RegExp")
+    reShort.Global = True
+    reShort.Pattern = "\[[0-9]+\]!?"
+
     Dim n As Long: n = 0
     Dim usedRng As Range: Set usedRng = sh.UsedRange
     Dim cell As Range
     For Each cell In usedRng
         If cell.HasFormula Then
             Dim f As String: f = cell.Formula
-            If InStr(f, "[1]") > 0 Then
-                f = Replace(f, "[1]!", "")
-                f = Replace(f, "[1]", "")
+            Dim orig As String: orig = f
+            f = reSheetFull.Replace(f, "$1!")
+            f = reNameFull.Replace(f, "")
+            f = reShort.Replace(f, "")
+            If f <> orig Then
                 cell.Formula = f
                 n = n + 1
             End If
