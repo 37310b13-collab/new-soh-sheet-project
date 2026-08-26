@@ -1164,6 +1164,10 @@ print("Dashboard: week-by-week grid for", len(rm_master), "materials x", N_WEEKS
 # 付きデザイン(TO/FROM/CC・発注日・Firm/Forecast月表示・SafetyStock/CurrentStockを印刷範囲外に
 # 配置)を、新規ブック生成時にも最初から再現したもの。
 PO_N_WEEKS = 13
+# 発注数量0の週は、数値の"0"を表示しない(空欄に見せる)ための表示形式。
+# 4区分(正の値;負の値;ゼロ;文字列)のうち、ゼロの区分だけ空にすることで、
+# セルの実際の値(0)はそのまま保ちつつ、見た目だけ空欄にする。
+ZERO_HIDDEN_NUMBER_FORMAT = "0;-0;;@"
 PO_TO_ROW = 8
 PO_TO2_ROW = 9
 PO_FIRMMONTH_ROW = 10
@@ -1235,8 +1239,6 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
     hdr_fill = PatternFill("solid", fgColor="D9E1F2")
     firm_fill = PatternFill("solid", fgColor="FFC1C1")
     forecast_fill = PatternFill("solid", fgColor="EBF1DE")
-    firm_font = Font(bold=False, color="C00000")
-    forecast_font = Font(bold=False, color="006100")
 
     left_labels_top = {2: "Part Name", 3: "TTAF Code", 4: "CSA Code", 5: "Month/Year"}
     for c, lbl in left_labels_top.items():
@@ -1346,12 +1348,11 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
             col = PO_FIRST_WEEK_COL + w - 1
             cell = ws.cell(row=data_row, column=col,
                     value=f"=IFERROR(INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{md_order_match},BaseWeek+{w-1}),0)")
-            if w <= 4:
-                cell.fill = firm_fill
-                cell.font = firm_font
-            else:
-                cell.fill = forecast_fill
-                cell.font = forecast_font
+            # 発注数量0の週は「色を付けない・0という数字も表示しない」ようにしたいという
+            # 要望のため、ここでは直接の塗りつぶし・文字色は設定しない(0でも赤/緑に
+            # 塗ってしまうため)。色分けは後段の条件付き書式(0以外の時だけ発色)で行い、
+            # 数値表示自体はセルの表示形式(0を表示しない書式)で抑制する。
+            cell.number_format = ZERO_HIDDEN_NUMBER_FORMAT
         rng_start = get_column_letter(PO_FIRST_WEEK_COL)
         rng_end = get_column_letter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)
         ws.cell(row=data_row, column=total_col, value=f"=SUM({rng_start}{data_row}:{rng_end}{data_row})")
@@ -1371,15 +1372,41 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
     else:
         ws.cell(row=PO_HDR_UOM_FIRM_ROW + 1, column=2, value="(該当品目なし)")
 
+    # ---- Firm/Forecastの色分けは、直接の塗りつぶしではなく条件付き書式にする
+    # (発注数量が0の週は色を付けない・数字も表示しない、という要望のため)。
+    # 将来AddMaterial等で追加される行もそのまま対象に含まれるよう、実データより
+    # 十分広い行範囲(500行分、材料数の上限に対して余裕を持たせた値)に対して設定する。
+    firm_font = Font(color="C00000")
+    forecast_font = Font(color="006100")
+    cf_last_row = PO_DATA_START_ROW + 500
+    firm_range = f"{get_column_letter(PO_FIRST_WEEK_COL)}{PO_DATA_START_ROW}:{get_column_letter(PO_FIRST_WEEK_COL + 3)}{cf_last_row}"
+    forecast_range = f"{get_column_letter(PO_FIRST_WEEK_COL + 4)}{PO_DATA_START_ROW}:{get_column_letter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1)}{cf_last_row}"
+    firm_anchor = f"{get_column_letter(PO_FIRST_WEEK_COL)}{PO_DATA_START_ROW}"
+    forecast_anchor = f"{get_column_letter(PO_FIRST_WEEK_COL + 4)}{PO_DATA_START_ROW}"
+    ws.conditional_formatting.add(
+        firm_range,
+        FormulaRule(formula=[f'AND({firm_anchor}<>0,{firm_anchor}<>"")'], fill=firm_fill, font=firm_font)
+    )
+    ws.conditional_formatting.add(
+        forecast_range,
+        FormulaRule(formula=[f'AND({forecast_anchor}<>0,{forecast_anchor}<>"")'], fill=forecast_fill, font=forecast_font)
+    )
+
     # ---- SafetyStock/CurrentStock(F/G列)・Total(U列)は画面上は表示するが、印刷範囲の
     # 外に出す(発注書として発行・印刷する際に、社内参照用の欄が紛れ込まないようにするため)。
+    # 基準週(WeekIndex)の入力欄(N13/P13)も同様に、印刷には不要な内部操作用のセルのため、
+    # H:U列の印刷範囲を13行目の前後で分割し、13行目だけ除外する。
     ws.column_dimensions["B"].width = 30
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 12
     print_col_end = get_column_letter(PO_FIRST_WEEK_COL - 3)  # F列(SafetyStock)・G列(CurrentStock)の直前(E列)まで
     print_col_start2 = get_column_letter(PO_FIRST_WEEK_COL)   # H列(週データ)から
     print_col_end2 = get_column_letter(total_col)              # Total列まで含める
-    ws.print_area = f"$A$1:${print_col_end}${last_row},${print_col_start2}$1:${print_col_end2}${last_row}"
+    ws.print_area = (
+        f"$A$1:${print_col_end}${last_row},"
+        f"${print_col_start2}$1:${print_col_end2}${PO_BASEWEEK_ROW - 1},"
+        f"${print_col_start2}${PO_BASEWEEK_ROW + 1}:${print_col_end2}${last_row}"
+    )
     ws.freeze_panes = f"{get_column_letter(PO_FIRST_WEEK_COL)}{PO_DATA_START_ROW}"
     print(f"{sheet_name}: {len(items)} items")
 

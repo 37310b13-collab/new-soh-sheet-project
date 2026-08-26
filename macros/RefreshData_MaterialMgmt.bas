@@ -1222,27 +1222,20 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     mdOrderMatch = "MATCH($D" & newRow & ",Material_Detail!$" & mdOrderHelperColLetter & ":$" & mdOrderHelperColLetter & ",0)"
     For w = 1 To PO_N_WEEKS
         col = PO_FIRST_WEEK_COL + w - 1
-        sh.Cells(newRow, col).Value = "=IFERROR(INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & _
-            "," & mdOrderMatch & "," & bwRefExpr & "+" & (w - 1) & "),0)"
+        With sh.Cells(newRow, col)
+            .Value = "=IFERROR(INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & _
+                "," & mdOrderMatch & "," & bwRefExpr & "+" & (w - 1) & "),0)"
+            ' 発注数量0の週は数字を表示しない(空欄に見せる)ための表示形式。値自体は0のまま。
+            .NumberFormat = "0;-0;;@"
+        End With
     Next w
     Dim totalCol As Long: totalCol = PO_FIRST_WEEK_COL + PO_N_WEEKS
     sh.Cells(newRow, totalCol).Value = "=SUM(" & ColLetter(PO_FIRST_WEEK_COL) & newRow & ":" & ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1) & newRow & ")"
 
-    ' Firm(1〜4週目)/Forecast(5〜13週目)の色分けは、直前行からの書式コピーだけに頼らない
-    ' (空のシートに最初の1行目を追加する場合、直前行=ヘッダー行になってしまい、
-    ' 色が付かないまま追加されてしまうため)。build_soh.pyのbuild_po_draft()と同じ配色。
-    Dim firmForecastCol As Long
-    For firmForecastCol = PO_FIRST_WEEK_COL To PO_FIRST_WEEK_COL + PO_N_WEEKS - 1
-        With sh.Cells(newRow, firmForecastCol)
-            If firmForecastCol < PO_FIRST_WEEK_COL + 4 Then
-                .Interior.Color = RGB(255, 193, 193)  ' Firm: FFC1C1
-                .Font.Color = RGB(192, 0, 0)           ' 濃い赤: C00000
-            Else
-                .Interior.Color = RGB(235, 241, 222)  ' Forecast: EBF1DE
-                .Font.Color = RGB(0, 97, 0)            ' 濃い緑: 006100
-            End If
-        End With
-    Next firmForecastCol
+    ' Firm(1〜4週目)/Forecast(5〜13週目)の色分けは、直接の塗りつぶしではなく、シート設定時
+    ' (SetupPODraftLetterheadLayout/build_soh.py)に一度だけ設定済みの条件付き書式
+    ' (発注数量が0以外の時だけ発色)に任せる。十分広い行範囲に対して設定済みのため、
+    ' この行に対して個別に何か設定する必要はない。
 End Sub
 
 ' テーブル(ListObject)から、指定した材料コードに一致する行を削除する。

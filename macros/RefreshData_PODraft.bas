@@ -60,6 +60,7 @@ Private Const PO_MONTHYEAR_ROW As Long = 20  ' build_soh.pyのPO_HDR_MONTHYEAR_R
 Private Const PO_FIRST_WEEK_COL As Long = 8  ' H列
 Private Const PO_N_WEEKS As Long = 13
 Private Const PO_BASEWEEK_ADDR As String = "$P$13"
+Private Const PO_BASEWEEK_ROW As Long = 13   ' PO_BASEWEEK_ADDRの行番号(印刷範囲の除外に使う)
 Private Const PO_REVISION_ADDR As String = "$P$11"
 
 Sub SetupPODraftLetterheadLayout()
@@ -200,22 +201,12 @@ Private Function FixHazardousPODraftLayout(thisWb As Workbook) As Boolean
         End With
     Next w
 
-    ' ---- Firm(1〜4週目)/Forecast(5〜13週目)の発注数量セルに色を付ける ----
-    If lastRow >= PO_DATA_START_ROW Then
-        For r = PO_DATA_START_ROW To lastRow
-            For c = PO_FIRST_WEEK_COL To PO_FIRST_WEEK_COL + PO_N_WEEKS - 1
-                With sh.Cells(r, c)
-                    If c < PO_FIRST_WEEK_COL + 4 Then
-                        .Interior.Color = RGB(255, 193, 193)
-                        .Font.Color = RGB(192, 0, 0)   ' 濃い赤: C00000
-                    Else
-                        .Interior.Color = RGB(235, 241, 222)
-                        .Font.Color = RGB(0, 97, 0)    ' 濃い緑: 006100
-                    End If
-                End With
-            Next c
-        Next r
-    End If
+    ' ---- Firm(1〜4週目)/Forecast(5〜13週目)の発注数量セルの色分けは、直接の塗りつぶし
+    ' ではなく条件付き書式にする(発注数量が0の週は色を付けない・数字も表示しない、
+    ' という要望のため)。将来AddMaterial等で追加される行も対象に含まれるよう、
+    ' 実データより十分広い行範囲(500行分)に対して設定する。数値の表示形式も、
+    ' 0を表示しない書式にする。
+    Call ApplyPODraftZeroHiddenFormatting(sh)
 
     ' ---- SafetyStock/CurrentStock(F/G列)の非表示を解除し、印刷範囲から除外する ----
     sh.Columns("F:G").Hidden = False
@@ -223,7 +214,7 @@ Private Function FixHazardousPODraftLayout(thisWb As Workbook) As Boolean
     sh.Columns("G").ColumnWidth = 12
     Dim printLastRow As Long
     printLastRow = IIf(lastRow >= PO_DATA_START_ROW, lastRow, PO_HDR_ROW)
-    sh.PageSetup.PrintArea = "$A$1:$E$" & printLastRow & ",$H$1:$U$" & printLastRow
+    Call SetPODraftPrintArea(sh, printLastRow)
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
@@ -335,9 +326,96 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
     ' ---- 印刷範囲を、実際のデータ行数に合わせて更新する ----
     Dim finalLastRow As Long
     finalLastRow = IIf(addedItems > 0, PO_DATA_START_ROW + addedItems - 1, PO_HDR_ROW)
-    newSh.PageSetup.PrintArea = "$A$1:$E$" & finalLastRow & ",$H$1:$U$" & finalLastRow
+    Call SetPODraftPrintArea(newSh, finalLastRow)
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     ClonePODraftLetterheadIfNeeded = True
 End Function
+
+' 【いつでも実行してよいメンテナンス用マクロ】4つのPO_Draft_*シートすべてに、
+' 発注数量0の週を非表示にする書式(条件付き書式・数値の表示形式)と、基準週セルを
+' 印刷範囲から除外する設定を(再)適用する。SetupPODraftLetterheadLayoutは、既に
+' 新レイアウトへ移行済みのシートをスキップしてしまうため、移行後にこの書式だけを
+' 追加・更新したい場合はこのマクロを直接実行する。何度実行しても安全。
+Sub ApplyPODraftZeroHiddenFormattingToAllSheets()
+    On Error GoTo ErrHandler
+    Dim thisWb As Workbook: Set thisWb = ThisWorkbook
+    Application.ScreenUpdating = False
+
+    Dim sheetNames As Variant
+    sheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", "PO_Draft_Substrate_JPN_CHN", "PO_Draft_Substrate_Poland")
+    Dim si As Long, n As Long: n = 0
+    For si = LBound(sheetNames) To UBound(sheetNames)
+        Dim sh As Worksheet
+        On Error Resume Next
+        Set sh = Nothing
+        Set sh = thisWb.Sheets(CStr(sheetNames(si)))
+        On Error GoTo ErrHandler
+        If Not sh Is Nothing Then
+            Call ApplyPODraftZeroHiddenFormatting(sh)
+            Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 5).End(xlUp).Row
+            If lastRow < PO_HDR_ROW Then lastRow = PO_HDR_ROW
+            Call SetPODraftPrintArea(sh, lastRow)
+            n = n + 1
+        End If
+    Next si
+
+    Application.ScreenUpdating = True
+    MsgBox n & "シートに適用しました。保存して確認してください。", vbInformation
+    Exit Sub
+
+ErrHandler:
+    Application.ScreenUpdating = True
+    MsgBox "処理中にエラーが発生しました: (" & Err.Number & ") " & Err.Description, vbCritical
+End Sub
+
+' Firm(1〜4週目)/Forecast(5〜13週目)の発注数量セルに、条件付き書式で色を付ける
+' (発注数量が0以外の時だけ発色。0の週は色を付けず、数字も表示しない)。
+' 実データの行数より十分広い範囲(500行分)に対して設定することで、AddMaterial等で
+' 後から追加される行も自動的に対象に含まれるようにする(行を追加するたびに
+' 個別に条件付き書式を設定し直す必要が無い)。既存の条件付き書式があれば一旦削除
+' してから設定し直すため、何度実行しても安全。
+Private Sub ApplyPODraftZeroHiddenFormatting(sh As Worksheet)
+    Dim cfLastRow As Long: cfLastRow = PO_DATA_START_ROW + 500
+    Dim firmFirstCol As Long: firmFirstCol = PO_FIRST_WEEK_COL
+    Dim firmLastCol As Long: firmLastCol = PO_FIRST_WEEK_COL + 3
+    Dim forecastFirstCol As Long: forecastFirstCol = PO_FIRST_WEEK_COL + 4
+    Dim forecastLastCol As Long: forecastLastCol = PO_FIRST_WEEK_COL + PO_N_WEEKS - 1
+
+    Dim allWeeksRng As Range
+    Set allWeeksRng = sh.Range(sh.Cells(PO_DATA_START_ROW, firmFirstCol), sh.Cells(cfLastRow, forecastLastCol))
+    allWeeksRng.NumberFormat = "0;-0;;@"
+    ' 以前のバージョン(直接の塗りつぶし)やFixMergedPODraftDataRows等の緊急復旧マクロで
+    ' 直接色が付いてしまっている可能性があるセルをリセットする。条件付き書式は
+    ' 条件に一致しない時は元の(直接指定の)書式にフォールバックするため、直接色が
+    ' 残ったままだと0の週でも色が消えない。
+    allWeeksRng.Interior.ColorIndex = xlNone
+    allWeeksRng.Font.ColorIndex = xlAutomatic
+
+    Dim firmRng As Range: Set firmRng = sh.Range(sh.Cells(PO_DATA_START_ROW, firmFirstCol), sh.Cells(cfLastRow, firmLastCol))
+    firmRng.FormatConditions.Delete
+    Dim firmAnchor As String: firmAnchor = ColLetter(firmFirstCol) & PO_DATA_START_ROW
+    Dim fc1 As FormatCondition
+    Set fc1 = firmRng.FormatConditions.Add(Type:=xlExpression, Formula1:="=AND(" & firmAnchor & "<>0," & firmAnchor & "<>"""")")
+    fc1.Interior.Color = RGB(255, 193, 193)  ' Firm: FFC1C1
+    fc1.Font.Color = RGB(192, 0, 0)          ' 濃い赤: C00000
+
+    Dim forecastRng As Range: Set forecastRng = sh.Range(sh.Cells(PO_DATA_START_ROW, forecastFirstCol), sh.Cells(cfLastRow, forecastLastCol))
+    forecastRng.FormatConditions.Delete
+    Dim forecastAnchor As String: forecastAnchor = ColLetter(forecastFirstCol) & PO_DATA_START_ROW
+    Dim fc2 As FormatCondition
+    Set fc2 = forecastRng.FormatConditions.Add(Type:=xlExpression, Formula1:="=AND(" & forecastAnchor & "<>0," & forecastAnchor & "<>"""")")
+    fc2.Interior.Color = RGB(235, 241, 222)  ' Forecast: EBF1DE
+    fc2.Font.Color = RGB(0, 97, 0)           ' 濃い緑: 006100
+End Sub
+
+' PO_Draft_*シートの印刷範囲を設定する。SafetyStock/CurrentStock(F/G列)に加え、
+' 基準週(WeekIndex)の入力欄(PO_BASEWEEK_ROW行目のN/P列)も、発注書を印刷・発行する
+' 際には不要な内部操作用のセルのため、H:U列の印刷範囲をその行の前後で分割して除外する。
+Private Sub SetPODraftPrintArea(sh As Worksheet, lastRow As Long)
+    sh.PageSetup.PrintArea = _
+        "$A$1:$E$" & lastRow & "," & _
+        "$H$1:$U$" & (PO_BASEWEEK_ROW - 1) & "," & _
+        "$H$" & (PO_BASEWEEK_ROW + 1) & ":$U$" & lastRow
+End Sub
