@@ -2,40 +2,54 @@ Attribute VB_Name = "RefreshData_ProductionPlan"
 Option Explicit
 
 ' ============================================================================
-' RefreshData_ProductionPlan モジュール
+' RefreshData_ProductionPlan module
 '
-'   RefreshWeeklyBatches : 「Powder & Slurry & Pgm Plan」(毎月改版)を選択すると、
-'                          PP_Grid（生産計画バッチ数）を更新する。ファイルは単一シートで、
-'                          B列=中間体/完成品(Catalyst)/Solutionの名前、週初日ヘッダー行(C列
-'                          以降に日付が並ぶ行)を自動検出し、それ以降の行が名前+週次数量。
-'                          1バッチあたりの原単位(M_BOM)はこのファイルには含まれておらず、
-'                          RefreshBOM（Raw Material - Look Up）側の担当。
+'   RefreshWeeklyBatches : When you select "Powder & Slurry & Pgm Plan"
+'                          (revised monthly), updates PP_Grid (production
+'                          plan batch counts). The file is a single sheet;
+'                          column B = the intermediate/finished product
+'                          (Catalyst)/Solution name, and the week-start-date
+'                          header row (the row with dates lined up from
+'                          column C onward) is auto-detected, with every row
+'                          after that being name + weekly quantities.
+'                          The per-batch usage rate (M_BOM) is not in this
+'                          file - that's handled on the RefreshBOM (Raw
+'                          Material - Look Up) side.
 '
-'   【行の種類の自動判定について】中間体(Slurry/Powder)なのか完成品(Catalyst)なのか
-'   Solutionなのかは、名前の接頭辞と「Solution名リスト」(Control_PanelシートのT_SolutionNames
-'   テーブル)で機械的に判定する。TSP-/TPP-/TSZ-/TVS-/VSP-で始まれば中間体、T_SolutionNames
-'   に載っている名前(20P・SH等の略称)ならSolution(略称は自動的に正式名SOL-xxxへ変換)、
-'   どちらでもなければ完成品(Catalyst)として扱う(消去法)。行の追加・削除や新しいSolutionの
-'   追加があっても、この判定はどこにも行番号を持たないため、ファイル側の行が増減しても
-'   マクロ側のメンテナンスは一切不要（新しいSolutionだけはT_SolutionNamesに1行追加で対応）。
+'   [About automatic row-type detection] Whether a row is an intermediate
+'   (Slurry/Powder), a finished product (Catalyst), or a Solution is
+'   determined mechanically from the name's prefix and the "Solution Name
+'   List" (the T_SolutionNames table on the Control_Panel sheet). A name
+'   starting with TSP-/TPP-/TSZ-/TVS-/VSP- is an intermediate; a name listed
+'   in T_SolutionNames (aliases like 20P, SH, etc.) is a Solution (the alias
+'   is automatically converted to its canonical name SOL-xxx); anything
+'   matching neither is treated as a finished product (Catalyst), by
+'   elimination. Even as rows are added/removed in the source file or new
+'   Solutions are introduced, this determination never keys off a row
+'   number anywhere, so no maintenance is ever needed on the macro side as
+'   the file's row count changes (a new Solution only needs one row added
+'   to T_SolutionNames).
 '
-' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
-' モジュール冒頭のコメントを参照してください。
+' For the overall design rationale (performance, DataBodyRange,
+' DisplayAlerts, etc.), see the comment at the top of the
+' RefreshData_Utilities module.
 ' ============================================================================
 
 Sub RefreshWeeklyBatches()
     Dim srcPath As Variant
-    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
-        "Powder & Slurry & Pgm Plan（最新版）を選択してください")
+    srcPath = Application.GetOpenFilename("Excel Files (*.xlsx),*.xlsx", , _
+        "Please select the latest version of Powder & Slurry & Pgm Plan")
     If srcPath = False Then Exit Sub
 
     Dim srcWb As Workbook
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
-    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
-    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    ' For a file with "read-only recommended" set, leaving DisplayAlerts=True
+    ' causes a confirmation dialog to appear during Workbooks.Open, which
+    ' destabilizes processing while waiting for a response (this was the
+    ' cause of a bug where srcWb ultimately failed to be obtained correctly)
+    ' - so suppress it.
     Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
@@ -44,7 +58,7 @@ Sub RefreshWeeklyBatches()
     Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
     Dim calWeeks As ListObject: Set calWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks")
 
-    ' WeekStart(日付のシリアル値) -> PP_Grid内の列番号(データ範囲内, 1=Intermediate,2=Week1,...)
+    ' WeekStart (date serial value) -> column number within PP_Grid (within the data range, 1=Intermediate,2=Week1,...)
     Dim weekColByDate As Object: Set weekColByDate = CreateObject("Scripting.Dictionary")
     Dim calN As Long: calN = calWeeks.ListRows.Count
     If calN > 0 Then
@@ -58,8 +72,8 @@ Sub RefreshWeeklyBatches()
 
     Dim ppIdx As Object: Set ppIdx = BuildNameIndex(ppGrid, "Intermediate")
 
-    ' Solution名リスト(略称->正式名)を1回だけ読み込む。CompareMode=vbTextCompareで
-    ' 大文字小文字の違い(20p/20P等)を吸収する。
+    ' Load the Solution name list (alias -> canonical name) once.
+    ' CompareMode=vbTextCompare absorbs case differences (20p/20P etc.).
     Dim solutionAlias As Object: Set solutionAlias = CreateObject("Scripting.Dictionary")
     solutionAlias.CompareMode = vbTextCompare
     Dim solTbl As ListObject: Set solTbl = thisWb.Sheets("Control_Panel").ListObjects("T_SolutionNames")
@@ -73,8 +87,10 @@ Sub RefreshWeeklyBatches()
         Next si
     End If
 
-    ' 対象シートを探す(単一シート形式。念のため複数シートあっても構造(週初日の見出し行)が
-    ' 合うものを自動判定する。1つのファイルにつき対象は1シートのみ)。
+    ' Find the target sheet (a single-sheet format. As a precaution, even
+    ' if there are multiple sheets, auto-detect the one whose structure
+    ' (the week-start-date header row) matches. Only one sheet per file is
+    ' the target).
     Dim foundSheet As Worksheet
     Dim sh As Worksheet
     For Each sh In srcWb.Worksheets
@@ -84,7 +100,7 @@ Sub RefreshWeeklyBatches()
         End If
     Next sh
     If foundSheet Is Nothing Then
-        Err.Raise vbObjectError + 2, , "「Powder & Slurry & Pgm Plan」の週次データが見つかりませんでした。ファイル形式をご確認ください。"
+        Err.Raise vbObjectError + 2, , "Could not find weekly data for ""Powder & Slurry & Pgm Plan"". Please check the file format."
     End If
 
     Const MAX_SCAN_ROWS As Long = 500
@@ -95,14 +111,16 @@ Sub RefreshWeeklyBatches()
     If usedRows > MAX_SCAN_ROWS Then usedRows = MAX_SCAN_ROWS
     If usedCols > MAX_SCAN_COLS Then usedCols = MAX_SCAN_COLS
 
-    ' シート全体を1回だけ配列として読み込み、以降はメモリ上の配列(data)だけを参照する
-    ' （.Cells(r,c).Valueをループ内で毎回呼ぶとCOM通信が積み重なり非常に遅くなるため）
+    ' Read the whole sheet into an array just once, and from then on only
+    ' reference the in-memory array (data) (calling .Cells(r,c).Value on
+    ' every loop iteration piles up COM round-trips and becomes extremely
+    ' slow).
     Dim data As Variant
     data = foundSheet.Range(foundSheet.Cells(1, 1), foundSheet.Cells(usedRows, usedCols)).Value
 
     Dim hdrRow As Long: hdrRow = FindDateHeaderRow(data, usedRows, usedCols)
     If hdrRow = 0 Then
-        Err.Raise vbObjectError + 3, , "週初日の見出し行が見つかりませんでした。ファイル形式をご確認ください。"
+        Err.Raise vbObjectError + 3, , "Could not find the week-start-date header row. Please check the file format."
     End If
 
     Dim dateCols As Object: Set dateCols = CreateObject("Scripting.Dictionary")
@@ -115,19 +133,27 @@ Sub RefreshWeeklyBatches()
     updatedCells = 0
     newInterRows = 0
 
-    ' 【重要】PP_Gridの行には2種類ある。①このファイルに直接載っている中間体/完成品/Solution
-    ' (通常の行。週次バッチ数は値として書き込む)と、②M_BOM経由で他の中間体から算出する
-    ' 「パススルー中間体」(週次バッチ数はSUMPRODUCT数式。このファイルには行として登場しない)。
-    ' そのため、テーブル全体を配列で読み込んで書き戻す方式(以前試した版)は、パススルー
-    ' 中間体の行の数式まで「その時点の計算結果の値」で上書きしてしまい、数式を破壊する
-    ' 事故になる。書き込みは、このファイルに実際に登場した行だけに絞る必要がある。
+    ' [Important] PP_Grid rows come in two kinds: (1) intermediates/finished
+    ' products/Solutions that appear directly in this file (normal rows;
+    ' weekly batch counts are written as values), and (2) "pass-through
+    ' intermediates" that are derived from other intermediates via M_BOM
+    ' (weekly batch counts are a SUMPRODUCT formula; these never appear as
+    ' rows in this file). So an approach that reads the whole table into an
+    ' array and writes it back as a block (tried in an earlier version)
+    ' would overwrite the pass-through intermediates' formula cells with
+    ' "the calculated value at that moment," destroying the formulas - an
+    ' actual accident. Writes must be limited to only the rows that
+    ' actually appear in this file.
     '
-    ' また、新規中間体行の追加(ListRows.Add)を1件ずつループで呼ぶと、PP_Gridのように
-    ' 多数の数式から参照される重量級テーブルでは1件ごとに依存関係の再チェックが走り、
-    ' 新規行が多い場合(名称の突き合わせ漏れ等で本来一致するはずの行が軒並み「新規」と
-    ' 判定された場合を含む)にExcelが応答なしになる(以前のRefreshBOMのM_BOMと同じ不具合)。
-    ' そのため新規行はまず件数をすべて数えてから、テーブルを1回のResizeでまとめて拡張し、
-    ' 中間体名の列だけ1回の配列書き込みで埋める。
+    ' Also, calling ListRows.Add in a loop, one new intermediate row at a
+    ' time, triggers a dependency recheck on every single call for a
+    ' heavyweight table like PP_Grid that's referenced by a large number of
+    ' formulas, and when there are many new rows (including a case where a
+    ' name-matching gap causes rows that should have matched to all be
+    ' judged "new"), this makes Excel stop responding (the same bug as
+    ' RefreshBOM's M_BOM previously had). So new rows are first all counted,
+    ' then the table is expanded all at once with a single Resize, and only
+    ' the intermediate-name column is filled with a single array write.
     Dim canonNames As Object: Set canonNames = CreateObject("Scripting.Dictionary")
     Dim newNames As Object: Set newNames = CreateObject("Scripting.Dictionary")
     Dim r As Long
@@ -165,8 +191,10 @@ NextRowNames:
         ppGrid.ListColumns(1).DataBodyRange.Resize(newNames.Count, 1).Offset(oldRowCount, 0).Value = newNameArr
     End If
 
-    ' このファイルに登場した行だけを対象に、行ごと(セルごとではなく)にまとめて読み込み→
-    ' メモリ上で該当週だけ書き換え→行ごと書き戻す(パススルー中間体の行には一切触れない)。
+    ' Only for rows that actually appear in this file, read a whole row at
+    ' a time (not cell by cell) -> rewrite just the matching week(s) in
+    ' memory -> write the whole row back (pass-through intermediate rows
+    ' are never touched at all).
     Dim touchedRows As Object: Set touchedRows = CreateObject("Scripting.Dictionary")
     For r = hdrRow + 1 To usedRows
         If Not canonNames.Exists(r) Then GoTo NextRow
@@ -195,26 +223,29 @@ NextRow:
         ppGrid.ListRows(CLng(rowKey)).Range.Value = touchedRows(rowKey)
     Next rowKey
 
-    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
-    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
-    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    ' Guard the cleanup step itself against failing with "object variable
+    ' not set," even in the case where srcWb has already become Nothing
+    ' (some automated process on the source file's side can close the
+    ' workbook right after it's opened).
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
 
-    MsgBox "PP_Grid を更新しました。" & vbCrLf & _
-           "更新セル数: " & updatedCells & vbCrLf & _
-           "新規追加した中間体/完成品(Cat)/Solutionコード: " & newInterRows & vbCrLf & vbCrLf & _
-           "（参考）1バッチあたりの原単位(M_BOM)はこのマクロの対象外です。全く新しい" & vbCrLf & _
-           "組み合わせがある場合はRefreshBOMで追加してください。", _
+    MsgBox "PP_Grid has been updated." & vbCrLf & _
+           "Cells updated: " & updatedCells & vbCrLf & _
+           "New intermediate/finished product (Cat)/Solution codes added: " & newInterRows & vbCrLf & vbCrLf & _
+           "(Note) The per-batch usage rate (M_BOM) is not handled by this macro. If there is" & vbCrLf & _
+           "an entirely new combination, please add it via RefreshBOM.", _
            vbInformation
     Exit Sub
 
 ErrHandler:
-    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
-    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
-    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる。
+    ' [Important] On Error Resume Next automatically clears the Err object
+    ' (a VBA quirk), so the error number/description must be saved into
+    ' variables before any cleanup code runs. Skipping this means the
+    ' MsgBox below always shows "(blank)" and the real cause of the error
+    ' is never known.
     Dim errNum As Long: errNum = Err.Number
     Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
@@ -222,12 +253,13 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+    MsgBox "An error occurred during the refresh: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
-' シートの先頭付近(10行以内)に、C列以降に日付が5つ以上並ぶ行があるかどうかで
-' 「週次計画シート」らしいかを判定する(軽い範囲だけを見るので、40シート程度あっても
-' パフォーマンス上の問題にはならない)。
+' Judges whether a sheet looks like a "weekly plan sheet" by whether, near
+' the top of the sheet (within the first 10 rows), there is a row with 5 or
+' more dates lined up from column C onward (only a small range is scanned,
+' so this has no performance impact even with around 40 sheets).
 Private Function IsWeeklyPlanSheet(sh As Worksheet) As Boolean
     Dim r As Long, c As Long
     Dim maxC As Long: maxC = Application.WorksheetFunction.Min(20, sh.UsedRange.Columns.Count)
@@ -245,7 +277,8 @@ Private Function IsWeeklyPlanSheet(sh As Worksheet) As Boolean
     IsWeeklyPlanSheet = False
 End Function
 
-' 配列化済みのシートデータ(data)から、週初日ヘッダー行(C列以降に日付が5つ以上並ぶ行)を探す。
+' Finds the week-start-date header row (a row with 5 or more dates lined up
+' from column C onward) from the already-arrayed sheet data (data).
 Private Function FindDateHeaderRow(data As Variant, usedRows As Long, usedCols As Long) As Long
     Dim r As Long, c As Long
     Dim maxR As Long: maxR = Application.WorksheetFunction.Min(10, usedRows)
