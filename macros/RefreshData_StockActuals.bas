@@ -2,91 +2,126 @@ Attribute VB_Name = "RefreshData_StockActuals"
 Option Explicit
 
 ' ============================================================================
-' RefreshData_StockActuals モジュール
+' RefreshData_StockActuals module
 '
-'   RefreshSelfStock : 「Raw materials daily check」(自社倉庫の現物確認シート、ファイル名に
-'                      DD.MM.YYYY形式の日付を含む)を選択すると、T_SelfStockにその週の実績を
-'                      追加/更新する。「CHEMICAL SOH」シート(B列=CSA/コード、C列・D列=在庫
-'                      〈化学品セクションはC=WH・D=Floor、Substrate/Consumablesセクションは
-'                      C=Floor・D=WHと列の意味が入れ替わるが、在庫合計は単純にC+D)を読む。
-'                      毎週月曜の朝に確認する運用のため、ファイル名の日付は
-'                      「その週の月曜(祝日の場合は翌営業日)」だが、これは前週末時点の在庫を
-'                      表す。そのため7日引いてから対象週を判定する(RefreshTTAFStockと同じ考え方。
-'                      詳細は下のRefreshTTAFStockの説明を参照)。
-'   RefreshTTAFStock : 「CSA Report」を選択すると、その中の「Stock invoiced to CSA」シート
-'                      (A列=TTAF PART NUMBER、C列=Part No、D列=Description、F列=在庫数量。
-'                      ヘッダーは4行目、データは5行目から)からT_TTAFStockにその週の実績を
-'                      追加/更新する。手入力の生データを直接読むため、ピボット(旧「 COUNT
-'                      SHEET SOH」「PIVOT SOH TTAF」)の更新忘れに左右されない。対象週は
-'                      F4セルの日付で判定する(ファイル名には依存しない)。材料の照合は
-'                      TTAF_Codeを優先し、見つからなければPart No(M_RawMaterialsのPart Name
-'                      がそのまま入っていることが多く、Descriptionより確実。TTAF側データの
-'                      "0"(ゼロ)/"O"(オー)表記ゆれ〈例:CSA ReportのPart No列の"0JN"、
-'                      M_RawMaterials側は正式に"OJN"〉も読み替えて試す)で照合し、それでも
-'                      見つからない場合だけDescriptionの正規化テキストで照合する。
+'   RefreshSelfStock : When you select "Raw materials daily check" (the
+'                      sheet where our own warehouse's physical count is
+'                      recorded; the filename includes a date in
+'                      DD.MM.YYYY format), adds/updates that week's actuals
+'                      in T_SelfStock. Reads the "CHEMICAL SOH" sheet
+'                      (column B = CSA/code, columns C and D = stock -
+'                      in the Chemical section C=WH, D=Floor, but in the
+'                      Substrate/Consumables section the meaning of the
+'                      columns swaps to C=Floor, D=WH; either way the total
+'                      stock is simply C+D). Since the check is done every
+'                      Monday morning, the date in the filename is "that
+'                      week's Monday (or the next business day if it's a
+'                      holiday)," but this actually represents stock as of
+'                      the end of the previous week. So 7 days are
+'                      subtracted before determining the target week (the
+'                      same idea as RefreshTTAFStock - see the
+'                      RefreshTTAFStock explanation below for details).
+'   RefreshTTAFStock : When you select the "CSA Report", adds/updates that
+'                      week's actuals in T_TTAFStock from its "Stock
+'                      invoiced to CSA" sheet (column A = TTAF PART NUMBER,
+'                      column C = Part No, column D = Description, column
+'                      F = stock quantity; the header is row 4, data starts
+'                      at row 5). Since this reads the hand-entered raw
+'                      data directly, it is unaffected by anyone forgetting
+'                      to refresh a pivot table (the old " COUNT SHEET
+'                      SOH"/"PIVOT SOH TTAF"). The target week is
+'                      determined from the date in cell F4 (independent of
+'                      the filename). Materials are matched by TTAF_Code
+'                      first; if not found, by Part No (M_RawMaterials'
+'                      Part Name is often entered there as-is, more
+'                      reliable than Description - also tries reading the
+'                      TTAF-side "0" (zero)/"O" (letter O) spelling
+'                      variants, e.g. CSA Report's Part No column has
+'                      "0JN" while M_RawMaterials' official spelling is
+'                      "OJN"); only if still not found is Description's
+'                      normalized text matched.
 '
-' どちらも、既存の(原材料, 週)の組み合わせがあれば値を上書き、無ければ新しい行として追加する
-' (同じ週内に複数回取り込んでも1行にまとまる。取り込む順序は問わない)。
+' Both macros overwrite the value if the (raw material, week) combination
+' already exists, and add a new row if not (importing multiple times
+' within the same week still collapses into one row; import order doesn't
+' matter).
 '
-' 【T_SelfStock/T_TTAFStockの二層構造について】RefreshSelfStock/RefreshTTAFStockは、目に
-' 見えるT_SelfStock/T_TTAFStockシートには一切書き込みません。書き込み先は非表示の
-' T_SelfStock_Log/T_TTAFStock_Log（実施日ベースの生ログ）で、目に見える方のシートは
-' そこから毎回計算し直す数式(材料×週のグリッド)だけで組み立てられています。
-' _Logシート側のWeekIndex列はDate列から自動計算される数式列です（RefreshSelfStock/
-' RefreshTTAFStockはDateだけを書き込み、WeekIndexは書き込みません）。Cal_Weeks!B1
-' (AnchorYear)を進めても、記録済みの実績データが「別の週のデータ」として誤表示される
-' ことがないようにするためです。BuildStockRowIndex/UpsertStockRowIndexedの突合キーは、
-' (RM_Code, その週の月曜日=MondayOfWeekで実日付から計算)です。月曜日をキーにしている
-' のは、同じ週内に複数回取り込んでも1行に上書きされるようにするためです（以前はDateその
-' ものをキーにしていたため、日次で取り込むたびに行が積み上がる不具合がありました）。
+' [About the two-layer structure of T_SelfStock/T_TTAFStock]
+' RefreshSelfStock/RefreshTTAFStock never write to the visible
+' T_SelfStock/T_TTAFStock sheets at all. They write to the hidden
+' T_SelfStock_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
+' visible sheet is built entirely from formulas (a material x week grid)
+' that recompute from that log every time. The WeekIndex column on the
+' _Log sheet side is a formula column calculated automatically from the
+' Date column (RefreshSelfStock/RefreshTTAFStock only write Date, never
+' WeekIndex). This ensures that advancing Cal_Weeks!B1 (AnchorYear) never
+' causes already-recorded actuals to be misdisplayed as "another week's
+' data." BuildStockRowIndex/UpsertStockRowIndexed's matching key is
+' (RM_Code, that week's Monday = MondayOfWeek, calculated from the real
+' date). Keying on Monday ensures that multiple imports within the same
+' week overwrite a single row (previously Date itself was the key, which
+' caused rows to pile up on every daily import).
 '
-' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
-' モジュール冒頭のコメントを参照してください。
+' For the overall design rationale (performance, DataBodyRange,
+' DisplayAlerts, etc.), see the comment at the top of the
+' RefreshData_Utilities module.
 ' ============================================================================
 
 Sub RefreshSelfStock()
     Dim srcPath As Variant
-    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
-        "Raw materials daily check（自社在庫）ファイルを選択してください")
+    srcPath = Application.GetOpenFilename("Excel Files (*.xlsx),*.xlsx", , _
+        "Please select the Raw materials daily check (self stock) file")
     If srcPath = False Then Exit Sub
 
     Dim srcWb As Workbook
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
-    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
-    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    ' For a file with "read-only recommended" set, leaving DisplayAlerts=True
+    ' causes a confirmation dialog to appear during Workbooks.Open, which
+    ' destabilizes processing while waiting for a response (this was the
+    ' cause of a bug where srcWb ultimately failed to be obtained correctly)
+    ' - so suppress it.
     Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
-    ' ファイル名の日付は「確認した月曜日(祝日の場合は翌営業日)」だが、その数値は前週末
-    ' 時点の在庫を表す。そのため7日引いてから週Noを判定する(祝日で月曜以外の日になっていても、
-    ' ちょうど1週間前にずらすだけなので、前週の範囲内に正しく収まる。RefreshTTAFStockと同じ考え方)。
+    ' The date in the filename is "the Monday the count was done (or the
+    ' next business day if it's a holiday)," but that value represents
+    ' stock as of the end of the previous week. So 7 days are subtracted
+    ' before determining the week number (even if a holiday shifted it off
+    ' Monday, shifting back exactly one week still lands correctly within
+    ' the previous week's range - the same idea as RefreshTTAFStock).
     Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath)) - 7
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock_Log").ListObjects("T_SelfStock_Log")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim selfIdx As Object: Set selfIdx = BuildStockRowIndex(selfTbl)
-    ' C列(CSA code)がM_RawMaterialsに実在するPart Nameかどうかで対象行を判定する
-    ' (以前はLeft(code,4)="CHEM"で化学品のみに限定していたため、Substrate行
-    ' 〈OJN・7EP等の短いコード〉が一件も反映されない不具合があった)。
+    ' Determines target rows by whether column C (CSA code) is an actual
+    ' Part Name in M_RawMaterials (it used to be limited to chemicals only
+    ' via Left(code,4)="CHEM", which meant Substrate rows - short codes
+    ' like OJN, 7EP, etc. - were never reflected at all, a bug).
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
     Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
 
-    ' 「Stock」シートのJ列(Total)ではなく「CHEMICAL SOH」シートを直接使う。「Stock」側は
-    ' 化学品がK列+L列の数式、Substrateは別シートを参照するVLOOKUPと、材料の種類によって
-    ' 仕組みがバラバラな上に、どちらもWorkbooks.Open直後は再計算されず取込元ファイルの
-    ' 保存時点のキャッシュ値のまま(古いまま)読み込まれてしまう問題があった。「CHEMICAL SOH」
-    ' シートは化学品・Substrate・Ester Film/Original Towel/PP Film等の実測値が全て
-    ' B列(CSA/コード)・C列・D列という共通の生データとして入っている(化学品セクションは
-    ' C=WH,D=Floor、それ以降のセクションはC=Floor,D=WHと列の意味が入れ替わるが、どちらに
-    ' せよ在庫合計はC+D列の単純合計になるため、セクションを区別する必要はない)。
-    ' なお、MATコード(18456-xxxxx)はこのシートに載っておらず「Stock」シート側にしかない。
-    ' MATは自社在庫の管理対象外のため未対応のままにしている。
+    ' Uses the "CHEMICAL SOH" sheet directly rather than the "Stock" sheet's
+    ' column J (Total). The "Stock" sheet's mechanism differs by material
+    ' type - chemicals use a column K+L formula, Substrate uses a VLOOKUP
+    ' referencing a different sheet - and on top of that, both were found
+    ' to not recalculate right after Workbooks.Open, so they'd be read with
+    ' the source file's stale cached value as of when it was last saved.
+    ' The "CHEMICAL SOH" sheet has the measured values for chemicals,
+    ' Substrate, Ester Film/Original Towel/PP Film, etc. all as common raw
+    ' data in column B (CSA/code), column C, and column D (in the Chemical
+    ' section C=WH, D=Floor; in later sections the meaning swaps to
+    ' C=Floor, D=WH, but either way the total stock is simply the sum of
+    ' columns C+D, so there's no need to distinguish sections).
+    ' Note that MAT codes (18456-xxxxx) are not on this sheet, only on the
+    ' "Stock" sheet. MAT is outside the scope of self-stock management, so
+    ' it's left unhandled.
     Dim sh As Worksheet: Set sh = srcWb.Sheets("CHEMICAL SOH")
-    ' シートを1セルずつ読むと遅くなるため、対象範囲(5〜300行, A〜D列)を1回だけ配列で読み込む。
+    ' Reading the sheet cell by cell is slow, so read a generous range
+    ' (rows 5-300, columns A-D) as a single array read.
     Dim data As Variant
     data = sh.Range(sh.Cells(5, 1), sh.Cells(300, 4)).Value
     Dim r As Long, added As Long, updated As Long
@@ -106,23 +141,26 @@ Sub RefreshSelfStock()
         End If
     Next r
 
-    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
-    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
-    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    ' Guard the cleanup step itself against failing with "object variable
+    ' not set," even in the case where srcWb has already become Nothing
+    ' (some automated process on the source file's side can close the
+    ' workbook right after it's opened).
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "T_SelfStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
-           "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
-           "（同じ週内の実績は1件にまとめられます。グリッド表示のT_SelfStockシートは自動で反映されます）", vbInformation
+    MsgBox "T_SelfStock has been updated." & vbCrLf & "Target week: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
+           "Added: " & added & ", updated: " & updated & vbCrLf & _
+           "(Multiple actuals within the same week are collapsed into one row. The grid-view T_SelfStock sheet updates automatically.)", vbInformation
     Exit Sub
 
 ErrHandler:
-    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
-    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
-    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
-    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    ' [Important] On Error Resume Next automatically clears the Err object
+    ' (a VBA quirk), so the error number/description must be saved into
+    ' variables before any cleanup code runs. Skipping this means the
+    ' MsgBox below always shows "(blank)" and the real cause of the error
+    ' is never known (this actually happened and made troubleshooting
+    ' impossible, hence the fix).
     Dim errNum As Long: errNum = Err.Number
     Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
@@ -130,22 +168,24 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+    MsgBox "An error occurred during the refresh: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
 Sub RefreshTTAFStock()
     Dim srcPath As Variant
-    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
-        "CSA Report（TTAF在庫）ファイルを選択してください")
+    srcPath = Application.GetOpenFilename("Excel Files (*.xlsx),*.xlsx", , _
+        "Please select the CSA Report (TTAF stock) file")
     If srcPath = False Then Exit Sub
 
     Dim srcWb As Workbook
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
-    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
-    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    ' For a file with "read-only recommended" set, leaving DisplayAlerts=True
+    ' causes a confirmation dialog to appear during Workbooks.Open, which
+    ' destabilizes processing while waiting for a response (this was the
+    ' cause of a bug where srcWb ultimately failed to be obtained correctly)
+    ' - so suppress it.
     Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
@@ -154,18 +194,24 @@ Sub RefreshTTAFStock()
     Dim ttafTbl As ListObject: Set ttafTbl = thisWb.Sheets("T_TTAFStock_Log").ListObjects("T_TTAFStock_Log")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
-    ' 「Stock invoiced to CSA」シートを使う。A列=TTAF PART NUMBER、C列=Part No、
-    ' D列=Description、F列=在庫数量。ヘッダーは4行目、データは5行目から。手入力の
-    ' 生データなので、「 COUNT SHEET SOH」/「PIVOT SOH TTAF」のようなピボット更新忘れの
-    ' 心配が無い。
+    ' Uses the "Stock invoiced to CSA" sheet. Column A = TTAF PART NUMBER,
+    ' column C = Part No, column D = Description, column F = stock
+    ' quantity. The header is row 4, data starts at row 5. Since this is
+    ' hand-entered raw data, there's no risk of someone forgetting to
+    ' refresh a pivot table like " COUNT SHEET SOH"/"PIVOT SOH TTAF".
     Dim sh As Worksheet: Set sh = srcWb.Sheets("Stock invoiced to CSA")
-    ' F4の日付は「レポートが届いた月曜日(祝日の場合は翌営業日)」だが、その数値は前週金曜
-    ' 営業終了後の在庫を表す。そのため7日引いてから週Noを判定する(月曜も金曜もExcel上は
-    ' 同じ月〜日の週に属するため、-7でも-3でも週Noの判定結果は変わらない。日付自体は
-    ' 週の起点であるMondayに揃えておいた方が他の実績(T_SelfStock等)と一貫するため-7を使う)。
-    ' 「TTAF count(dd.mm.yyyy)」の見出しはF3:F4等で結合されていることがあり、結合セルは
-    ' 左上(アンカー)のセルにしか値を持たない。.Cells(4,6)がアンカーでない場合に空を
-    ' 読んでしまわないよう、.MergeArea.Cells(1,1)で必ずアンカー側の値を取得する。
+    ' The date in F4 is "the Monday the report arrived (or the next
+    ' business day if it's a holiday)," but that value represents stock as
+    ' of the close of business the previous Friday. So 7 days are
+    ' subtracted before determining the week number (Monday and Friday both
+    ' fall within the same Excel Mon-Sun week, so -7 or -3 would give the
+    ' same week-number result either way; -7 is used so the date itself
+    ' lines up with Monday, the start of the week, for consistency with
+    ' other actuals like T_SelfStock). The "TTAF count(dd.mm.yyyy)" header
+    ' is sometimes merged across F3:F4 etc., and a merged cell only carries
+    ' a value on its top-left (anchor) cell. To avoid reading a blank when
+    ' .Cells(4,6) isn't the anchor, .MergeArea.Cells(1,1) is used to always
+    ' fetch the anchor cell's value.
     Dim reportDate As Date: reportDate = ExtractDDMMYYYYFromText(sh.Cells(4, 6).MergeArea.Cells(1, 1).Value) - 7
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim ttafIdx As Object: Set ttafIdx = BuildStockRowIndex(ttafTbl)
@@ -175,8 +221,10 @@ Sub RefreshTTAFStock()
     Dim rmNameIdx As Object: Set rmNameIdx = CreateObject("Scripting.Dictionary")
     Call BuildTTAFCodeAndDescIndex(rmTbl, ttafCodeIdx, descIdx, rmNameIdx)
 
-    ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する
-    ' (A列=TTAF PART NUMBER, C列=Part No, D列=Description, F列=在庫数量)。
+    ' Reading the sheet cell by cell is slow, so read a generously sized
+    ' range as a single array read, then scan it (column A = TTAF PART
+    ' NUMBER, column C = Part No, column D = Description, column F = stock
+    ' quantity).
     Const MAX_ROWS As Long = 2000
     Dim data As Variant
     data = sh.Range(sh.Cells(5, 1), sh.Cells(MAX_ROWS, 6)).Value
@@ -205,29 +253,32 @@ Sub RefreshTTAFStock()
 NextRow:
     Next r
 
-    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
-    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
-    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    ' Guard the cleanup step itself against failing with "object variable
+    ' not set," even in the case where srcWb has already become Nothing
+    ' (some automated process on the source file's side can close the
+    ' workbook right after it's opened).
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
 
     Dim msg As String
-    msg = "T_TTAFStock を更新しました。" & vbCrLf & "対象週: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
-          "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
-          "（同じ週内の実績は1件にまとめられます。グリッド表示のT_TTAFStockシートは自動で反映されます）"
+    msg = "T_TTAFStock has been updated." & vbCrLf & "Target week: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
+          "Added: " & added & ", updated: " & updated & vbCrLf & _
+          "(Multiple actuals within the same week are collapsed into one row. The grid-view T_TTAFStock sheet updates automatically.)"
     If Len(unresolved) > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "TTAF_Code・材料名のどちらでも照合できず未反映の行:" & vbCrLf & unresolved
+        msg = msg & vbCrLf & vbCrLf & "Rows that could not be matched by either TTAF_Code or material name and were not applied:" & vbCrLf & unresolved
     End If
     MsgBox msg, vbInformation
     Exit Sub
 
 ErrHandler:
-    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
-    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
-    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
-    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    ' [Important] On Error Resume Next automatically clears the Err object
+    ' (a VBA quirk), so the error number/description must be saved into
+    ' variables before any cleanup code runs. Skipping this means the
+    ' MsgBox below always shows "(blank)" and the real cause of the error
+    ' is never known (this actually happened and made troubleshooting
+    ' impossible, hence the fix).
     Dim errNum As Long: errNum = Err.Number
     Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
@@ -235,13 +286,15 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+    MsgBox "An error occurred during the refresh: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
-' M_RawMaterialsから、TTAF_Code(正規化済み)->Part Name、Description(正規化済み)->Part Name、
-' Part Name(大文字小文字・前後空白を無視)->Part Nameのインデックスを1回だけ作る。
-' RefreshTTAFStockが使う共通処理。Dictionaryはオブジェクト(参照渡し)なので、ByRefを
-' 明示しなくても呼び出し元のttafCodeIdx/descIdx/rmNameIdxにそのまま反映される。
+' Builds, once, indexes from M_RawMaterials: TTAF_Code (normalized) ->
+' Part Name, Description (normalized) -> Part Name, and Part Name
+' (case/leading-trailing-space insensitive) -> Part Name. A shared routine
+' used by RefreshTTAFStock. Since a Dictionary is an object (passed by
+' reference), the caller's ttafCodeIdx/descIdx/rmNameIdx are updated
+' directly without needing an explicit ByRef.
 Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object, descIdx As Object, rmNameIdx As Object)
     rmNameIdx.CompareMode = vbTextCompare
     Dim rmN As Long: rmN = rmTbl.ListRows.Count
@@ -261,23 +314,30 @@ Private Sub BuildTTAFCodeAndDescIndex(rmTbl As ListObject, ttafCodeIdx As Object
         Next i
     End If
 
-    ' 既知の表記ゆれの手動エイリアス(RefreshData_ShipmentsのBuildKnownAliasIndexと同じ考え方)。
-    ' 「Stock invoiced to CSA」シートのTTAF PART NUMBER列(A列)は、ND TAC(CHEM-1280)だけ
-    ' 他の材料と違い数値のTTAF_Code(83988002202、CSA ReportのShipping Scheduleと一致)ではなく
-    ' 文字列"NDTAC"になっている(TTAF側の入力ゆれ)。現状はDescription("ND TAC")側の一致で
-    ' 拾えているため実害は出ていないが、将来Description表記が変わった場合に備え、
-    ' TTAF_Code側でも直接一致するようにしておく。
+    ' Manual alias for a known spelling variant (the same idea as
+    ' RefreshData_Shipments' BuildKnownAliasIndex). In the "Stock invoiced
+    ' to CSA" sheet's TTAF PART NUMBER column (column A), ND TAC
+    ' (CHEM-1280) alone uses the string "NDTAC" instead of a numeric
+    ' TTAF_Code like every other material (83988002202, matching the CSA
+    ' Report's Shipping Schedule) - an input inconsistency on the TTAF
+    ' side. Currently this causes no real harm because it's still caught
+    ' by the Description ("ND TAC") match, but this alias is added so it
+    ' also matches directly via TTAF_Code, in case the Description
+    ' spelling changes in the future.
     Dim aliasKey As String: aliasKey = NormalizeText("NDTAC")
     If Not ttafCodeIdx.Exists(aliasKey) Then ttafCodeIdx(aliasKey) = "CHEM-1280"
 End Sub
 
-' RefreshSelfStockが使う。「CHEMICAL SOH」シートのB列(CSA/コード)がM_RawMaterialsの
-' Part Nameと完全一致すればそのまま返す。見つからなければ"0"(ゼロ)/"O"(オー)の表記ゆれ
-' 〈例:"0JN" vs "OJN"。daily check・CSA Report等TTAF側の複数ファイルで繰り返し見つかって
-' いる〉を両方向で読み替えて試す。見つかった場合はM_RawMaterials側の正式な表記(Part Name)
-' を返す(取込元ファイルの表記ゆれのまま書き込むと、既存のT_SelfStock_Log行や他シートの
-' 正式表記と食い違い、グリッド表示側で該当材料として認識されなくなるため)。
-' どれでも見つからなければ空文字を返す。
+' Used by RefreshSelfStock. If the "CHEMICAL SOH" sheet's column B
+' (CSA/code) exactly matches an M_RawMaterials Part Name, returns it as-is.
+' If not found, tries both directions of the "0" (zero)/"O" (letter O)
+' spelling variant (e.g. "0JN" vs "OJN" - repeatedly found across several
+' TTAF-side files such as daily check and CSA Report). If a match is
+' found, returns M_RawMaterials' official spelling (Part Name) (writing
+' the source file's raw spelling as-is would disagree with the official
+' spelling used in existing T_SelfStock_Log rows and other sheets, and the
+' grid view would fail to recognize it as that material).
+' Returns an empty string if nothing matches at all.
 Private Function ResolveSelfStockCode(rmTbl As ListObject, rmCodeSet As Object, codeRaw As String) As String
     If rmCodeSet.Exists(codeRaw) Then
         ResolveSelfStockCode = Trim(CStr(rmTbl.ListRows(rmCodeSet(codeRaw)).Range.Cells(1, 1).Value))
@@ -296,9 +356,11 @@ Private Function ResolveSelfStockCode(rmTbl As ListObject, rmCodeSet As Object, 
     ResolveSelfStockCode = ""
 End Function
 
-' TTAF_Codeでの照合を優先し、見つからなければPart No(C列。M_RawMaterialsのPart Nameが
-' そのまま入っていることが多く、Descriptionより確実)で照合し、それでも見つからない場合だけ
-' Description(材料名)の正規化テキストで照合する。どれでも見つからなければ空文字を返す。
+' Matches by TTAF_Code first; if not found, matches by Part No (column C -
+' M_RawMaterials' Part Name is often entered there as-is, more reliable
+' than Description); only if still not found does it match by
+' Description's (material name's) normalized text. Returns an empty string
+' if nothing matches at all.
 Private Function ResolveTTAFPart(ttafCodeIdx As Object, rmNameIdx As Object, descIdx As Object, _
         ttafCodeRaw As String, partNoRaw As String, descRaw As String) As String
     Dim tKey As String: tKey = NormalizeText(ttafCodeRaw)
@@ -310,9 +372,10 @@ Private Function ResolveTTAFPart(ttafCodeIdx As Object, rmNameIdx As Object, des
         ResolveTTAFPart = rmNameIdx(partNoRaw)
         Exit Function
     End If
-    ' TTAF側の元データで"0"(ゼロ)と"O"(アルファベットのオー)の表記ゆれが度々見つかっている
-    ' (例: CSA ReportのPart No列で"0JN"、M_RawMaterials側は正式に"OJN")。完全一致で
-    ' 見つからない場合、どちらの表記に読み替えても一致するか試す。
+    ' The "0" (zero)/"O" (letter O) spelling variant is repeatedly found in
+    ' the TTAF-side source data (e.g. CSA Report's Part No column has
+    ' "0JN" while M_RawMaterials' official spelling is "OJN"). If an exact
+    ' match isn't found, try reading it as either spelling.
     If Len(partNoRaw) > 0 Then
         Dim zeroToO As String: zeroToO = Replace(partNoRaw, "0", "O")
         If zeroToO <> partNoRaw And rmNameIdx.Exists(zeroToO) Then
@@ -333,13 +396,16 @@ Private Function ResolveTTAFPart(ttafCodeIdx As Object, rmNameIdx As Object, des
     ResolveTTAFPart = ""
 End Function
 
-' F4セルは「TTAF count(dd.mm.yyyy)」という見出し文字列だが、これがセルの表示形式
-' (カスタム書式)による見た目だけの場合、実際の.Valueは本物の日付シリアル値になっている
-' ことがある。その場合CStr()で文字列化すると地域設定依存の別形式(例: 6/29/2026)に
-' なってしまい、DD.MM.YYYYの正規表現に一致しない。そのため、まずIsDate()で本物の日付値
-' かどうかを確認し、日付値ならそのまま使う(文字列化を経由しない)。
-' 文字列として読む場合も、全角数字(２９.０６.２０２６)で入力されているケースに備えて
-' StrConv(..., vbNarrow)で半角に正規化してからマッチさせる。
+' Cell F4 shows the header text "TTAF count(dd.mm.yyyy)", but if this is
+' purely a display effect of the cell's format (a custom number format),
+' the actual .Value can be a real date serial number. In that case,
+' stringifying it with CStr() would produce a different, locale-dependent
+' form (e.g. 6/29/2026) that wouldn't match the DD.MM.YYYY regex. So this
+' first checks with IsDate() whether it's a real date value, and if so
+' uses it directly (without going through a string). When it does need to
+' read it as a string, it's first normalized to half-width digits with
+' StrConv(..., vbNarrow), in case it was entered in full-width digits
+' (e.g. 29.06.2026 in full-width characters), before matching.
 Private Function ExtractDDMMYYYYFromText(cellValue As Variant) As Date
     If IsDate(cellValue) Then
         ExtractDDMMYYYYFromText = CDate(cellValue)
@@ -352,7 +418,7 @@ Private Function ExtractDDMMYYYYFromText(cellValue As Variant) As Date
     Dim m As Object
     Set m = re.Execute(text)
     If m.Count = 0 Then
-        Err.Raise vbObjectError + 1, , "TTAF countの日付(DD.MM.YYYY)を読み取れませんでした: " & CStr(cellValue)
+        Err.Raise vbObjectError + 1, , "Could not read the TTAF count date (DD.MM.YYYY): " & CStr(cellValue)
     End If
     ExtractDDMMYYYYFromText = DateSerial(CInt(m(0).SubMatches(2)), CInt(m(0).SubMatches(1)), CInt(m(0).SubMatches(0)))
 End Function
@@ -364,33 +430,39 @@ Private Function ExtractDateFromName(path As String) As Date
     Dim m As Object
     Set m = re.Execute(path)
     If m.Count = 0 Then
-        Err.Raise vbObjectError + 1, , "ファイル名から日付(DD.MM.YYYY)を読み取れませんでした。"
+        Err.Raise vbObjectError + 1, , "Could not read a date (DD.MM.YYYY) from the filename."
     End If
     ExtractDateFromName = DateSerial(CInt(m(0).SubMatches(2)), CInt(m(0).SubMatches(1)), CInt(m(0).SubMatches(0)))
 End Function
 
-' 日付から「その週の月曜日」を実際の暦計算で求める(Cal_Weeks!B1のAnchorYearには一切
-' 依存しない、純粋な日付演算)。T_SelfStock_Log/T_TTAFStock_Logの突合キーに使うことで、
-' 同じ週内に何度取り込んでも1行に上書きされるようにする(以前はDateそのものをキーに
-' していたため、日次で取り込むたびに行が積み上がっていた)。
+' Computes "that week's Monday" from a date using real calendar arithmetic
+' (a pure date calculation with no dependency at all on Cal_Weeks!B1's
+' AnchorYear). Used as the matching key for T_SelfStock_Log/T_TTAFStock_Log
+' so that importing multiple times within the same week overwrites a
+' single row (previously Date itself was the key, which caused rows to
+' pile up on every daily import).
 Private Function MondayOfWeek(d As Date) As Date
     MondayOfWeek = d - Weekday(d, vbMonday) + 1
 End Function
 
-' tbl(T_SelfStock_Log/T_TTAFStock_Log)の(RM_Code, その週の月曜日)->行番号のインデックスを
-' 1回だけ作る。列は RM_Code(1), Date(2), WeekIndex(3, Dateから自動計算される数式), Qty(4)。
-' キーを「その週の月曜日」(実際の暦日から計算。AnchorYearには依存しない)にしているのは、
-' ①同じ週内の複数回の取り込みを1行にまとめるため、②AnchorYearを変更しても記録済みの
-' 実績データが「別の週のデータ」として誤表示されないようにするため、の両方を同時に満たす。
-' UpsertStockRowが呼ばれるたびに全行をセル単位でスキャンしていたのを避けるため、
-' 事前に1回のRange読み込みでDictionaryを構築しておく（テーブルが月々増えるほど効果が大きい）。
-' 日付を文字列化する際はCLng(シリアル値)を経由し、地域の日付表示形式に左右されないようにする。
+' Builds, once, an index of tbl's (T_SelfStock_Log/T_TTAFStock_Log)
+' (RM_Code, that week's Monday) -> row number. Columns are RM_Code(1),
+' Date(2), WeekIndex(3, a formula auto-calculated from Date), Qty(4).
+' Keying on "that week's Monday" (calculated from the real calendar date,
+' independent of AnchorYear) satisfies two goals at once: (1) collapsing
+' multiple imports within the same week into one row, and (2) ensuring
+' that changing AnchorYear never misdisplays already-recorded actuals as
+' "another week's data." To avoid scanning every row cell-by-cell every
+' time UpsertStockRow is called, the Dictionary is built once up front
+' from a single Range read (the benefit grows as the table grows month
+' over month). Dates are stringified via CLng(the serial value) so the
+' result is independent of the regional date display format.
 Private Function BuildStockRowIndex(tbl As ListObject) As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     Dim n As Long: n = tbl.ListRows.Count
     If n > 0 Then
         Dim data As Variant
-        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' 1,2列目(RM_Code,Date)をまとめて読む
+        data = tbl.ListColumns(1).DataBodyRange.Resize(n, 2).Value  ' read columns 1,2 (RM_Code,Date) together
         Dim i As Long
         For i = 1 To n
             idx(CStr(data(i, 1)) & "|" & CStr(CLng(MondayOfWeek(CDate(data(i, 2)))))) = i
@@ -399,17 +471,22 @@ Private Function BuildStockRowIndex(tbl As ListObject) As Object
     Set BuildStockRowIndex = idx
 End Function
 
-' WeekIndex(3列目)は数式列のためここでは値を書き込まない(Dateが変われば自動的に再計算される)。
-' 【重要】以前は「新規行を追加すればExcelのテーブル機能が既存行と同じ数式を自動的に複製する」
-' という前提だったが、これはUI上でテーブルの下に手で行を追加した場合の挙動であり、
-' VBAのListRows.Addで追加した行には自動複製されないことがある(実際に報告された不具合:
-' T_SelfStock_Log/T_TTAFStock_LogにVBAで追加した行のWeekIndex列が数式ごと空欄のままになり、
-' グリッド側のSUMIFS/COUNTIFSが該当行を見つけられず、T_SelfStock/T_TTAFStockに何も
-' 表示されなくなっていた)。そのため、新規行では直前行のWeekIndexの数式を明示的にコピーする
-' (FormulaR1C1でコピーすることで、相対参照(自分自身のDateセルを指す部分)はコピー先の行に
-' 合わせて自動調整される)。
-' 同じ週内で2回目以降の取り込みがあった場合は、Date・Qtyの両方を最新の値で上書きする
-' (その週内で一番新しい実施日の記録が残るようにするため)。
+' WeekIndex (column 3) is a formula column, so no value is written here
+' (it recalculates automatically whenever Date changes).
+' [Important] This used to assume that "adding a new row makes Excel's
+' Table feature automatically duplicate the same formula as the existing
+' rows," but that behavior only applies when a row is added by hand below
+' the table in the UI - a row added via VBA's ListRows.Add is not always
+' auto-duplicated (an actual reported bug: a row added via VBA to
+' T_SelfStock_Log/T_TTAFStock_Log had its WeekIndex column left entirely
+' blank, formula and all, so the grid side's SUMIFS/COUNTIFS couldn't find
+' that row and T_SelfStock/T_TTAFStock showed nothing). So for a new row,
+' the previous row's WeekIndex formula is explicitly copied (copying via
+' FormulaR1C1 means the relative reference - the part pointing at its own
+' Date cell - automatically adjusts to match the destination row).
+' If there's a second (or later) import within the same week, both Date
+' and Qty are overwritten with the latest values (so the record left
+' behind is always for the most recent count date within that week).
 Private Sub UpsertStockRowIndexed(tbl As ListObject, idx As Object, code As String, d As Date, v As Double, ByRef added As Long, ByRef updated As Long)
     Dim key As String: key = code & "|" & CStr(CLng(MondayOfWeek(d)))
     If idx.Exists(key) Then
