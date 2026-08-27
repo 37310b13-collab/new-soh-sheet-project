@@ -442,7 +442,7 @@ ws.append(["Part Name", "PO_No", "Order_Date", "Confirmed_Qty", "Latest_ETA", "R
 if not ship_rows:
     # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないため、
     # 該当する発注が無い場合はダミー行を1行入れておく（要削除・上書き可）。
-    ship_rows = [["(例) CHEM-1010", "", None, 0, START_MONDAY, None, ""]]
+    ship_rows = [["(e.g.) CHEM-1010", "", None, 0, START_MONDAY, None, ""]]
 start_row = 2
 for i, r in enumerate(ship_rows):
     row_num = start_row + i
@@ -1414,70 +1414,70 @@ build_po_draft("PO_Draft_Substrate_Poland", "Substrate", "Substrates (Poland)", 
 # ============================================================ README
 ws = wb.create_sheet("README", 0)
 readme_lines = [
-    "SOH（在庫管理）シート 使い方",
+    "SOH (Inventory Management) Sheet - How to Use",
     "",
-    "このブックはPower BI等に読み込ませる中間テーブルではなく、これ自体が完成品です。",
-    "Dashboard と PO_Draft_* が最終的な閲覧・発注画面、それ以外は計算の土台です。",
+    "This workbook is not an intermediate table meant to be loaded into Power BI or similar - it is the finished product itself.",
+    "Dashboard and PO_Draft_* are the final viewing/ordering screens; the other sheets are the calculation foundation.",
     "",
-    "【週番号のルール】すべてExcelの数式で計算（Cal_WeeksのB1=AnchorYearを変えると全体が再計算）",
-    "  Week1=1月1日を含む月〜日の週。年が変わると再び1にリセットされます（2026-W52の次は2027-W01）。",
-    "  各シートの週見出しは3段: 1段目=月-年(Aug-26等) / 2段目=その週月曜の日付 / 3段目=週No。",
+    "[Week numbering rule] Everything is calculated with Excel formulas (change Cal_Weeks' B1=AnchorYear to recalculate the whole workbook)",
+    "  Week1 = the Mon-Sun week containing January 1st. It resets back to 1 when the year changes (2026-W52 is followed by 2027-W01).",
+    "  Each sheet's week header has 3 rows: row1=Month-Year (e.g. Aug-26) / row2=that week's Monday date / row3=week number.",
     "",
-    "【普段見るシート】",
-    "  Dashboard           : 原材料×週の在庫を2年分、横軸で見渡せるメイン画面（まずここ）。",
-    "                        自社在庫(実績)・TTAF在庫(実績)・実績週の列で内訳も確認できます。",
-    "                        基準在庫(下限/上限)を入力すると、各週のセルが赤(下限未満)/",
-    "                        緑(範囲内)/青(上限超)に自動で色分けされます。",
-    "                        C1に'W23'のように入力すると（現在年の週Noとして検索）、",
-    "                        該当する週の列が太枠でハイライトされます。VBA(JumpToSelectedWeek、",
-    "                        要ボタン設定・詳細はdocs/SOH_System_Guide.md)を導入していれば、",
-    "                        実績週のすぐ右にその週の列が来るよう自動でスクロールもされます。",
-    "  Material_Detail     : 材料ごとに「どの中間体が・何バッチ・いくら使うか」をブロック表示（トレーサビリティ）。",
-    "                        Dashboardと同様にC1に'W23'のように入力すると該当週が求まり、",
-    "                        VBA導入時はその週列のすぐ右に自動でスクロールします。",
-    "                        材料名の右のC列にMOQ(最小発注量)を手入力できます。",
-    "                        合計使用量の下にTTAF在庫実績・自社在庫実績・Order(発注予定)・",
-    "                        合計在庫(週末時点)の週次推移も表示されます。",
-    "                        HideInactiveIntermediatesマクロ(要ボタン設定)で、指定期間ずっと生産予定の無い",
-    "                        中間体の行を折りたためます（在庫関連の行は常に表示されたままです）。",
-    "  PO_Draft_*          : Material_Detailの「Order」行に手入力した発注数量を注文書ひな形に転記",
-    "                        （自動計算はしません。発注数量はMaterial_Detail側で入力してください）。",
-    "  T_Shipments         : 発注・着荷の入力。TTAF供給材料については「TTAF倉庫への到着実績」を",
-    "                        表します(TTAFは仕入先であり倉庫でもあるため)。TTAF以外の材料は",
-    "                        従来通り弊社への入庫実績です。RefreshShipmentsでCSA Reportの",
-    "                        Shipping Scheduleから一括更新できます（手入力も可）。",
-    "  T_OpeningStock/T_StockCount : 入力用",
-    "  T_SelfStock/T_TTAFStock : 材料×週のグリッドで自社/TTAF在庫実績を表示（出力・閲覧用）。",
-    "                        RefreshSelfStock/RefreshTTAFStockで更新されます。手入力はしないでください",
-    "                        （生データは非表示のT_SelfStock_Log/T_TTAFStock_Logに安全に保存されています）。",
+    "[Sheets you'll use day to day]",
+    "  Dashboard           : Main screen showing raw material x week stock across 2 years, laid out horizontally (start here).",
+    "                        The Self Stock (Actual), TTAF Stock (Actual), and Actual Week columns let you check the breakdown too.",
+    "                        Once SafetyStock (Min/Max) is entered, each week's cell is automatically color-coded red (below min)/",
+    "                        green (within range)/blue (above max).",
+    "                        Typing something like 'W23' into C1 (searched as a week number for the current year)",
+    "                        highlights the matching week's column with a bold border. If VBA (JumpToSelectedWeek,",
+    "                        requires button setup - see docs/SOH_System_Guide.md) is installed,",
+    "                        it also auto-scrolls so that week's column sits right next to the Actual Week column.",
+    "  Material_Detail     : Shows, per material, which intermediate uses how many batches and how much, as a block layout (traceability).",
+    "                        As with Dashboard, typing something like 'W23' into C1 finds the matching week,",
+    "                        and auto-scrolls to just right of that week's column if VBA is installed.",
+    "                        You can manually enter MOQ (Minimum Order Quantity) in column C, right of the material name.",
+    "                        Below the total usage, the weekly trend for TTAF Stock (Actual), Self Stock (Actual), Order (Planned),",
+    "                        and Total Stock (End of Week) is also shown.",
+    "                        The HideInactiveIntermediates macro (requires button setup) lets you collapse rows for intermediates",
+    "                        with no production planned for a given period (stock-related rows always stay visible).",
+    "  PO_Draft_*          : Copies the order quantities you manually enter in Material_Detail's \"Order\" row into a purchase order template",
+    "                        (no auto-calculation - please enter order quantities on the Material_Detail side).",
+    "  T_Shipments         : Entry of orders/arrivals. For TTAF-supplied materials, this represents \"arrival record at the TTAF warehouse\"",
+    "                        (since TTAF is both the supplier and a warehouse). For non-TTAF materials it is,",
+    "                        as before, the arrival record at our own company. Can be bulk-updated from the CSA Report's",
+    "                        Shipping Schedule via RefreshShipments (manual entry also works).",
+    "  T_OpeningStock/T_StockCount : for data entry",
+    "  T_SelfStock/T_TTAFStock : Shows self/TTAF actual stock as a material x week grid (output/viewing only).",
+    "                        Updated by RefreshSelfStock/RefreshTTAFStock. Please do not enter data manually",
+    "                        (the raw data is safely stored in the hidden T_SelfStock_Log/T_TTAFStock_Log).",
     "",
-    "  M_RawMaterials・M_BOM・PP_Grid・Grid_Stock・その他非表示シートは内部計算用です。通常は開く必要はありません。",
+    "  M_RawMaterials, M_BOM, PP_Grid, Grid_Stock, and other hidden sheets are for internal calculations. You normally don't need to open them.",
     "",
-    "【重要】原単位・バッチ数・自社/TTAF在庫・発注実績はPythonを使わず、Excel(VBA)マクロだけで更新できます。",
-    "  macros/フォルダのRefreshData_*.bas(7ファイル)を導入し、RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
-    "  RefreshTTAFStock / RefreshShipments を実行してください（対象ファイルを選ぶだけです。",
-    "  詳細はdocs/SOH_System_Guide.md、未検証のため要動作確認）。",
-    "  T_Shipments・T_OpeningStock・T_StockCount等の入力内容は上書きされません",
-    "  （T_ShipmentsはRefreshShipmentsを実行した場合のみ更新されます）。",
-    "  Material_Detailの中間体の行を隠す/戻すHideInactiveIntermediates / ShowAllIntermediatesは、",
-    "  ボタンへの割り当てが必要な一度だけの手動設定です（詳細はdocs/SOH_System_Guide.md）。",
+    "[Important] Usage rates, batch counts, self/TTAF stock, and order records can all be updated using only Excel (VBA) macros, without Python.",
+    "  Import the RefreshData_*.bas files (8 files) from the macros/ folder, then run RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
+    "  RefreshTTAFStock / RefreshShipments (just choose the source file when prompted.",
+    "  See docs/SOH_System_Guide.md for details; not fully verified, so please confirm it works as expected).",
+    "  Entries in T_Shipments, T_OpeningStock, T_StockCount, etc. are not overwritten",
+    "  (T_Shipments is only updated when you run RefreshShipments).",
+    "  HideInactiveIntermediates / ShowAllIntermediates, which hide/restore intermediate rows in Material_Detail,",
+    "  require a one-time manual button assignment (see docs/SOH_System_Guide.md for details).",
     "",
-    "【毎月の運用】",
-    "  1. 「Powder & Slurry & Pgm Plan」の新しい月版でRefreshWeeklyBatchesを実行",
-    "  2. 「Raw Material - Look Up」が更新されていればRefreshBOMを実行",
-    "  3. 自社倉庫の現物確認を毎週月曜の朝に実施したらRefreshSelfStockを実行",
-    "  4. CSA Reportが毎週月曜に届いたらRefreshTTAFStockとRefreshShipmentsを実行",
-    "  5. 発注する数量はMaterial_Detailの「Order(発注予定,kg)」行に直接入力",
-    "  6. 棚卸を実施したらT_StockCountに実測値を追記（Date列に実施日を入力。WeekIndex列は自動計算）",
-    "  7. Dashboardで赤色(基準在庫の下限未満)の週を確認し、PO_Draft_*から注文書を出力",
-    "  8. 月初は、前月最終週と当月頭のDashboardを見比べて在庫差異を確認（Plan Increase and Decrease /",
-    "     Inventory Releasesの報告フォーマットに転記）",
+    "[Monthly operations]",
+    "  1. Run RefreshWeeklyBatches when a new month's version of \"Powder & Slurry & Pgm Plan\" comes out",
+    "  2. Run RefreshBOM if \"Raw Material - Look Up\" has been updated",
+    "  3. Run RefreshSelfStock once the physical count of our own warehouse is done on Monday morning each week",
+    "  4. Run RefreshTTAFStock and RefreshShipments once the CSA Report arrives each Monday",
+    "  5. Enter the quantity to order directly into Material_Detail's \"Order (Planned, kg)\" row",
+    "  6. After a physical stock count, add the measured values to T_StockCount (enter the count date in the Date column; WeekIndex is calculated automatically)",
+    "  7. Check the weeks shown in red (below SafetyStock min) on Dashboard, and print the order form from PO_Draft_*",
+    "  8. At the start of the month, compare last month's final week against this month's start on Dashboard to check for stock discrepancies (transcribe into",
+    "     the Plan Increase and Decrease / Inventory Releases report format)",
     "",
-    "【前提・要確認事項】詳細はdocs/SOH_System_Guide.mdを参照",
-    "  - M_RawMaterials の基準在庫(下限/上限)とLeadTime_Weeksは仮値(0)です。実際の水準に置き換えてください",
-    "    （Dashboardの週次セルの赤/緑/青の色分けに使われます）。",
-    "  - Categoryの割り当て(Chemical/Hazardous Chemical/Substrate)は入手データから機械的に推定した部分があります。要レビュー。",
-    "  - 週次バッチ数はPowder & Slurry & Pgm Planの実データ（約36材料シートから抽出）を使用しています。",
+    "[Assumptions / items to verify] See docs/SOH_System_Guide.md for details",
+    "  - M_RawMaterials' SafetyStock (Min/Max) and LeadTime_Weeks are placeholder values (0). Please replace them with real levels",
+    "    (these are used for the red/green/blue color-coding of Dashboard's weekly cells).",
+    "  - Category assignment (Chemical/Hazardous Chemical/Substrate) was partly inferred mechanically from the available data. Needs review.",
+    "  - Weekly batch counts use actual data from Powder & Slurry & Pgm Plan (extracted from roughly 36 material sheets).",
 ]
 for i, line in enumerate(readme_lines, start=1):
     ws.cell(row=i, column=1, value=line)
@@ -1493,12 +1493,12 @@ ws.column_dimensions["A"].width = 100
 # マクロ名・説明)を用意するところまでで、実際の図形の配置とマクロ登録は貴社のExcelで
 # 一度だけ手動で行う(下記【ボタンの割り当て方】参照)。
 ws_panel = wb.create_sheet("Control_Panel")
-ws_panel["A1"] = "操作パネル（ボタンの設置場所）"
+ws_panel["A1"] = "Control Panel (button placement area)"
 ws_panel["A1"].font = Font(bold=True, size=14)
-ws_panel["A2"] = ("Alt+F8のマクロ一覧は常にアルファベット順になるため、このシートに月次の運用手順の順で"
-                  "ボタンを配置します。ボタンの作成・マクロの割り当ては貴社のExcelで一度だけ手動で行って"
-                  "ください（下記の番号・マクロ名の行に重ねて図形を描き、「マクロの登録」で対応するマクロ名を"
-                  "選ぶだけです）。詳しい手順はdocs/SOH_System_Guide.mdを参照してください。")
+ws_panel["A2"] = ("Since the Alt+F8 macro list is always alphabetical, this sheet lays out buttons in the order of "
+                  "the monthly operations procedure instead. Creating the buttons and assigning macros to them must "
+                  "be done once, manually, in your own Excel (just draw a shape over the number/macro-name row below "
+                  "and pick the matching macro name under \"Assign Macro\"). See docs/SOH_System_Guide.md for detailed steps.")
 ws_panel["A2"].font = Font(italic=True, color="808080", size=9)
 ws_panel["A2"].alignment = Alignment(wrap_text=True, vertical="top")
 ws_panel.row_dimensions[2].height = 45
@@ -1507,21 +1507,21 @@ PANEL_SLOT_FILL = PatternFill("solid", fgColor="E2EFDA")
 PANEL_SECTION_FILL = PatternFill("solid", fgColor="1F4E78")
 
 panel_sections = [
-    ("【毎月・毎週の定型作業】上から順に実行", [
-        ("RefreshWeeklyBatches", "「Powder & Slurry & Pgm Plan」の新しい月版が出たら実行"),
-        ("RefreshBOM", "「Raw Material - Look Up」が更新されたら実行"),
-        ("RefreshSelfStock", "自社倉庫の現物確認（daily check）を毎週月曜の朝に実施したら実行"),
-        ("RefreshTTAFStock", "CSA Reportが毎週月曜に届いたら実行（TTAF在庫）"),
-        ("RefreshShipments", "CSA Reportが毎週月曜に届いたら実行（発注・着荷）"),
+    ("[Monthly/weekly routine work] Run in order from top to bottom", [
+        ("RefreshWeeklyBatches", "Run when a new month's version of \"Powder & Slurry & Pgm Plan\" comes out"),
+        ("RefreshBOM", "Run when \"Raw Material - Look Up\" has been updated"),
+        ("RefreshSelfStock", "Run once the physical count (daily check) of our own warehouse is done on Monday morning each week"),
+        ("RefreshTTAFStock", "Run once the CSA Report arrives each Monday (TTAF stock)"),
+        ("RefreshShipments", "Run once the CSA Report arrives each Monday (orders/arrivals)"),
     ]),
-    ("【任意】Material_Detailの表示調整", [
-        ("HideInactiveIntermediates", "しばらく生産予定の無い中間体の行を折りたたむ"),
-        ("ShowAllIntermediates", "折りたたんだ行をすべて再表示する"),
+    ("[Optional] Material_Detail display adjustments", [
+        ("HideInactiveIntermediates", "Collapse rows for intermediates with no production planned for a while"),
+        ("ShowAllIntermediates", "Re-show all collapsed rows"),
     ]),
-    ("【まれに使う】材料・中間体の追加/削除（取り消せません。事前にバックアップ推奨）", [
-        ("AddMaterial", "新しい材料(TTAF供給品)をシステムに追加する"),
-        ("RemoveMaterial", "使わなくなった材料をシステムから削除する"),
-        ("RemoveIntermediate", "生産中止になった中間体をシステムから削除する"),
+    ("[Rarely used] Add/remove materials or intermediates (cannot be undone - backup beforehand recommended)", [
+        ("AddMaterial", "Add a new material (TTAF-supplied item) to the system"),
+        ("RemoveMaterial", "Remove a material no longer in use from the system"),
+        ("RemoveIntermediate", "Remove a discontinued intermediate from the system"),
     ]),
 ]
 
@@ -1558,11 +1558,11 @@ ws_panel.column_dimensions["C"].width = 70
 # Solutionだけは略称(20P・SH等)に共通の接頭辞が無いため、この表で明示的に列挙する。
 # 新しいSolutionが増えたら、この表に1行追加するだけでRefreshWeeklyBatchesが自動的に対応する
 # （行番号のメンテナンスは一切不要）。
-ws_panel["E3"] = "Solution名リスト（RefreshWeeklyBatchesの行判定に使用）"
+ws_panel["E3"] = "Solution Name List (used by RefreshWeeklyBatches to classify rows)"
 ws_panel["E3"].font = Font(bold=True)
 sol_header_row = 4
-ws_panel.cell(row=sol_header_row, column=5, value="略称（Pgm Plan表記）")
-ws_panel.cell(row=sol_header_row, column=6, value="正式名（システム内部名）")
+ws_panel.cell(row=sol_header_row, column=5, value="Alias (as written in Pgm Plan)")
+ws_panel.cell(row=sol_header_row, column=6, value="Canonical Name (internal system name)")
 solution_aliases = [
     ("20P", "SOL-20P"),
     ("10H", "SOL-10H"),
@@ -1591,21 +1591,21 @@ ws_panel.freeze_panes = "A3"
 
 # ---- ナビゲーション（README上部にジャンプリンクを追加） ----
 nav_targets = [
-    ("Control_Panel", "月次の運用手順順に並んだマクロボタンの設置場所"),
-    ("Dashboard", "原材料×週の在庫（2年分・横軸で見渡せるメイン画面。まずここ）"),
-    ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
-    ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
-    ("PO_Draft_Hazardous", "発注書ドラフト（Hazardous Chemical）"),
-    ("PO_Draft_Substrate_JPN_CHN", "発注書ドラフト（Substrate・Japan / China）"),
-    ("PO_Draft_Substrate_Poland", "発注書ドラフト（Substrate・Poland）"),
-    ("T_Shipments", "発注・着荷の入力（TTAF供給材料はTTAF倉庫への到着実績を表す）"),
-    ("T_OpeningStock", "期首在庫の入力"),
-    ("T_StockCount", "棚卸実績の入力"),
-    ("T_SelfStock", "自社倉庫の在庫実績（材料×週。RefreshSelfStockで自動更新）"),
-    ("T_TTAFStock", "TTAF倉庫の在庫実績（材料×週。RefreshTTAFStockで自動更新）"),
+    ("Control_Panel", "Macro button placement area, in monthly operations order"),
+    ("Dashboard", "Raw material x week stock (2 years, laid out horizontally - main screen, start here)"),
+    ("Material_Detail", "Per-material usage (which material is used for what)"),
+    ("PO_Draft_Chemical", "Order form draft (Chemical)"),
+    ("PO_Draft_Hazardous", "Order form draft (Hazardous Chemical)"),
+    ("PO_Draft_Substrate_JPN_CHN", "Order form draft (Substrate, Japan / China)"),
+    ("PO_Draft_Substrate_Poland", "Order form draft (Substrate, Poland)"),
+    ("T_Shipments", "Order/arrival entry (for TTAF-supplied materials, represents arrival at the TTAF warehouse)"),
+    ("T_OpeningStock", "Opening stock entry"),
+    ("T_StockCount", "Physical stock count entry"),
+    ("T_SelfStock", "Self warehouse actual stock (material x week; auto-updated by RefreshSelfStock)"),
+    ("T_TTAFStock", "TTAF warehouse actual stock (material x week; auto-updated by RefreshTTAFStock)"),
 ]
 ws.insert_rows(2, amount=len(nav_targets) + 2)
-ws["A2"] = "【ジャンプ】クリックで各シートへ移動"
+ws["A2"] = "[Jump] Click to go to each sheet"
 ws["A2"].font = Font(bold=True, size=12)
 for i, (target, label) in enumerate(nav_targets, start=3):
     cell = ws.cell(row=i, column=1, value=f"▶ {target} - {label}")
