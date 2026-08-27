@@ -106,11 +106,26 @@ Sub MigrateToEnglishSchema()
     logMsg = logMsg & "[済] markers converted to [DONE]: " & doneMarkers & vbCrLf
 
     ' ---- 4. Dashboard row types + conditional formatting ----
+    ' Isolated from the outer error handler: this step touches conditional-
+    ' formatting objects whose exact types on your live sheet we can't know
+    ' in advance, so a failure here must not discard the (more important)
+    ' work already done above. If it fails outright, dashPairs/cfFixed
+    ' report 0 rather than aborting the whole migration.
     Dim dashPairs As Long: dashPairs = 0
     Dim cfFixed As Long: cfFixed = 0
+    Dim dashErrMsg As String: dashErrMsg = ""
+    On Error Resume Next
     Call MigrateDashboardRowTypes(thisWb, dashPairs, cfFixed)
+    If Err.Number <> 0 Then
+        dashErrMsg = "(" & Err.Number & ") " & Err.Description
+        Err.Clear
+    End If
+    On Error GoTo ErrHandler
     logMsg = logMsg & "Dashboard material row-pairs relabeled: " & dashPairs & vbCrLf
     logMsg = logMsg & "Conditional-format rules updated (実在庫->Actual Stock): " & cfFixed & vbCrLf
+    If Len(dashErrMsg) > 0 Then
+        logMsg = logMsg & "(Note) Dashboard step hit an error and may be incomplete: " & dashErrMsg & vbCrLf
+    End If
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
@@ -264,17 +279,41 @@ Private Sub MigrateDashboardRowTypes(wb As Workbook, ByRef pairCount As Long, By
         r = r + 2
     Loop
 
+    ' Conditional formatting on a real-world sheet can include rule types
+    ' other than a plain formula (data bars, color scales, icon sets,
+    ' top/bottom, above/below average, etc.), and those object types do
+    ' not support .Formula1 - touching it raises runtime error 450 ("Wrong
+    ' number of arguments or invalid property assignment"), not a normal
+    ' "property not found" error, so a bare On Error Resume Next around
+    ' just the read is not enough to guarantee safety on every rule. Each
+    ' step below is individually guarded, and .Type (safe to read on every
+    ' rule type) is checked before ever touching .Formula1.
     Dim fcs As FormatConditions
+    On Error Resume Next
     Set fcs = sh.Cells.FormatConditions
+    On Error GoTo 0
+    If fcs Is Nothing Then Exit Sub
+
     Dim i As Long
     For i = 1 To fcs.Count
-        Dim f1 As String
+        Dim fcType As Long: fcType = -1
         On Error Resume Next
-        f1 = fcs.Item(i).Formula1
+        Err.Clear
+        fcType = fcs.Item(i).Type
         On Error GoTo 0
-        If InStr(f1, "実在庫") > 0 Then
-            fcs.Item(i).Formula1 = Replace(f1, "実在庫", "Actual Stock")
-            cfFixedCount = cfFixedCount + 1
+        If fcType = xlExpression Then
+            Dim f1 As String: f1 = ""
+            On Error Resume Next
+            Err.Clear
+            f1 = fcs.Item(i).Formula1
+            On Error GoTo 0
+            If InStr(f1, "実在庫") > 0 Then
+                On Error Resume Next
+                Err.Clear
+                fcs.Item(i).Formula1 = Replace(f1, "実在庫", "Actual Stock")
+                If Err.Number = 0 Then cfFixedCount = cfFixedCount + 1
+                On Error GoTo 0
+            End If
         End If
     Next i
 End Sub
