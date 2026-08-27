@@ -98,6 +98,15 @@ Sub MigrateToEnglishSchema()
     End If
     logMsg = logMsg & "Control_Panel sheet: " & panelRenamed & vbCrLf
 
+    ' ---- 2b. Control_Panel's T_SolutionNames table headers ----
+    ' Renamed by column POSITION rather than by matching old text, since
+    ' these are structural table headers (never user-edited data) and this
+    ' sidesteps needing to know the exact old Japanese wording.
+    Dim solRenamed As Long: solRenamed = 0
+    solRenamed = solRenamed + RenameTableColumnByPosition(thisWb, "Control_Panel", "T_SolutionNames", 1, "Alias (as written in Pgm Plan)")
+    solRenamed = solRenamed + RenameTableColumnByPosition(thisWb, "Control_Panel", "T_SolutionNames", 2, "Canonical Name (internal system name)")
+    logMsg = logMsg & "T_SolutionNames headers relabeled: " & solRenamed & vbCrLf
+
     ' ---- 3 & 5. Material_Detail row labels + [DONE] marker ----
     Dim mdBlocks As Long: mdBlocks = 0
     Dim doneMarkers As Long: doneMarkers = 0
@@ -181,6 +190,33 @@ Private Function RenameTableColumn(wb As Workbook, sheetName As String, oldName 
     RenameTableColumn = 1
 End Function
 
+' Renames a ListColumn by its 1-based POSITION within a named table
+' (tableName may differ from the sheet name, e.g. T_SolutionNames lives on
+' the Control_Panel sheet). Unconditional/idempotent - always sets the
+' column at that position to newName, regardless of its current name, so
+' this doesn't depend on knowing the exact old text. Safe only for
+' structural table headers that are never user-edited data. Returns 1 on
+' success, 0 if the sheet/table/column doesn't exist.
+Private Function RenameTableColumnByPosition(wb As Workbook, sheetName As String, tableName As String, colIndex As Long, newName As String) As Long
+    RenameTableColumnByPosition = 0
+    Dim sh As Worksheet
+    On Error Resume Next
+    Set sh = wb.Sheets(sheetName)
+    On Error GoTo 0
+    If sh Is Nothing Then Exit Function
+
+    Dim tbl As ListObject
+    On Error Resume Next
+    Set tbl = sh.ListObjects(tableName)
+    On Error GoTo 0
+    If tbl Is Nothing Then Exit Function
+
+    On Error Resume Next
+    tbl.ListColumns(colIndex).Name = newName
+    If Err.Number = 0 Then RenameTableColumnByPosition = 1
+    On Error GoTo 0
+End Function
+
 ' Rewrites Material_Detail's per-material row labels using ROW POSITION
 ' within each block (never by matching old Japanese text), so a slightly-
 ' wrong assumption about the exact old wording can't cause data to be
@@ -207,8 +243,9 @@ Private Sub MigrateMaterialDetailLabels(wb As Workbook, ByRef blockCount As Long
     On Error GoTo 0
     If sh Is Nothing Then Exit Sub
 
-    ' The single sheet-wide "Item" column header
+    ' The two single sheet-wide column headers (not per-material)
     sh.Cells(MD_HEADER_ROW, 2).Value = "Item"
+    sh.Cells(MD_HEADER_ROW, 3).Value = "Usage per Batch (kg)"
 
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
     Dim lastWeekCol As Long: lastWeekCol = MD_WEEK_START_COL + 200 ' generous upper bound; actual data ends well before this
@@ -267,6 +304,23 @@ Private Sub MigrateDashboardRowTypes(wb As Workbook, ByRef pairCount As Long, By
     Set sh = wb.Sheets("Dashboard")
     On Error GoTo 0
     If sh Is Nothing Then Exit Sub
+
+    ' The single sheet-wide header row (row DASH_DATA_START_ROW-1, i.e. row
+    ' 6) - written once for the whole sheet, not per material, so it's
+    ' separate from the per-material Row Type rewrite below. Overwritten
+    ' unconditionally (safe/idempotent) with the exact column labels
+    ' build_soh.py's LEFT_COLS generates. Note these are plain display
+    ' text, unrelated to the M_RawMaterials Table's structured-reference
+    ' column names (e.g. this header cell reads "SafetyStock_Min" with an
+    ' underscore, while the Table column itself is "SafetyStockMin").
+    Dim hdrRow As Long: hdrRow = DASH_DATA_START_ROW - 1
+    Dim leftCols As Variant
+    leftCols = Array("Part Name", "Description", "Category", "SafetyStock_Min", "SafetyStock_Max", _
+        "Self Stock (Actual)", "TTAF Stock (Actual)", "Actual Week", "Row Type", "Variance (kg)")
+    Dim hc As Long
+    For hc = LBound(leftCols) To UBound(leftCols)
+        sh.Cells(hdrRow, hc + 1).Value = leftCols(hc)
+    Next hc
 
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
     Dim r As Long: r = DASH_DATA_START_ROW
