@@ -12,7 +12,7 @@ Option Explicit
 '                          RefreshBOM（Raw Material - Look Up）側の担当。
 '
 '   【行の種類の自動判定について】中間体(Slurry/Powder)なのか完成品(Catalyst)なのか
-'   Solutionなのかは、名前の接頭辞と「Solution名リスト」(操作パネルシートのT_SolutionNames
+'   Solutionなのかは、名前の接頭辞と「Solution名リスト」(Control_PanelシートのT_SolutionNames
 '   テーブル)で機械的に判定する。TSP-/TPP-/TSZ-/TVS-/VSP-で始まれば中間体、T_SolutionNames
 '   に載っている名前(20P・SH等の略称)ならSolution(略称は自動的に正式名SOL-xxxへ変換)、
 '   どちらでもなければ完成品(Catalyst)として扱う(消去法)。行の追加・削除や新しいSolutionの
@@ -62,7 +62,7 @@ Sub RefreshWeeklyBatches()
     ' 大文字小文字の違い(20p/20P等)を吸収する。
     Dim solutionAlias As Object: Set solutionAlias = CreateObject("Scripting.Dictionary")
     solutionAlias.CompareMode = vbTextCompare
-    Dim solTbl As ListObject: Set solTbl = thisWb.Sheets("操作パネル").ListObjects("T_SolutionNames")
+    Dim solTbl As ListObject: Set solTbl = thisWb.Sheets("Control_Panel").ListObjects("T_SolutionNames")
     Dim solN As Long: solN = solTbl.ListRows.Count
     If solN > 0 Then
         Dim solData As Variant: solData = solTbl.ListColumns(1).DataBodyRange.Resize(solN, 2).Value

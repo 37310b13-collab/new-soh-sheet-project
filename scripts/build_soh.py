@@ -1496,7 +1496,7 @@ ws.column_dimensions["A"].width = 100
 # できないため、このシートは「どこに・どの順で・どのマクロを割り当てるか」の下地(枠と番号・
 # マクロ名・説明)を用意するところまでで、実際の図形の配置とマクロ登録は貴社のExcelで
 # 一度だけ手動で行う(下記【ボタンの割り当て方】参照)。
-ws_panel = wb.create_sheet("操作パネル")
+ws_panel = wb.create_sheet("Control_Panel")
 ws_panel["A1"] = "操作パネル（ボタンの設置場所）"
 ws_panel["A1"].font = Font(bold=True, size=14)
 ws_panel["A2"] = ("Alt+F8のマクロ一覧は常にアルファベット順になるため、このシートに月次の運用手順の順で"
@@ -1595,7 +1595,7 @@ ws_panel.freeze_panes = "A3"
 
 # ---- ナビゲーション（README上部にジャンプリンクを追加） ----
 nav_targets = [
-    ("操作パネル", "月次の運用手順順に並んだマクロボタンの設置場所"),
+    ("Control_Panel", "月次の運用手順順に並んだマクロボタンの設置場所"),
     ("Dashboard", "原材料×週の在庫（2年分・横軸で見渡せるメイン画面。まずここ）"),
     ("Material_Detail", "材料ごとの使用状況（どの材料が何に使われているか）"),
     ("PO_Draft_Chemical", "発注書ドラフト（Chemical）"),
@@ -1625,7 +1625,7 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
         wb[sheet_name].sheet_state = "hidden"
 
 # ---- シートの並び順を業務で使う順に ----
-order = ["README", "操作パネル", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
+order = ["README", "Control_Panel", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
          "PO_Draft_Substrate_JPN_CHN", "PO_Draft_Substrate_Poland",
          "T_Shipments", "T_OpeningStock", "T_StockCount",
          "T_SelfStock", "T_TTAFStock",
