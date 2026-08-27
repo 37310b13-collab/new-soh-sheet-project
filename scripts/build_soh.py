@@ -473,7 +473,7 @@ ws.freeze_panes = "A2"
 # 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
 ws = wb.create_sheet("T_StockCount")
 ws.append(["Part Name", "CountDate", "WeekIndex", "CountedQty", "Notes"])
-ws.append(["(例) CHEM-1010", START_MONDAY, None, 0, "棚卸実施時にこの行へ追記(Dateを入力するとWeekIndexは自動計算されます)"])
+ws.append(["(e.g.) CHEM-1010", START_MONDAY, None, 0, "Add a row here when a physical count is taken (enter Date; WeekIndex is calculated automatically)"])
 ws.cell(row=2, column=3).value = week_index_formula_strict("$B2")
 style_header(ws, 5)
 add_table(ws, "T_StockCount", "A1:E2")
@@ -508,7 +508,7 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
         # ダミー行。表示中の104週ウィンドウから確実に外れる日付(WeekIndexが空欄になる)を
         # 使うことで、グリッド側には一切表示されないようにしている(サンプルデータに
         # 見えてしまわないように)。
-        ws_log.append(["(ダミー行、削除不可)", datetime.date(2000, 1, 3), None, 0])
+        ws_log.append(["(dummy row, do not delete)", datetime.date(2000, 1, 3), None, 0])
         rows_written = 1
     for row_i in range(2, rows_written + 2):
         ws_log.cell(row=row_i, column=3).value = week_index_formula_strict(f"$B{row_i}")
@@ -525,7 +525,7 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     # 選択週の入力欄(C1)。Dashboard/Material_Detailと全く同じ仕組み(SUMPRODUCTで
     # 「現在年×入力した週No」に一致するWeekIndexを求める)。VBAのJumpToSelectedWeekを
     # 導入していれば、入力するとその週列のすぐ右(B列側)に自動でスクロールする。
-    ws_grid["A1"] = "選択週を入力（例: W23。現在年の週Noで検索します）"
+    ws_grid["A1"] = "Enter week to jump to (e.g. W23; searched against the current year)"
     ws_grid["A1"].font = Font(bold=True)
     ws_grid["C1"] = ""
     ws_grid["C1"].fill = INPUT_FILL
@@ -545,9 +545,9 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     ws_grid["E1"] = "→WeekIndex"
     ws_grid["E1"].font = Font(size=8, color="808080")
     ws_grid["D1"] = (
-        f'=IF($C$1="","週Noを入力してください（例: W23）",'
-        f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
-        f'INDEX({_ss_cal_label_rng},$F$1)&" が該当週です（VBA導入時は自動でスクロールします）"))'
+        f'=IF($C$1="","Please enter a week number (e.g. W23)",'
+        f'IF($F$1="","Week not found (check the week number against this year)",'
+        f'INDEX({_ss_cal_label_rng},$F$1)&" is the matching week (auto-scrolls if VBA is installed)"))'
     )
     ws_grid["D1"].font = Font(bold=True, color="0563C1")
 
@@ -665,14 +665,14 @@ for i, r in enumerate(rm_master):
         # 単一の窓口になっているため、T_Shipmentsを二重に足し込む必要はない。
         # Material_Detailにブロックが無い材料(BOMで使われない、Original Towel等の梱包資材)は
         # Order行という窓口が無いため、従来通りT_Shipmentsを直接見る。
-        # PO_No行(Order行の1つ下)に"[済]"が付いていれば、TTAF在庫として着荷済み確定
+        # PO_No row (one below Order row) has "[DONE]" appended, treat as confirmed arrived TTAF stock
         # (RefreshShipmentsが付与)なので、数字自体はMaterial_Detailに残したまま
         # Grid_Incomingの計算からだけ除外する(以降は自社/TTAF実績側が担うため)。
         _md_order_match = f"MATCH($A{rr},Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},0)"
         _md_has_block = f"COUNTIF(Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},$A{rr})>0"
         _md_order_val = f"INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{_md_order_match},{w})"
         _md_po_val = f"INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{_md_order_match}+1,{w})"
-        _md_received = f'ISNUMBER(SEARCH("[済]",{_md_po_val}))'
+        _md_received = f'ISNUMBER(SEARCH("[DONE]",{_md_po_val}))'
         _shipments_val = f"SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=IF({_md_has_block},IF({_md_received},0,IFERROR({_md_order_val},0)),{_shipments_val})"
@@ -758,7 +758,7 @@ MD_ORDER_HELPER_COL = MD_ORDER_HELPER_COL_
 
 MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW = 3, 4, 5, 6
 
-ws["A1"] = "選択週を入力（例: W23。現在年の週Noで検索します）"
+ws["A1"] = "Enter week to jump to (e.g. W23; searched against the current year)"
 ws["A1"].font = Font(bold=True)
 ws["C1"] = ""
 ws["C1"].fill = INPUT_FILL
@@ -784,9 +784,9 @@ ws["F1"].font = Font(size=8, color="808080")
 ws["E1"] = "→WeekIndex"
 ws["E1"].font = Font(size=8, color="808080")
 ws["D1"] = (
-    f'=IF($C$1="","週Noを入力してください（例: W23）",'
-    f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
-    f'INDEX({_md_cal_label_rng},$F$1)&" が該当週です（VBA導入時は自動でスクロールします）"))'
+    f'=IF($C$1="","Please enter a week number (e.g. W23)",'
+    f'IF($F$1="","Week not found (check the week number against this year)",'
+    f'INDEX({_md_cal_label_rng},$F$1)&" is the matching week (auto-scrolls if VBA is installed)"))'
 )
 ws["D1"].font = Font(bold=True, color="0563C1")
 
@@ -812,8 +812,8 @@ for r in (MD_MONTHYEAR_ROW, MD_DATE_ROW, MD_WEEKNO_ROW, MD_TABLE_ROW):
         ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
         ws.cell(row=r, column=c).font = Font(bold=(r in (MD_MONTHYEAR_ROW, MD_TABLE_ROW)))
 ws.cell(row=MD_TABLE_ROW, column=1, value="Part Name")
-ws.cell(row=MD_TABLE_ROW, column=2, value="項目")
-ws.cell(row=MD_TABLE_ROW, column=3, value="1バッチ使用量(kg)")
+ws.cell(row=MD_TABLE_ROW, column=2, value="Item")
+ws.cell(row=MD_TABLE_ROW, column=3, value="Usage per Batch (kg)")
 
 row_num = MD_TABLE_ROW
 # ブロックの並び順は、bom.csv内での初出順ではなく、rm_master(Dashboard等と同じ並び順、
@@ -838,7 +838,7 @@ for _r in rm_master:
     moq_cell = ws.cell(row=row_num, column=3, value=None)
     moq_cell.fill = INPUT_FILL
     moq_cell.font = Font(bold=False)
-    moq_cell.comment = Comment("MOQ(最小発注量)を入力してください（手書きでOK）", "SOH")
+    moq_cell.comment = Comment("Please enter MOQ (Minimum Order Quantity) - manual entry is fine", "SOH")
 
     for entry in entries:
         inter = entry["Intermediate"]
@@ -858,7 +858,7 @@ for _r in rm_master:
             )
 
         row_num += 1
-        ws.cell(row=row_num, column=2, value="使用量(kg)")
+        ws.cell(row=row_num, column=2, value="Usage (kg)")
         ws.cell(row=row_num, column=3,
                 value=f'=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],$B{row_num-1},M_BOM[Part Name],$A{mat_header_row})')
         for w in range(1, N_WEEKS + 1):
@@ -867,7 +867,7 @@ for _r in rm_master:
                     value=f"=$C{row_num}*{wc}{batches_row}")
 
     row_num += 1
-    ws.cell(row=row_num, column=2, value="合計使用量(kg)/週")
+    ws.cell(row=row_num, column=2, value="Total Usage (kg)/week")
     ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         wc = mdetail_week_col(w)
@@ -879,13 +879,13 @@ for _r in rm_master:
     # を持つGrid_Stockをそのまま参照する(Dashboardと数字が食い違うのを防ぐため)。
     ss_row = ss_row_map[rm_code]
     row_num += 1
-    ws.cell(row=row_num, column=2, value="TTAF在庫(実績,kg)")
+    ws.cell(row=row_num, column=2, value="TTAF Stock (Actual, kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=f"='T_TTAFStock'!{week_col(w)}{ss_row}")
 
     row_num += 1
-    ws.cell(row=row_num, column=2, value="自社在庫(実績,kg)")
+    ws.cell(row=row_num, column=2, value="Self Stock (Actual, kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=f"='T_SelfStock'!{week_col(w)}{ss_row}")
@@ -897,7 +897,7 @@ for _r in rm_master:
     # INDEX/MATCHで拾って発注書のレイアウトに転記する(発注書側では計算をしない)。
     row_num += 1
     order_row = row_num
-    ws.cell(row=row_num, column=2, value="Order(発注予定,kg)")
+    ws.cell(row=row_num, column=2, value="Order (Planned, kg)")
     ws.cell(row=row_num, column=MD_ORDER_HELPER_COL, value=rm_code)
     ws.cell(row=row_num, column=MD_ORDER_HELPER_COL).font = Font(size=8, color="808080")
     for w in range(1, N_WEEKS + 1):
@@ -917,15 +917,11 @@ for _r in rm_master:
         cell.font = Font(size=9, color="808080")
 
     row_num += 1
-    ws.cell(row=row_num, column=2, value="合計在庫(週末時点,kg)")
+    ws.cell(row=row_num, column=2, value="Total Stock (End of Week, kg)")
     ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
                 value=f"='Grid_Stock'!{week_col(w)}{grow}")
-
-    row_num += 1
-    ws.cell(row=row_num, column=2, value="（発注の目安はDashboardの基準在庫[下限/上限]と色分けを参照）")
-    ws.cell(row=row_num, column=2).font = Font(italic=True, color="808080")
 
     row_num += 1  # blank separator row
 
@@ -966,8 +962,8 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # ロールフォワードのみ)を参照する。両者の差(乖離)が大きいほど、システム上の計算(原単位・
 # 生産計画等)と実際の現場がズレていることを意味する。基準在庫の赤/緑/青の色分けは「実在庫」
 # 行のみに適用する(発注判断に使うのは実際の在庫のため。理論在庫行は参考表示)。
-LEFT_COLS = ["Part Name", "Description", "Category", "基準在庫_下限", "基準在庫_上限",
-             "自社在庫(実績)", "TTAF在庫(実績)", "実績週", "行種別", "乖離(kg)"]
+LEFT_COLS = ["Part Name", "Description", "Category", "SafetyStock_Min", "SafetyStock_Max",
+             "Self Stock (Actual)", "TTAF Stock (Actual)", "Actual Week", "Row Type", "Variance (kg)"]
 WEEK_START_COL_DASH = len(LEFT_COLS) + 1  # K列から週データ
 DASH_ROW_LABEL_COL = 9   # 行種別(理論在庫/実在庫)
 DASH_DIFF_COL = 10       # 乖離(kg)
@@ -978,7 +974,7 @@ HDR_TABLE_ROW = 6  # Excel Table の見出し行としても使う(Label)
 DATA_START_ROW = 7
 
 ws = wb.create_sheet("Dashboard")
-ws["A1"] = "選択週を入力（例: W23。現在年の週Noで検索します）"
+ws["A1"] = "Enter week to jump to (e.g. W23; searched against the current year)"
 ws["A1"].font = Font(bold=True)
 ws["C1"] = ""
 ws["C1"].fill = INPUT_FILL
@@ -1009,9 +1005,9 @@ ws["F1"].font = Font(size=8, color="808080")
 ws["E1"] = "→WeekIndex"
 ws["E1"].font = Font(size=8, color="808080")
 ws["D1"] = (
-    f'=IF($C$1="","週Noを入力してください（例: W23）",'
-    f'IF($F$1="","該当週が見つかりません（今年の週Noか確認してください）",'
-    f'INDEX({cal_label_rng},$F$1)&" が該当週です（VBA導入時は自動でスクロールします）"))'
+    f'=IF($C$1="","Please enter a week number (e.g. W23)",'
+    f'IF($F$1="","Week not found (check the week number against this year)",'
+    f'INDEX({cal_label_rng},$F$1)&" is the matching week (auto-scrolls if VBA is installed)"))'
 )
 ws["D1"].font = Font(bold=True, color="0563C1")
 
@@ -1091,9 +1087,9 @@ for i, r in enumerate(rm_master):
         ws.cell(row=rr, column=8,
                 value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_label_rng}),"")')
         ws.cell(row=rr, column=DASH_DIFF_COL, value=diff_formula)
-    ws.cell(row=theo_rr, column=DASH_ROW_LABEL_COL, value="理論在庫")
+    ws.cell(row=theo_rr, column=DASH_ROW_LABEL_COL, value="Theoretical Stock")
     ws.cell(row=theo_rr, column=DASH_ROW_LABEL_COL).font = Font(italic=True, color="808080")
-    ws.cell(row=actual_rr, column=DASH_ROW_LABEL_COL, value="実在庫")
+    ws.cell(row=actual_rr, column=DASH_ROW_LABEL_COL, value="Actual Stock")
     ws.cell(row=actual_rr, column=DASH_ROW_LABEL_COL).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
@@ -1127,20 +1123,20 @@ row_label_col_letter = get_column_letter(DASH_ROW_LABEL_COL)
 stock_band_range = f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}:{last_col_dash}{n_last_row}"
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="実在庫",'
+    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="Actual Stock",'
                           f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<$D{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="FFC7CE"))  # 赤: 基準在庫の下限未満
 )
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="実在庫",'
+    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="Actual Stock",'
                           f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>=$D{DATA_START_ROW},"
                           f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}<=$E{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="C6EFCE"))  # 緑: 基準在庫の範囲内
 )
 ws.conditional_formatting.add(
     stock_band_range,
-    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="実在庫",'
+    FormulaRule(formula=[f'AND(${row_label_col_letter}{DATA_START_ROW}="Actual Stock",'
                           f"{get_column_letter(WEEK_START_COL_DASH)}{DATA_START_ROW}>$E{DATA_START_ROW})"],
                 fill=PatternFill("solid", fgColor="BDD7EE"))  # 青: 基準在庫の上限超
 )

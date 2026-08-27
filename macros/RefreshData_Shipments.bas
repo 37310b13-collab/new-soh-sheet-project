@@ -42,7 +42,7 @@ Option Explicit
 '     から仮の週を計算し、その週にOrder/PO_Noセルを移動する(あくまで仮の予測)。
 '   ・Status="Unconfirmed"/"In-transit"でETAが判明: T_Shipments[Effective_Week](Q列の
 '     日付が反映済み)の週に移動する。ETAが更新されるたびに追従する。
-'   ・Status="TTAF Stock": 最後に分かっている週に固定し、PO_Noセルに"[済]"を付けて
+'   ・Status="TTAF Stock": 最後に分かっている週に固定し、PO_No cell has "[DONE]" appended
 '     Grid_Incomingの計算対象から除外する(数字自体は履歴として残す)。
 '   ・同じPO番号で出荷が複数行に分かれている場合(分割出荷)、Order/PO_Noセルもその週数分に
 '     自動的に分割する。
@@ -490,14 +490,14 @@ NextShipRow:
         blockArr = mdSheet.Range(mdSheet.Cells(orderRow, MD_WEEK_START_COL), mdSheet.Cells(poRow, lastWeekCol)).Value
         ' blockArr(1,w)=Order行の値, blockArr(2,w)=PO_No行の値 (w=1..nWeeks)
 
-        ' この材料のPO_No行に現れる、まだ確定していない("[済]"が付いていない)PO番号を
+        ' この材料のPO_No行に現れる、not-yet-finalized (no "[DONE]" marker) PO numbers
         ' 週ごとに集め、PO番号ごとにグループ化する。
         Dim activeByPo As Object: Set activeByPo = CreateObject("Scripting.Dictionary")
         activeByPo.CompareMode = vbTextCompare
         Dim w As Long
         For w = 1 To nWeeks
             Dim poCellVal As String: poCellVal = Trim(CStr(blockArr(2, w)))
-            If Len(poCellVal) > 0 And InStr(poCellVal, "[済]") = 0 Then
+            If Len(poCellVal) > 0 And InStr(poCellVal, "[DONE]") = 0 Then
                 Dim poLst As Object
                 If activeByPo.Exists(poCellVal) Then
                     Set poLst = activeByPo(poCellVal)
@@ -561,7 +561,7 @@ NextShipRow:
 
             ' --- 「あるべき状態」と今の状態を、週ごとに個別に比較する ---
             ' (以前の「PO全体をまとめてクリア→まとめて書き直す」方式だと、分割出荷の一部だけ
-            ' 既に確定[済]で残りがまだ輸送中、というケースで、既に確定済みで何も変わっていない
+            ' already finalized [DONE] with remainder still in transit、というケースで、既に確定済みで何も変わっていない
             ' 週まで毎回クリア→再書き込みされてしまい、コメントが無関係な週の移動として
             ' 表示されたり、frozenCellsが同じ確定を何度も数えてしまう不具合があった。
             ' そのため、週ごとに「今の内容と違うものだけ」を書き換える。)
@@ -581,7 +581,7 @@ NextShipRow:
                 Dim wantQty As Double: wantQty = CDbl(info(0))
                 Dim wantFrozen As Boolean: wantFrozen = CBool(info(1))
                 Dim wantPoText As String: wantPoText = CStr(poKey)
-                If wantFrozen Then wantPoText = wantPoText & " [済]"
+                If wantFrozen Then wantPoText = wantPoText & " [DONE]"
 
                 Dim curQty As Double: curQty = 0
                 If IsNumeric(blockArr(1, nwk)) Then curQty = CDbl(blockArr(1, nwk))
