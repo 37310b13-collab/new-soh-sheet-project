@@ -220,7 +220,7 @@ ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 # ============================================================ M_RawMaterials
 # 基準在庫は下限・上限の2つを持つ(Dashboardの週次の赤/緑/青のハイライトに使用)。
 # 以前の単一しきい値のSafetyStock_Qty_要入力を、下限・上限の2列に置き換えた。
-# 固定週次消費量_要入力: BOM(M_BOM/PP_Grid)経由の消費量計算とは別に、材料によっては
+# FixedWeeklyConsumption: BOM(M_BOM/PP_Grid)経由の消費量計算とは別に、材料によっては
 # 毎週固定量を消費する(例: Original Towelは梱包資材で、生産中間体の構成とは無関係に
 # 週200枚など一定量を消費する)。Grid_Requirementはこの列の値をBOMベースの計算結果に
 # 単純に加算する。0の材料には影響しない。ここはExcel上のセルなので、消費量が変わった際も
@@ -233,8 +233,8 @@ ws = wb.create_sheet("M_RawMaterials")
 # この3国以外・未設定の品目はどのPO_Draft_*にも載らない(詳細はbuild_po_draftの
 # origin_country引数、およびPOSheetNameForMaterial(VBA)参照)。
 ws.append(["Part Name", "Description", "Supplier", "Category", "UOM",
-           "基準在庫下限_要入力", "基準在庫上限_要入力", "LeadTime_Weeks_要入力", "TTAF_Code",
-           "固定週次消費量_要入力", "Origin_Country"])
+           "SafetyStockMin", "SafetyStockMax", "LeadTimeWeeks", "TTAF_Code",
+           "FixedWeeklyConsumption", "Origin_Country"])
 for r in rm_master:
     ws.append([r["RM_Code"], r["Description"], r["Supplier"], r["Category"], "kg", 0, 0, 4,
                r.get("TTAF_Code", ""), float(r.get("FixedWeeklyQty", 0) or 0),
@@ -374,7 +374,7 @@ for name in passthrough_intermediates:
 
 # ============================================================ T_OpeningStock (INPUT)
 ws = wb.create_sheet("T_OpeningStock")
-ws.append(["Part Name", "Opening_Qty_要入力", "AsOf"])
+ws.append(["Part Name", "OpeningQty", "AsOf"])
 for r in rm_master:
     ws.append([r["RM_Code"], 0, START_MONDAY])
 n = len(rm_master) + 1
@@ -437,7 +437,7 @@ ws = wb.create_sheet("T_Shipments")
 # モジュール冒頭コメント参照)。以前は材料名+PO番号だけで一意管理していたため、分割出荷が
 # あると後から読み込んだ行が前の行を上書きし、実際には届いているはずの数量が消えてしまう
 # 不具合があった。
-ws.append(["Part Name", "PO_No", "Order_Date_発注日", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status",
+ws.append(["Part Name", "PO_No", "Order_Date", "Confirmed_Qty", "Latest_ETA", "Received_Date", "Status",
            "Effective_Week", "Order_Month", "Vessel", "Container", "Original_ETD"])
 if not ship_rows:
     # Excelのテーブル機能は見出し行のみ(データ0行)の範囲を許容しないため、
@@ -472,7 +472,7 @@ ws.freeze_panes = "A2"
 # ============================================================ T_StockCount (INPUT, physical count overrides)
 # 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
 ws = wb.create_sheet("T_StockCount")
-ws.append(["Part Name", "Date_棚卸実施日", "WeekIndex", "CountedQty", "Notes"])
+ws.append(["Part Name", "CountDate", "WeekIndex", "CountedQty", "Notes"])
 ws.append(["(例) CHEM-1010", START_MONDAY, None, 0, "棚卸実施時にこの行へ追記(Dateを入力するとWeekIndexは自動計算されます)"])
 ws.cell(row=2, column=3).value = week_index_formula_strict("$B2")
 style_header(ws, 5)
@@ -651,12 +651,12 @@ for i, r in enumerate(rm_master):
         # M_BOMのうちRM_Code=このRMの行だけを対象に、原単位×その週のバッチ数(PP_GridRow経由で
         # 週ごとのMATCHをせず直接INDEX)を合計する。PP_Grid内の列位置(w+1列目=Intermediate列の次)
         # は週ごとに固定できるため、MATCHは行位置(PPGridRow, M_BOM側で1回だけ計算済み)のみで済む。
-        # BOMベースの消費量に加え、M_RawMaterialsの固定週次消費量_要入力(Original Towel等、
+        # BOMベースの消費量に加え、M_RawMaterialsのFixedWeeklyConsumption(Original Towel等、
         # 生産中間体の構成とは無関係に毎週一定量を消費する梱包資材向け)を単純加算する。
         ws_req.cell(row=rr, column=1 + w).value = (
             f"=SUMPRODUCT((M_BOM[Part Name]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
             f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))"
-            f"+IFERROR(INDEX(M_RawMaterials[固定週次消費量_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)"
+            f"+IFERROR(INDEX(M_RawMaterials[FixedWeeklyConsumption],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)"
         )
         # Grid_Incomingは、その材料がMaterial_Detailにブロックを持っていれば(=BOMで
         # 何らかの中間体に使われていれば)、Material_DetailのOrder行(発注予定,kg)の値を
@@ -689,7 +689,7 @@ for i, r in enumerate(rm_master):
         ttaf_val = f"'T_TTAFStock'!{cl}{ss_row}"
 
         if w == 1:
-            prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
+            prior = f'IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             prior = f"{week_col(w-1)}{rr}"
         # T_Shipments(Grid_Incoming)は、TTAF供給材料については「TTAFが外部の仕入先から新しく
@@ -710,7 +710,7 @@ for i, r in enumerate(rm_master):
         # ため)。Dashboardの「理論在庫」行として、実際の値(Grid_Stock=「実在庫」行)との
         # 乖離を確認するために参照する。
         if w == 1:
-            theo_prior = f'IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
+            theo_prior = f'IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             month_changed = f"INDEX(Cal_Weeks[MonthYearLabel],{w})<>INDEX(Cal_Weeks[MonthYearLabel],{w-1})"
             theo_prior = f"IF({month_changed},'Grid_Stock'!{week_col(w-1)}{rr},{week_col(w-1)}{rr})"
@@ -1081,9 +1081,9 @@ for i, r in enumerate(rm_master):
         ws.cell(row=rr, column=3,
                 value=f'=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")')
         ws.cell(row=rr, column=4,
-                value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
+                value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStockMin],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
         ws.cell(row=rr, column=5,
-                value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
+                value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStockMax],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)')
         ws.cell(row=rr, column=6,
                 value=f'=IFERROR(LOOKUP(2,1/({ss_self_rng}<>""),{ss_self_rng}),"")')
         ws.cell(row=rr, column=7,
@@ -1337,7 +1337,7 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
         ws.cell(row=data_row, column=3, value=r.get("TTAF_Code", ""))
         ws.cell(row=data_row, column=4, value=rm)
         ws.cell(row=data_row, column=5, value="kg")
-        ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH("{rm}",M_RawMaterials[Part Name],0)),0)')
+        ws.cell(row=data_row, column=6, value=f'=IFERROR(INDEX(M_RawMaterials[SafetyStockMin],MATCH("{rm}",M_RawMaterials[Part Name],0)),0)')
         ws.cell(row=data_row, column=7, value=f"=INDEX(Grid_Stock[#Data],{grow_match},BaseWeek)")
         # 発注数量は自動計算せず、Material_DetailのOrder(発注予定,kg)行に手入力された値を
         # そのまま転記するだけ。MD_ORDER_HELPER_COL列(Order行にだけPart Nameが複製されている

@@ -38,7 +38,7 @@ Option Explicit
 ' 【発注管理(Material_Detail連携)について】T_Shipmentsを取り込んだ後、
 ' SyncMaterialDetailOrders を呼び、Material_DetailのOrder行(発注予定,kg)・PO_No行
 ' (Order行の直下)を、CSA ReportのStatus列に合わせて自動更新する。
-'   ・Status="Unconfirmed"でETAが未定(TBC): Order_Month + M_RawMaterials[LeadTime_Weeks_要入力]
+'   ・Status="Unconfirmed"でETAが未定(TBC): Order_Month + M_RawMaterials[LeadTimeWeeks]
 '     から仮の週を計算し、その週にOrder/PO_Noセルを移動する(あくまで仮の予測)。
 '   ・Status="Unconfirmed"/"In-transit"でETAが判明: T_Shipments[Effective_Week](Q列の
 '     日付が反映済み)の週に移動する。ETAが更新されるたびに追従する。
@@ -387,7 +387,7 @@ Private Function DateKeyStr(v As Variant) As String
     End If
 End Function
 
-' 列: Part Name(1), PO_No(2), Order_Date_発注日(3, 手入力のため触れない), Confirmed_Qty(4),
+' 列: Part Name(1), PO_No(2), Order_Date(3, 手入力のため触れない), Confirmed_Qty(4),
 ' Latest_ETA(5), Received_Date(6), Status(7), Effective_Week(8, 数式), Order_Month(9),
 ' Vessel(10), Container(11), Original_ETD(12)。
 ' Effective_Week(8列目)の数式は、RefreshShipments側で新規行をまとめて書き込む際に
@@ -436,14 +436,14 @@ NextShipRow:
     Next i
     If byMatPo.Count = 0 Then Exit Sub
 
-    ' M_RawMaterialsのLeadTime_Weeks_要入力を材料名で引けるように1回だけ索引化
+    ' M_RawMaterialsのLeadTimeWeeksを材料名で引けるように1回だけ索引化
     ' (ETA未定(TBC)の仮予測に使う)。
     Dim ltIdx As Object: Set ltIdx = CreateObject("Scripting.Dictionary")
     ltIdx.CompareMode = vbTextCompare
     Dim rmN As Long: rmN = rmTbl.ListRows.Count
     If rmN > 0 Then
         Dim rmNameLt As Variant: rmNameLt = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 1).Value
-        Dim rmLtCol As Variant: rmLtCol = rmTbl.ListColumns("LeadTime_Weeks_要入力").DataBodyRange.Value
+        Dim rmLtCol As Variant: rmLtCol = rmTbl.ListColumns("LeadTimeWeeks").DataBodyRange.Value
         Dim li As Long
         For li = 1 To rmN
             Dim ltk As String: ltk = Trim(CStr(rmNameLt(li, 1)))

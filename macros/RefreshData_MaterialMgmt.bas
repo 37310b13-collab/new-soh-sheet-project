@@ -209,7 +209,7 @@ Sub AddMaterial()
     newRmRow.Range.Cells(1, 7).Value = 0
     newRmRow.Range.Cells(1, 8).Value = 4
     newRmRow.Range.Cells(1, 9).Value = ttafCodeVal
-    newRmRow.Range.Cells(1, 10).Value = 0  ' 固定週次消費量_要入力。必要であれば追加後にExcel上で書き換える
+    newRmRow.Range.Cells(1, 10).Value = 0  ' FixedWeeklyConsumption。必要であれば追加後にExcel上で書き換える
     newRmRow.Range.Cells(1, 11).Value = originCountryVal
 
     ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock / T_OpeningStock ----
@@ -241,12 +241,12 @@ Sub AddMaterial()
     Dim w As Long, col As Long, cl As String
     For w = 1 To nWeeks
         col = 1 + w
-        ' BOMベースの消費量に加え、M_RawMaterialsの固定週次消費量_要入力を単純加算する
+        ' BOMベースの消費量に加え、M_RawMaterialsのFixedWeeklyConsumptionを単純加算する
         ' (build_soh.pyのGrid_Requirement生成ロジックと同じ式)。
         reqRow.Range.Cells(1, col).Value = _
             "=SUMPRODUCT((M_BOM[Part Name]=$A" & grow & ")*M_BOM[RM_Qty_Per_Batch]*" & _
             "IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow]," & (w + 1) & "),0))" & _
-            "+IFERROR(INDEX(M_RawMaterials[固定週次消費量_要入力],MATCH($A" & grow & ",M_RawMaterials[Part Name],0)),0)"
+            "+IFERROR(INDEX(M_RawMaterials[FixedWeeklyConsumption],MATCH($A" & grow & ",M_RawMaterials[Part Name],0)),0)"
         inRow.Range.Cells(1, col).Value = _
             "=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A" & grow & _
             ",T_Shipments[Effective_Week]," & w & ")"
@@ -276,7 +276,7 @@ Sub AddMaterial()
         hasTTAF = "('T_TTAFStock'!" & cl & ssRow & "<>"""")"
         ttafVal = "'T_TTAFStock'!" & cl & ssRow
         If w = 1 Then
-            priorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
+            priorExpr = "IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
         Else
             priorExpr = ColLetter(col - 1) & grow
         End If
@@ -291,7 +291,7 @@ Sub AddMaterial()
         ' 挙動が食い違ってしまうため、必ず同じ式を使うこと)。
         Dim theoPriorExpr As String
         If w = 1 Then
-            theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[Opening_Qty_要入力],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
+            theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
         Else
             Dim monthChangedExpr As String
             monthChangedExpr = "INDEX(Cal_Weeks[MonthYearLabel]," & w & ")<>INDEX(Cal_Weeks[MonthYearLabel]," & (w - 1) & ")"
@@ -701,8 +701,8 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
         sh.Cells(rr, 1).Value = rmCode
         sh.Cells(rr, 2).Value = "=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),"""")"
         sh.Cells(rr, 3).Value = "=IFERROR(INDEX(M_RawMaterials[Category],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),"""")"
-        sh.Cells(rr, 4).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),0)"
-        sh.Cells(rr, 5).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫上限_要入力],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),0)"
+        sh.Cells(rr, 4).Value = "=IFERROR(INDEX(M_RawMaterials[SafetyStockMin],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),0)"
+        sh.Cells(rr, 5).Value = "=IFERROR(INDEX(M_RawMaterials[SafetyStockMax],MATCH($A" & rr & ",M_RawMaterials[Part Name],0)),0)"
         sh.Cells(rr, 6).Value = "=IFERROR(LOOKUP(2,1/(" & ssSelfRng & "<>"""")," & ssSelfRng & "),"""")"
         sh.Cells(rr, 7).Value = "=IFERROR(LOOKUP(2,1/(" & ssTTAFRng & "<>"""")," & ssTTAFRng & "),"""")"
         sh.Cells(rr, 8).Value = "=IFERROR(LOOKUP(2,1/(" & ssSelfRng & "<>"""")," & ssLabelRng & "),"""")"
@@ -906,7 +906,7 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     sh.Cells(newRow, 3).Value = ttafCodeVal
     sh.Cells(newRow, 4).Value = rmCode
     sh.Cells(newRow, 5).Value = "kg"
-    sh.Cells(newRow, 6).Value = "=IFERROR(INDEX(M_RawMaterials[基準在庫下限_要入力],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),0)"
+    sh.Cells(newRow, 6).Value = "=IFERROR(INDEX(M_RawMaterials[SafetyStockMin],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),0)"
     sh.Cells(newRow, 7).Value = "=INDEX(Grid_Stock[#Data]," & growMatch & "," & bwRefExpr & ")"
 
     Const PO_FIRST_WEEK_COL As Long = 8
