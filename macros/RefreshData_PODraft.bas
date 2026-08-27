@@ -4,10 +4,6 @@ Option Explicit
 ' ============================================================================
 ' RefreshData_PODraft module
 '
-' [How to install] Alt+F11 -> "File" -> "Import File" -> select this file
-' (If installing via copy & paste, be sure to delete the
-'  "Attribute VB_Name = ..." line 1 first before pasting)
-'
 ' SetupPODraftLetterheadLayout : [One-time migration macro]
 '   Takes the letterhead layout manually built out on the PO_Draft_Hazardous
 '   sheet (TO/FROM/CC, Order Date/Issue Month/Firm Month, Revision, base

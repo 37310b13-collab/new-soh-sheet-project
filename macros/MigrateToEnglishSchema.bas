@@ -10,23 +10,16 @@ Option Explicit
 ' live data (T_Shipments, T_OpeningStock, T_StockCount, actuals logs,
 ' Material_Detail Order/PO_No entries, SafetyStock values, etc.).
 '
-' [How to use]
-'   1. Back up the workbook first (copy the file). Test on a COPY before
-'      touching the real production file.
-'   2. Import this module (Alt+F11 -> File -> Import File). It depends on
-'      the Public Const values in RefreshData_Utilities, so that module
-'      must also be imported (any version - the constant values themselves
-'      have not changed).
-'   3. Run MigrateToEnglishSchema (Alt+F8) BEFORE importing/using any of
-'      the other new RefreshData_*.bas modules or PO_Export.bas. Read the
-'      summary MsgBox carefully and spot-check a few materials on
-'      Dashboard/Material_Detail by eye.
-'   4. Save the workbook.
-'   5. Only then import the remaining new VBA modules and resume normal use.
-'   6. Once you've confirmed everything works, delete this module - it is
-'      one-time-use and should not be run again after the migration is
-'      confirmed (running it again is harmless/no-op for already-migrated
-'      parts, but it no longer serves any purpose).
+' [Caution] Back up first and test on a copy - not the live production
+' file directly. Depends on the Public Const values in
+' RefreshData_Utilities (must be present). Must be run BEFORE
+' importing/using any of the other new RefreshData_*.bas modules or
+' PO_Export.bas - those assume the English schema already exists. Read
+' the summary MsgBox carefully and spot-check a few materials on
+' Dashboard/Material_Detail before saving. Delete this module once the
+' migration is confirmed - it's one-time-use and serves no purpose
+' afterward (though re-running it is harmless/no-op on already-migrated
+' parts).
 '
 ' [What this migrates] (only what the new VBA code actually depends on
 ' matching - see each Sub below for exact scope):

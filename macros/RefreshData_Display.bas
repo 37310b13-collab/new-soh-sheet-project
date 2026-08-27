@@ -34,20 +34,13 @@ Option Explicit
 ' build_soh.py's WEEK_START_COL/MD_TABLE_ROW values (if the sheet layout
 ' changes, update these too).
 '
-' [How to assign the buttons (one-time manual setup - openpyxl cannot
-'  create buttons automatically)]
-'   1. Open the Material_Detail sheet
-'   2. "Insert" tab -> "Shapes" etc. and draw 1-2 shapes of your choice
-'      (e.g. "Hide", "Show All")
-'   3. Right-click the shape -> "Assign Macro" -> choose HideInactiveIntermediates
-'      (and ShowAllIntermediates for the other one)
-'   4. Place them wherever convenient near the top of the sheet (e.g. near A1)
-'
-' [How to install JumpToSelectedWeek (optional)] Importing it into a
-' standard module alone does not make it run. You must add a
-' Worksheet_Change to the code module of each of the Dashboard/
-' Material_Detail/T_SelfStock/T_TTAFStock sheets themselves. See the
-' comment at the top of the RefreshData_Utilities module for details.
+' [Caution] HideInactiveIntermediates/ShowAllIntermediates need to be
+' assigned to buttons on Material_Detail by hand (openpyxl can't create
+' buttons automatically). JumpToSelectedWeek does nothing on its own once
+' imported - it also needs a Worksheet_Change wired into each of the
+' Dashboard/Material_Detail/T_SelfStock/T_TTAFStock sheets' own code
+' modules. See the comment at the top of RefreshData_Utilities and
+' docs/SOH_System_Guide.md for the exact steps/code.
 ' ============================================================================
 
 Sub HideInactiveIntermediates()

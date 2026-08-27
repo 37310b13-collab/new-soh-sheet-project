@@ -4,15 +4,10 @@ Option Explicit
 ' ============================================================================
 ' PO_Export module
 '
-' [How to install]
-'   1. Open SOH_Master.xlsm with "Enable Macros"
-'   2. Alt+F11 to open the VBE -> "File" -> "Import File" -> select this file (PO_Export.bas)
-'      (If installing via copy & paste, be sure to delete the "Attribute VB_Name = ..."
-'       line 1 before pasting. That line cannot be used via paste and causes a
-'       compile error if included.)
-'   3. Place buttons on the Dashboard sheet etc., and assign ExportChemical / ExportHazardous /
-'      ExportSubstrateJPNCHN / ExportSubstratePoland below
-'      as the macro each button runs
+' [Caution] The 4 entry points below (ExportChemical / ExportHazardous /
+' ExportSubstrateJPNCHN / ExportSubstratePoland) are meant to be run from
+' buttons placed on the Dashboard sheet, not typed macro names - assign
+' each one to a button via "Assign Macro".
 '
 ' [Behavior]
 '   Duplicates the PO_Draft_* sheet into a separate workbook, converts formulas to

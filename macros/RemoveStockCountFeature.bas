@@ -18,16 +18,12 @@ Option Explicit
 ' Nothing else is touched - Grid_TheoreticalStock never referenced
 ' T_StockCount in the first place, and no other sheet reads from it.
 '
-' [How to use]
-'   1. Back up the workbook first (copy the file). Test on a COPY before
-'      touching the real production file.
-'   2. Import this module (Alt+F11 -> File -> Import File). It has no
-'      dependency on any other module.
-'   3. Run RemoveStockCountFeature (Alt+F8). Read the confirmation MsgBox
-'      carefully, spot-check a few Grid_Stock/Dashboard values (the
-'      numbers themselves should be unchanged - only the formula got
-'      simpler), then save.
-'   4. Once confirmed, delete this module - it is one-time-use.
+' [Caution] Back up first and test on a copy - not the live production
+' file directly. No dependency on any other module. After running, read
+' the confirmation MsgBox carefully and spot-check that a few Grid_Stock/
+' Dashboard values are unchanged (the numbers should be identical - only
+' the formula got simpler) before saving. Delete this module once
+' confirmed - it's one-time-use.
 '
 ' Safe to run more than once: an already-simplified formula and an
 ' already-removed sheet are both simply skipped (counted, not re-applied).

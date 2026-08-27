@@ -19,7 +19,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 '                                 helper functions shared across multiple modules
 '                                 (BuildNameIndex/NormalizeText/
 '                                 WeekIndexForDate/ColLetter). All other modules
-'                                 depend on this one, so import it first.
+'                                 depend on this one.
 '   RefreshData_ProductionPlan : RefreshWeeklyBatches (imports "Powder & Slurry & Pgm Plan"
 '                                 and updates PP_Grid)
 '   RefreshData_BOM             : RefreshBOM (imports "Raw Material - Look Up"
@@ -38,51 +38,13 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' responsible for. It never touches content you entered by hand during normal
 ' operation, such as T_Shipments, T_OpeningStock, or SafetyStock_Qty.
 '
-' [How to install (applies to all modules)]
-'   1. Open SOH_Master.xlsm (saved as a macro-enabled workbook)
-'   2. Alt+F11 -> "File" -> "Import File" -> select all 8 .bas files in the
-'      macros/ folder and import them (one at a time or multiple selected at
-'      once is fine either way - import order does not affect the result)
-'      (If installing via copy & paste, be sure to delete the
-'       "Attribute VB_Name = ..." line 1 of each file before pasting. That
-'       line cannot be used via paste and causes a compile error if
-'       included. Also insert a separate standard module for each module
-'       name before pasting its content in.)
-'   3. Alt+F8 to pick the macro to run from the list (RefreshWeeklyBatches
-'      etc.), or insert a shape on any sheet and assign it via "Assign Macro"
-'
-' [Extra steps if you want to enable auto-scroll to the selected week
-'  (JumpToSelectedWeek) - optional]
-'   Importing it into a standard module alone does not make it run. Paste the
-'   code below directly into the "sheet's own code module" for each of the
-'   "Dashboard", "Material_Detail", "T_SelfStock", and "T_TTAFStock" sheets
-'   (double-click the sheet name in the VBE's Project Explorer to open it - it
-'   will not fire if pasted into a standard module). The JumpToSelectedWeek
-'   routine itself lives in the RefreshData_Display module.
-'
-'   ' --- Paste into the Dashboard sheet's code module ---
-'   Private Sub Worksheet_Change(ByVal Target As Range)
-'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 11)   ' 11 = column K (week-data start column)
-'   End Sub
-'
-'   ' --- Paste into the Material_Detail sheet's code module ---
-'   Private Sub Worksheet_Change(ByVal Target As Range)
-'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = column D (week-data start column)
-'   End Sub
-'
-'   ' --- Paste into the T_SelfStock sheet's code module ---
-'   Private Sub Worksheet_Change(ByVal Target As Range)
-'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = column B (week-data start column)
-'   End Sub
-'
-'   ' --- Paste into the T_TTAFStock sheet's code module ---
-'   Private Sub Worksheet_Change(ByVal Target As Range)
-'       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = column B (week-data start column)
-'   End Sub
+' [Caution] JumpToSelectedWeek does not do anything on its own once
+' imported - it must additionally be wired up via a Worksheet_Change
+' event pasted directly into the code module of each of the "Dashboard",
+' "Material_Detail", "T_SelfStock", and "T_TTAFStock" sheets (a standard
+' module's code never fires from a cell edit). The routine itself lives
+' in the RefreshData_Display module; see docs/SOH_System_Guide.md for the
+' exact Worksheet_Change code to paste into each sheet.
 '
 ' [About performance] Every Refresh* macro reads its target range as a single
 ' array (Range.Value) once, instead of reading an external file's cells one
