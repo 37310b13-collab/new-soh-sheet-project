@@ -1187,11 +1187,11 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
     ws = wb.create_sheet(sheet_name)
 
     # ---- レターヘッド(TO/FROM/CC・発注日・Firm/Forecast月・Revision・基準週) ----
-    ws.cell(row=PO_TO_ROW, column=2, value="TO：（サプライヤー／TTAF担当者名を入力）")
-    ws.cell(row=PO_TO2_ROW, column=2, value="　　　　　（会社名）")
-    ws.cell(row=PO_CC_ROW, column=2, value="CC：（必要であれば入力）")
-    ws.cell(row=PO_FROM_ROW, column=2, value="FROM：（発行者名）")
-    ws.cell(row=PO_FROM2_ROW, column=2, value="　　　　　（自社名）")
+    ws.cell(row=PO_TO_ROW, column=2, value="TO: (Enter supplier / TTAF contact name)")
+    ws.cell(row=PO_TO2_ROW, column=2, value="     (Company name)")
+    ws.cell(row=PO_CC_ROW, column=2, value="CC: (Enter if needed)")
+    ws.cell(row=PO_FROM_ROW, column=2, value="FROM: (Issuer name)")
+    ws.cell(row=PO_FROM2_ROW, column=2, value="     (Our company name)")
 
     ws.cell(row=PO_TO_ROW, column=14, value="Order Date:")
     order_date_cell = ws.cell(row=PO_TO_ROW, column=16, value="=TODAY()")
@@ -1207,7 +1207,7 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
     revision_cell = ws.cell(row=PO_CC_ROW, column=16, value="00")
     ws.merge_cells(start_row=PO_CC_ROW, start_column=16, end_row=PO_CC_ROW, end_column=18)
 
-    ws.cell(row=PO_BASEWEEK_ROW, column=14, value="基準週(WeekIndex, 翌月の頭を推奨):")
+    ws.cell(row=PO_BASEWEEK_ROW, column=14, value="Base Week (WeekIndex, start of next month recommended):")
     # デフォルト値は「来月1日」が属する週のWeekIndex
     default_firm_month = (datetime.date.today().replace(day=1) + datetime.timedelta(days=32)).replace(day=1)
     default_start_week = date_to_week_index(default_firm_month, N_WEEKS)
@@ -1366,7 +1366,7 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
                 if rr2 > PO_HDR_UOM_FIRM_ROW and stripe and c not in range(PO_FIRST_WEEK_COL, total_col):
                     cell.fill = PatternFill("solid", fgColor="F2F2F2")
     else:
-        ws.cell(row=PO_HDR_UOM_FIRM_ROW + 1, column=2, value="(該当品目なし)")
+        ws.cell(row=PO_HDR_UOM_FIRM_ROW + 1, column=2, value="(No matching items)")
 
     # ---- Firm/Forecastの色分けは、直接の塗りつぶしではなく条件付き書式にする
     # (発注数量が0の週は色を付けない・数字も表示しない、という要望のため)。

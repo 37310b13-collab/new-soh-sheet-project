@@ -284,11 +284,11 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
 
     ' ---- レターヘッド: タイトル・TO/FROM/CCは仮の文字列に戻す(Hazardousの実際の宛先を
     ' そのまま複製しない。カテゴリによって担当者・取引先が異なる可能性があるため) ----
-    newSh.Range("B8").Value = "TO：（サプライヤー／TTAF担当者名を入力）"
-    newSh.Range("B9").Value = "　　　　　（会社名）"
-    newSh.Range("B11").Value = "CC：（必要であれば入力）"
-    newSh.Range("B13").Value = "FROM：（発行者名）"
-    newSh.Range("B14").Value = "　　　　　（自社名）"
+    newSh.Range("B8").Value = "TO: (Enter supplier / TTAF contact name)"
+    newSh.Range("B9").Value = "     (Company name)"
+    newSh.Range("B11").Value = "CC: (Enter if needed)"
+    newSh.Range("B13").Value = "FROM: (Issuer name)"
+    newSh.Range("B14").Value = "     (Our company name)"
     newSh.Range("B17").Value = titleText
     newSh.Range(PO_BASEWEEK_ADDR).Value = oldBaseWeek
     newSh.Range(PO_REVISION_ADDR).Value = oldRevision
@@ -320,7 +320,7 @@ Private Function ClonePODraftLetterheadIfNeeded(thisWb As Workbook, targetSheetN
         Next i
     End If
     If addedItems = 0 Then
-        newSh.Cells(PO_DATA_START_ROW, 2).Value = "(該当品目なし)"
+        newSh.Cells(PO_DATA_START_ROW, 2).Value = "(No matching items)"
     End If
 
     ' ---- 印刷範囲を、実際のデータ行数に合わせて更新する ----
