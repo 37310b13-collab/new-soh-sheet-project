@@ -2,78 +2,104 @@ Attribute VB_Name = "RefreshData_Shipments"
 Option Explicit
 
 ' ============================================================================
-' RefreshData_Shipments モジュール
+' RefreshData_Shipments module
 '
-'   RefreshShipments : 「CSA Report」を選択すると、その中の「Shipping Schedule」シートを
-'                      丸ごと取り込み、T_Shipments（発注〜着荷の実績・予定）を更新する。
-'                      PO No単位ではなく全件まとめて取り込む(発注から着荷まで4〜6ヶ月かかり、
-'                      常に複数件のPOが並行して進むため)。
+'   RefreshShipments : When you select the "CSA Report", imports its
+'                      "Shipping Schedule" sheet in full and updates
+'                      T_Shipments (order-to-arrival actuals/plans).
+'                      Imports everything at once rather than per PO No
+'                      (since order-to-arrival takes 4-6 months and several
+'                      POs are always in progress in parallel).
 '
-' 列: D=CSA Product Code(材料コード)、G=CSA Order firm month(発注月)、I=CSA PO No.、
-' K=Vessel、L=Container、N=Confirmed Order Qty、O=Original ETD、
-' Q=2 week transit to TTAF(Latest ETA[P列]+14日。実際の入荷予測に使うのはP列そのものでは
-' なくこちら)、S=Received At TTAF、T=Status。
-' CSA Product CodeはTTAF PART NUMBERと異なり、既にこちらのRM_Codeとほぼ同じ表記のため、
-' TTAF_Code/Description経由の照合(RefreshData_StockActuals側のResolveTTAFPart)ではなく、
-' RM_Code同士を直接(大文字小文字・前後空白を無視して)照合する。
+' Columns: D=CSA Product Code (material code), G=CSA Order firm month
+' (order month), I=CSA PO No., K=Vessel, L=Container, N=Confirmed Order
+' Qty, O=Original ETD, Q=2 week transit to TTAF (Latest ETA [column P] +
+' 14 days - this column, not column P itself, is what's used for the
+' actual arrival forecast), S=Received At TTAF, T=Status.
+' Unlike TTAF PART NUMBER, CSA Product Code is already spelled almost
+' identically to our own RM_Code, so instead of matching via
+' TTAF_Code/Description (ResolveTTAFPart on the RefreshData_StockActuals
+' side), this matches RM_Codes directly against each other
+' (case/leading-trailing-space insensitive).
 '
-' 【重要】T_Shipmentsの一意キーについて。以前は「材料名＋PO番号」だけで行を一意に
-' 管理していたが、実際のCSA Reportでは同じ材料・同じPO番号が複数回に分けて届く分割出荷が
-' 頻繁にある(1つのPOで5行に分かれているケース等も普通にある)。材料名＋PO番号だけの
-' キーだとこれらが同じ行として扱われ、後から読んだ行が前の行を上書きし、実際には届いて
-' いるはずの数量が静かに失われる不具合があった(このプロジェクトの実データで55組も
-' 該当箇所が見つかった)。そのため、コンテナ番号(L列)・Original ETD(O列)まで含めた
-' 複合キーで行を区別する。それでも完全に同じ組み合わせ(同じコンテナに複数バッチが
-' 混載されている等、ごく稀なケース)が複数行ある場合だけ、ファイル内の出現順の連番で
-' 最終的に区別する(DateKeyStr/BuildShipmentRowIndex参照)。
-' 既存の運用中ブックのT_Shipmentsに、この複合キーに必要なVessel/Container/Original_ETD列
-' (10〜12列目)を追加する移行作業は完了済み(一度だけ実行するAddShipmentSplitColumns・
-' CleanupOrphanedPreSplitShipmentRowsマクロは、実施済みのためこのモジュールから削除した)。
+' [Important] About T_Shipments' unique key. It used to manage rows
+' uniquely by "material name + PO number" alone, but in real CSA Reports,
+' the same material and PO number frequently arrive as a split shipment
+' across multiple rows (it's common for a single PO to be split across 5
+' rows). With a key of just material name + PO number, these rows were
+' treated as the same row, so a later-read row would overwrite an earlier
+' one and quantities that had actually arrived were silently lost (55
+' such cases were found in this project's real data). So rows are now
+' distinguished by a composite key that also includes the container
+' number (column L) and Original ETD (column O). Even then, in the rare
+' case where multiple rows share the exact same combination (e.g. several
+' batches consolidated into the same container), they are finally
+' distinguished by a sequence number based on their order of appearance in
+' the file (see DateKeyStr/BuildShipmentRowIndex).
+' The migration that added the Vessel/Container/Original_ETD columns
+' (columns 10-12) needed for this composite key to the T_Shipments of an
+' existing, already-in-use workbook has already been completed (the
+' one-time AddShipmentSplitColumns/CleanupOrphanedPreSplitShipmentRows
+' macros have been removed from this module since they were already run).
 '
-' T_ShipmentsはGrid_Incoming(材料×週のSUMIFS)から大量に参照される重量級テーブルのため、
-' RefreshBOM(M_BOM)・RefreshWeeklyBatches(PP_Grid)と同じ理由で、新規行はまとめて件数を
-' 数えてから1回のResizeで追加し、既存行の更新も行単位でまとめて読み書きする(1件ずつ
-' ListRows.Addを呼ぶとExcelが応答なしになる恐れがあるため)。
+' Since T_Shipments is a heavyweight table referenced extensively by
+' Grid_Incoming (a material x week SUMIFS), for the same reason as
+' RefreshBOM (M_BOM)/RefreshWeeklyBatches (PP_Grid), new rows are first
+' all counted and then added with a single Resize, and updates to existing
+' rows are also read/written a whole row at a time (calling ListRows.Add
+' one row at a time risks making Excel stop responding).
 '
-' 【発注管理(Material_Detail連携)について】T_Shipmentsを取り込んだ後、
-' SyncMaterialDetailOrders を呼び、Material_DetailのOrder行(発注予定,kg)・PO_No行
-' (Order行の直下)を、CSA ReportのStatus列に合わせて自動更新する。
-'   ・Status="Unconfirmed"でETAが未定(TBC): Order_Month + M_RawMaterials[LeadTimeWeeks]
-'     から仮の週を計算し、その週にOrder/PO_Noセルを移動する(あくまで仮の予測)。
-'   ・Status="Unconfirmed"/"In-transit"でETAが判明: T_Shipments[Effective_Week](Q列の
-'     日付が反映済み)の週に移動する。ETAが更新されるたびに追従する。
-'   ・Status="TTAF Stock": 最後に分かっている週に固定し、PO_No cell has "[DONE]" appended
-'     Grid_Incomingの計算対象から除外する(数字自体は履歴として残す)。
-'   ・同じPO番号で出荷が複数行に分かれている場合(分割出荷)、Order/PO_Noセルもその週数分に
-'     自動的に分割する。
-'   ・セルを動かした/分割した/確定させた場合は、変更内容をセルコメントに残す。
-' Material_Detailにブロックが無い材料(BOMで使われない梱包資材等)や、PO_Noが
-' Material_Detailのどこにも入力されていない出荷は対象外(Grid_Incoming側でT_Shipmentsを
-' 直接見るフォールバックが効く)。
+' [About order management (Material_Detail integration)] After importing
+' T_Shipments, SyncMaterialDetailOrders is called to automatically update
+' Material_Detail's Order row (Planned, kg) and PO_No row (right below the
+' Order row) to match the CSA Report's latest Status column.
+'   - Status="Unconfirmed" with ETA not yet set (TBC): a provisional week
+'     is calculated from Order_Month + M_RawMaterials[LeadTimeWeeks], and
+'     the Order/PO_No cells are moved to that week (strictly a provisional
+'     forecast).
+'   - Status="Unconfirmed"/"In-transit" with a known ETA: moved to the week
+'     of T_Shipments[Effective_Week] (which already reflects column Q's
+'     date). Follows along every time the ETA is updated.
+'   - Status="TTAF Stock": fixed at the last known week, the PO_No cell
+'     has "[DONE]" appended, and it's excluded from Grid_Incoming's
+'     calculation target (the number itself is kept as history).
+'   - When the same PO number's shipment is split across multiple rows
+'     (split shipment), the Order/PO_No cells are also automatically split
+'     across that many weeks.
+'   - Whenever a cell is moved/split/finalized, the change is recorded in
+'     a cell comment.
+' Materials with no block on Material_Detail (e.g. packaging materials not
+' used in the BOM) and shipments whose PO_No doesn't appear anywhere on
+' Material_Detail are excluded (Grid_Incoming's fallback that reads
+' T_Shipments directly still covers these).
 '
-' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
-' モジュール冒頭のコメントを参照してください。
+' For the overall design rationale (performance, DataBodyRange,
+' DisplayAlerts, etc.), see the comment at the top of the
+' RefreshData_Utilities module.
 ' ============================================================================
 
 Sub RefreshShipments()
     Dim srcPath As Variant
-    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
-        "CSA Report（Shipping Schedule取込み）ファイルを選択してください")
+    srcPath = Application.GetOpenFilename("Excel Files (*.xlsx),*.xlsx", , _
+        "Please select the CSA Report (Shipping Schedule import) file")
     If srcPath = False Then Exit Sub
 
     Dim srcWb As Workbook
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
-    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
-    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    ' For a file with "read-only recommended" set, leaving DisplayAlerts=True
+    ' causes a confirmation dialog to appear during Workbooks.Open, which
+    ' destabilizes processing while waiting for a response (this was the
+    ' cause of a bug where srcWb ultimately failed to be obtained correctly)
+    ' - so suppress it.
     Application.DisplayAlerts = False
 
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
 
-    ' 同じCSA Report内のピボットが更新し忘れられたまま送られてくる可能性があるため
-    ' (RefreshTTAFStockと同じ理由)、データを読む前に必ず更新しておく。
+    ' A pivot table within the same CSA Report might be sent without being
+    ' refreshed first (same reasoning as RefreshTTAFStock), so always
+    ' refresh it before reading any data.
     srcWb.RefreshAll
     DoEvents
 
@@ -81,17 +107,18 @@ Sub RefreshShipments()
     Dim shipTbl As ListObject: Set shipTbl = thisWb.Sheets("T_Shipments").ListObjects("T_Shipments")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
-    ' 複合キー対応(Vessel/Container/Original_ETD列)の移行がまだの場合、このまま進めると
-    ' 列位置がずれて実行時エラーで異常終了する(不可解なエラーになるのを避けるため、
-    ' ここで分かりやすいメッセージを出して安全に中断する)。
+    ' If the migration for the composite-key columns (Vessel/Container/
+    ' Original_ETD) hasn't happened yet, continuing as-is would shift
+    ' column positions and abort with a runtime error (to avoid a
+    ' confusing error, show a clear message here and stop safely instead).
     If shipTbl.ListColumns.Count < 12 Then
         srcWb.Close SaveChanges:=False
         Application.Calculation = xlCalculationAutomatic
         Application.ScreenUpdating = True
         Application.DisplayAlerts = True
-        MsgBox "T_Shipmentsの列構成が想定と異なります(Vessel/Container/Original_ETD列が" & vbCrLf & _
-               "見つかりません)。build_soh.pyで生成し直したブックか、列構成が壊れている" & vbCrLf & _
-               "可能性があります。シートの構成を確認してください。", vbExclamation
+        MsgBox "T_Shipments' column layout doesn't match what's expected (the Vessel/Container/" & vbCrLf & _
+               "Original_ETD columns were not found). This may be a workbook that needs to be" & vbCrLf & _
+               "regenerated with build_soh.py, or the column layout may be broken. Please check the sheet's structure.", vbExclamation
         Exit Sub
     End If
 
@@ -103,21 +130,26 @@ Sub RefreshShipments()
 
     Dim shipIdx As Object: Set shipIdx = BuildShipmentRowIndex(shipTbl)
 
-    ' シートを1セルずつ読むと遅くなるため、余裕を持った範囲を1回だけ配列で読み込んでから走査する。
+    ' Reading the sheet cell by cell is slow, so read a generously sized
+    ' range as a single array read, then scan it.
     Const MAX_ROWS As Long = 3000
     Dim data As Variant
     data = sh.Range(sh.Cells(2, 1), sh.Cells(MAX_ROWS, 20)).Value
 
-    ' 【重要】T_ShipmentsはGrid_Incoming(材料×週のSUMIFS、90材料×104週分)から大量に参照される
-    ' テーブル。以前M_BOM(RefreshBOM)・PP_Grid(RefreshWeeklyBatches)で、新規行をListRows.Addで
-    ' 1件ずつ追加してExcelが応答なしになった不具合と同じ構造(重量級テーブル×大量の1件ずつAdd)
-    ' のため、ここでも新規行はまず件数を数えてから1回のResizeでまとめて追加する。既存行の
-    ' 更新も、行ごとに複数セルを個別に書き込むのではなく行単位でまとめて読み書きする。
+    ' [Important] T_Shipments is a table referenced extensively by
+    ' Grid_Incoming (a material x week SUMIFS, 90 materials x 104 weeks).
+    ' This is the same structure (heavyweight table x adding many rows one
+    ' at a time) that previously caused Excel to stop responding when new
+    ' rows were added one at a time via ListRows.Add to M_BOM
+    ' (RefreshBOM)/PP_Grid (RefreshWeeklyBatches), so here too, new rows
+    ' are first counted and then added all at once with a single Resize.
+    ' Updates to existing rows are also read/written a whole row at a
+    ' time, rather than writing to individual cells one at a time per row.
     Dim r As Long, added As Long, updated As Long, unresolved As String
     added = 0: updated = 0: unresolved = ""
-    Dim updateVals As Object: Set updateVals = CreateObject("Scripting.Dictionary")  ' 行番号 -> Array(qty,eta,receivedDate,status,orderMonth,vessel,container,origEtd)
-    Dim newRecords As Object: Set newRecords = CreateObject("Scripting.Dictionary")  ' 複合キー -> Array(partName,poNo,qty,eta,receivedDate,status,orderMonth,vessel,container,origEtd)
-    ' 複合キーの元(材料+PO番号+コンテナ+OriginalETD)ごとの、このファイル内での出現回数
+    Dim updateVals As Object: Set updateVals = CreateObject("Scripting.Dictionary")  ' row number -> Array(qty,eta,receivedDate,status,orderMonth,vessel,container,origEtd)
+    Dim newRecords As Object: Set newRecords = CreateObject("Scripting.Dictionary")  ' composite key -> Array(partName,poNo,qty,eta,receivedDate,status,orderMonth,vessel,container,origEtd)
+    ' The number of times each composite-key base (material+PO number+container+OriginalETD) has appeared so far in this file
     Dim seqCounter As Object: Set seqCounter = CreateObject("Scripting.Dictionary")
     seqCounter.CompareMode = vbTextCompare
 
@@ -131,9 +163,11 @@ Sub RefreshShipments()
         If rmCodeIdx.Exists(kRow) Then
             matchedPart = rmCodeIdx(kRow)
         Else
-            ' "0"(ゼロ)/"O"(オー)表記ゆれの読み替えを試す(RefreshData_StockActualsの
-            ' ResolveTTAFPartと同じ理由。TTAF側の元データで度々見つかる表記ゆれ。
-            ' 例: CSA ReportのCSA Product Codeが"0JN"、M_RawMaterials側は正式に"OJN")。
+            ' Try reading it as the "0" (zero)/"O" (letter O) spelling
+            ' variant (same reasoning as RefreshData_StockActuals'
+            ' ResolveTTAFPart - a spelling variant repeatedly found in the
+            ' TTAF-side source data. E.g. the CSA Report's CSA Product Code
+            ' is "0JN" while M_RawMaterials' official spelling is "OJN").
             Dim kZeroToO As String: kZeroToO = Replace(kRow, "0", "O")
             If kZeroToO <> kRow And rmCodeIdx.Exists(kZeroToO) Then
                 matchedPart = rmCodeIdx(kZeroToO)
@@ -141,8 +175,8 @@ Sub RefreshShipments()
                 Dim kOToZero As String: kOToZero = Replace(kRow, "O", "0")
                 If kOToZero <> kRow And rmCodeIdx.Exists(kOToZero) Then matchedPart = rmCodeIdx(kOToZero)
             End If
-            ' それでも見つからなければ、記号ゆれでは吸収しきれない既知の別名(BuildKnownAliasIndex
-            ' 参照)を試す。
+            ' If still not found, try a known alias that symbol-variant
+            ' handling alone can't absorb (see BuildKnownAliasIndex).
             If Len(matchedPart) = 0 And knownAliasIdx.Exists(kRow) Then
                 Dim aliasKey As String: aliasKey = NormalizeText(CStr(knownAliasIdx(kRow)))
                 If rmCodeIdx.Exists(aliasKey) Then matchedPart = rmCodeIdx(aliasKey)
@@ -157,7 +191,7 @@ Sub RefreshShipments()
         Dim qty As Variant: qty = data(r, 14)
         If Not IsNumeric(qty) Then qty = 0
 
-        Dim eta As Variant: eta = data(r, 17)  ' Q列(2 week transit to TTAF)。P列そのものは使わない
+        Dim eta As Variant: eta = data(r, 17)  ' column Q (2 week transit to TTAF). Column P itself is not used
         If Not IsDate(eta) Then eta = Empty
 
         Dim receivedDate As Variant: receivedDate = data(r, 19)
@@ -194,14 +228,18 @@ Sub RefreshShipments()
 NextRow:
     Next r
 
-    ' ---- 既存行の更新をまとめて反映(行ごとに読み込み→書き換え→書き戻しを1回ずつ) ----
-    ' 【重要・過去からの不具合を今回発見して修正】8列目(Effective_Week)は数式セルのため、
-    ' 行全体を1回の.Range.Value=配列で書き戻すと、.Valueで読み込んだ時点の「計算済みの
-    ' 値」がそのまま書き込まれてしまい、数式そのものが壊れて固定値になってしまう
-    ' (以前はこのバグにより、一度でも更新された行のEffective_Weekがその時点の値のまま
-    ' 永久に凍結され、その後Latest_ETA/Received_Dateが変わっても週がまったく
-    ' 追従しなくなっていた)。8列目を挟んで前半(1〜7列)・後半(9〜12列)の2つに
-    ' 分けて書き戻すことで、8列目の数式には一切触れないようにする。
+    ' ---- Apply updates to existing rows in bulk (read -> rewrite -> write back, once per row) ----
+    ' [Important - a long-standing bug found and fixed during this pass]
+    ' Since column 8 (Effective_Week) is a formula cell, writing the whole
+    ' row back in one shot via .Range.Value = array would write the
+    ' "already-calculated value" as of when .Value was read, destroying
+    ' the formula itself and turning it into a fixed value (previously,
+    ' this bug meant that once a row had been updated even once,
+    ' Effective_Week stayed frozen at its value at that moment forever,
+    ' and even when Latest_ETA/Received_Date changed afterward, the week
+    ' never followed along). To avoid touching column 8's formula at all,
+    ' the write-back is split into two parts around it: the first half
+    ' (columns 1-7) and the second half (columns 9-12).
     Dim rowKey As Variant
     For Each rowKey In updateVals.Keys
         Dim rowN As Long: rowN = CLng(rowKey)
@@ -229,8 +267,10 @@ NextRow:
         rowRng.Cells(1, 9).Resize(1, 4).Value = rightPart
     Next rowKey
 
-    ' ---- 新規行をまとめて追加(1回のResize+配列書き込み。Effective_Week列は計算列の
-    ' 自動複製が効かないため、build_soh.pyのweek_index_formula_clampedと同じ式を明示的に書く) ----
+    ' ---- Add new rows in bulk (a single Resize + array write. Since the
+    ' Effective_Week column doesn't benefit from automatic formula-column
+    ' duplication, the same expression as build_soh.py's
+    ' week_index_formula_clamped is written explicitly) ----
     If newRecords.Count > 0 Then
         Dim oldRowCount As Long: oldRowCount = shipTbl.ListRows.Count
         Dim nWeeksCal As Long: nWeeksCal = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
@@ -243,10 +283,10 @@ NextRow:
         For Each recKey In newRecords.Keys
             ni = ni + 1
             Dim rec As Variant: rec = newRecords(recKey)
-            Dim absRow As Long: absRow = oldRowCount + 1 + ni  ' このテーブルの新規行の実シート行番号(ヘッダー1行分+既存行+ni)
+            Dim absRow As Long: absRow = oldRowCount + 1 + ni  ' the actual sheet row number of this table's new row (1 header row + existing rows + ni)
             outArr(ni, 1) = rec(0)   ' Part Name
             outArr(ni, 2) = rec(1)   ' PO_No
-            outArr(ni, 3) = Empty    ' Order_Date(手入力欄のため触れない)
+            outArr(ni, 3) = Empty    ' Order_Date (hand-entered - not touched)
             outArr(ni, 4) = rec(2)   ' Confirmed_Qty
             outArr(ni, 5) = rec(3)   ' Latest_ETA
             outArr(ni, 6) = rec(4)   ' Received_Date
@@ -261,41 +301,48 @@ NextRow:
         shipTbl.ListRows(oldRowCount + 1).Range.Resize(nNew, 12).Formula = outArr
     End If
 
-    ' 【重要】Application.Calculation=xlCalculationManualのままなので、既存行のLatest_ETA/
-    ' Received_Date更新も新規行のEffective_Week数式も、このままではまだ再計算されていない
-    ' (SyncMaterialDetailOrdersがDataBodyRange.Valueで読むのは古いキャッシュ値のままになる
-    ' 恐れがある)。T_Shipmentsの範囲だけを明示的に再計算する(ブック全体の再計算は避ける)。
+    ' [Important] Application.Calculation is still xlCalculationManual, so
+    ' neither the existing rows' Latest_ETA/Received_Date updates nor the
+    ' new rows' Effective_Week formulas have been recalculated yet as
+    ' things stand (SyncMaterialDetailOrders reading via
+    ' DataBodyRange.Value would risk getting the stale cached values).
+    ' Explicitly recalculate just the T_Shipments range (avoiding a
+    ' whole-workbook recalculation).
     shipTbl.Range.Calculate
 
-    ' T_Shipmentsの取り込みが終わった後、Material_DetailのOrder/PO_No行をCSA Reportの
-    ' 最新のStatus/ETAに合わせて同期する(モジュール冒頭コメント参照)。
+    ' After T_Shipments has been imported, sync Material_Detail's
+    ' Order/PO_No rows to match the CSA Report's latest Status/ETA (see the
+    ' comment at the top of this module).
     Dim mdChanged As Long, mdFrozen As Long
     Call SyncMaterialDetailOrders(thisWb, rmTbl, shipTbl, mdChanged, mdFrozen)
 
-    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
-    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
-    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    ' Guard the cleanup step itself against failing with "object variable
+    ' not set," even in the case where srcWb has already become Nothing
+    ' (some automated process on the source file's side can close the
+    ' workbook right after it's opened).
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
 
     Dim msg As String
-    msg = "T_Shipments を更新しました。" & vbCrLf & "追加: " & added & " 件、更新: " & updated & " 件" & vbCrLf & _
-          "（PO No＋材料の組み合わせが同じ行は上書きされます。Order_Date欄は手入力のため上書きしません）" & vbCrLf & vbCrLf & _
-          "Material_DetailのOrder/PO_No自動更新: " & mdChanged & " 件(うちTTAF在庫として確定・計算対象から除外: " & mdFrozen & " 件)" & vbCrLf & _
-          "（変更箇所にはセルコメントを付けています）"
+    msg = "T_Shipments has been updated." & vbCrLf & "Added: " & added & ", updated: " & updated & vbCrLf & _
+          "(Rows with the same PO No + material combination are overwritten. The Order_Date field is hand-entered, so it is never overwritten.)" & vbCrLf & vbCrLf & _
+          "Material_Detail Order/PO_No auto-updates: " & mdChanged & " (of which finalized as TTAF Stock and excluded from calculation: " & mdFrozen & ")" & vbCrLf & _
+          "(Cell comments have been left at each changed location)"
     If Len(unresolved) > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "材料コードが見つからず未反映の行:" & vbCrLf & unresolved
+        msg = msg & vbCrLf & vbCrLf & "Rows whose material code could not be matched and were not applied:" & vbCrLf & unresolved
     End If
     MsgBox msg, vbInformation
     Exit Sub
 
 ErrHandler:
-    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
-    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
-    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
-    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    ' [Important] On Error Resume Next automatically clears the Err object
+    ' (a VBA quirk), so the error number/description must be saved into
+    ' variables before any cleanup code runs. Skipping this means the
+    ' MsgBox below always shows "(blank)" and the real cause of the error
+    ' is never known (this actually happened and made troubleshooting
+    ' impossible, hence the fix).
     Dim errNum2 As Long: errNum2 = Err.Number
     Dim errMsg2 As String: errMsg2 = Err.Description
     On Error Resume Next
@@ -303,12 +350,14 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum2 & ") " & errMsg2, vbCritical
+    MsgBox "An error occurred during the refresh: (" & errNum2 & ") " & errMsg2, vbCritical
 End Sub
 
-' M_RawMaterialsのPart Name(=RM_Code)自体を正規化テキストでインデックス化する。
-' TTAF_Code/Descriptionでの照合(RefreshData_StockActuals側のBuildTTAFCodeAndDescIndex)とは
-' 別物: CSA Product Codeは既にRM_Codeとほぼ同じ表記のため、RM_Code同士を直接照合する方が確実。
+' Indexes M_RawMaterials' Part Name (=RM_Code) itself by normalized text.
+' Distinct from the TTAF_Code/Description matching
+' (BuildTTAFCodeAndDescIndex on the RefreshData_StockActuals side): since
+' CSA Product Code is already spelled almost identically to RM_Code,
+' matching RM_Codes directly against each other is more reliable.
 Private Sub BuildRMCodeIndex(rmTbl As ListObject, rmCodeIdx As Object)
     Dim rmN As Long: rmN = rmTbl.ListRows.Count
     If rmN > 0 Then
@@ -321,37 +370,46 @@ Private Sub BuildRMCodeIndex(rmTbl As ListObject, rmCodeIdx As Object)
     End If
 End Sub
 
-' CSA Report側の品名表記が、M_RawMaterials側の正式なPart Nameと大きく異なる既知のケースを
-' 個別に対応する(単純な記号ゆれ・0/O表記ゆれでは吸収しきれないもの)。
-' キーはCSA Product Code側の表記をNormalizeTextしたもの、値はM_RawMaterials側の正式な
-' Part Name(こちらもRefreshShipments側でNormalizeTextしてrmCodeIdxと突き合わせる)。
-' 新しいケースが見つかったら、ここに1行追加するだけで対応できる。
+' Handles known cases individually where the CSA Report side's name
+' spelling differs significantly from M_RawMaterials' official Part Name
+' (cases that simple symbol-variant or 0/O spelling handling can't
+' absorb). The key is the CSA Product Code side's spelling run through
+' NormalizeText; the value is M_RawMaterials' official Part Name (this too
+' is run through NormalizeText on the RefreshShipments side and matched
+' against rmCodeIdx). When a new case is found, it can be handled just by
+' adding one line here.
 Private Function BuildKnownAliasIndex() As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     idx.CompareMode = vbTextCompare
-    ' CSA Reportの"PET FILM(900*1000)"は、M_RawMaterials上は"Ester Film"として登録されている
-    ' (当初"PP Film"だと聞いていたが、確認の結果こちらが正しいと判明した)。
+    ' The CSA Report's "PET FILM(900*1000)" is registered in
+    ' M_RawMaterials as "Ester Film" (we were initially told it was "PP
+    ' Film", but confirmed this is the correct one).
     idx(NormalizeText("PET FILM(900*1000)")) = "Ester Film"
-    ' CSA ReportのCSA Product Codeが"TPP-1469"となっている材料は、M_RawMaterials上は
-    ' "CHEM-1850"として正しく登録されている。これはTTAF側のCSA Report生成時の表記ミスで
-    ' あることが確認できており、TTAF側に修正を依頼済みだが、(1)修正が反映されるまでの
-    ' 期間、(2)修正後もこのPOがCSA Reportから外れるまでの間は過去の行に古い表記が
-    ' 残り続ける可能性があるため、両方の表記を受け付けられるようここに残しておく
-    ' (TTAF側が"CHEM-1850"表記に直った後も、rmCodeIdx側の完全一致でそのまま正しく
-    ' 解決されるので、この別名エントリを後から削除する必要はない)。
+    ' The material whose CSA Product Code in the CSA Report is "TPP-1469"
+    ' is correctly registered in M_RawMaterials as "CHEM-1850". This has
+    ' been confirmed to be a spelling mistake on the TTAF side when
+    ' generating the CSA Report, and TTAF has already been asked to fix
+    ' it, but (1) during the period before the fix takes effect, and (2)
+    ' even after the fix, until this PO drops out of the CSA Report, past
+    ' rows may keep the old spelling - so this is kept here to accept both
+    ' spellings (once the TTAF side is fixed to "CHEM-1850", the exact
+    ' match on the rmCodeIdx side resolves it correctly on its own, so
+    ' there is no need to remove this alias entry afterward).
     idx(NormalizeText("TPP-1469")) = "CHEM-1850"
     Set BuildKnownAliasIndex = idx
 End Function
 
-' T_Shipmentsの複合キー(材料名+PO番号+コンテナ+OriginalETD+出現順連番)->行番号の
-' インデックスを1回だけ作る。RefreshShipments側の複合キー生成と全く同じロジックで、
-' T_Shipments自身の現在の並び順から連番を振り直す(モジュール冒頭コメント参照)。
+' Builds, once, an index of T_Shipments' composite key (material name + PO
+' number + container + OriginalETD + appearance-order sequence number) ->
+' row number. Uses exactly the same composite-key generation logic as the
+' RefreshShipments side, re-numbering the sequence from T_Shipments' own
+' current row order (see the comment at the top of this module).
 Private Function BuildShipmentRowIndex(tbl As ListObject) As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     Dim n As Long: n = tbl.ListRows.Count
     If n > 0 Then
         Dim data As Variant
-        data = tbl.DataBodyRange.Value  ' 全12列(Part Name...Original_ETD)をまとめて読む
+        data = tbl.DataBodyRange.Value  ' read all 12 columns (Part Name...Original_ETD) together
         Dim seqCounter As Object: Set seqCounter = CreateObject("Scripting.Dictionary")
         seqCounter.CompareMode = vbTextCompare
         Dim i As Long
@@ -375,8 +433,9 @@ Private Function BuildShipmentRowIndex(tbl As ListObject) As Object
     Set BuildShipmentRowIndex = idx
 End Function
 
-' 日付(またはEmpty)を、複合キーに使うための安定した文字列に変換する
-' (地域設定による日付表示の違いに影響されないよう、シリアル値の整数部分をそのまま使う)。
+' Converts a date (or Empty) into a stable string for use in a composite
+' key (uses the serial value's integer part as-is, so it's unaffected by
+' regional date-display differences).
 Private Function DateKeyStr(v As Variant) As String
     If IsEmpty(v) Then
         DateKeyStr = ""
@@ -387,19 +446,25 @@ Private Function DateKeyStr(v As Variant) As String
     End If
 End Function
 
-' 列: Part Name(1), PO_No(2), Order_Date(3, 手入力のため触れない), Confirmed_Qty(4),
-' Latest_ETA(5), Received_Date(6), Status(7), Effective_Week(8, 数式), Order_Month(9),
-' Vessel(10), Container(11), Original_ETD(12)。
-' Effective_Week(8列目)の数式は、RefreshShipments側で新規行をまとめて書き込む際に
-' build_soh.pyのweek_index_formula_clampedと同じ式を明示的に生成している。
-' Vessel/Container/Original_ETDは、分割出荷の各行を一意に区別するための複合キーに
-' 使われる(BuildShipmentRowIndex/DateKeyStr参照)。
+' Columns: Part Name(1), PO_No(2), Order_Date(3, hand-entered - not
+' touched), Confirmed_Qty(4), Latest_ETA(5), Received_Date(6), Status(7),
+' Effective_Week(8, formula), Order_Month(9), Vessel(10), Container(11),
+' Original_ETD(12).
+' The Effective_Week (column 8) formula is explicitly generated using the
+' same expression as build_soh.py's week_index_formula_clamped when
+' RefreshShipments writes new rows in bulk.
+' Vessel/Container/Original_ETD are used in the composite key that
+' uniquely distinguishes each row of a split shipment (see
+' BuildShipmentRowIndex/DateKeyStr).
 
-' Material_DetailのOrder行(発注予定,kg)・PO_No行(Order行の直下)を、T_Shipmentsの最新の
-' Status/Effective_Weekに合わせて自動更新する(モジュール冒頭コメント参照)。
-' 材料1件につきOrder行・PO_No行の2行だけをまとめて読み込み→メモリ上で書き換え→
-' まとめて書き戻す(セル単位の読み書きはしない。重量級テーブルではないため件数的に
-' 大きな問題にはなりにくいが、既存の設計方針に合わせておく)。
+' Automatically updates Material_Detail's Order row (Planned, kg) and
+' PO_No row (right below the Order row) to match T_Shipments' latest
+' Status/Effective_Week (see the comment at the top of this module). For
+' each material, only the 2 rows (Order row, PO_No row) are read in bulk
+' -> rewritten in memory -> written back in bulk (no cell-by-cell
+' reads/writes - this isn't a heavyweight table so it's unlikely to matter
+' much either way, but this keeps it consistent with the established
+' design approach).
 Private Sub SyncMaterialDetailOrders(thisWb As Workbook, rmTbl As ListObject, shipTbl As ListObject, _
         ByRef changedCells As Long, ByRef frozenCells As Long)
     changedCells = 0
@@ -413,10 +478,10 @@ Private Sub SyncMaterialDetailOrders(thisWb As Workbook, rmTbl As ListObject, sh
     Dim shipN As Long: shipN = shipTbl.ListRows.Count
     If shipN = 0 Then Exit Sub
     Dim shipData As Variant: shipData = shipTbl.DataBodyRange.Value
-    ' shipData列: 1=Part Name,2=PO_No,3=Order_Date,4=Confirmed_Qty,5=Latest_ETA,
-    '             6=Received_Date,7=Status,8=Effective_Week,9=Order_Month
+    ' shipData columns: 1=Part Name,2=PO_No,3=Order_Date,4=Confirmed_Qty,5=Latest_ETA,
+    '                    6=Received_Date,7=Status,8=Effective_Week,9=Order_Month
 
-    ' "材料名|PO番号" -> その組み合わせのshipData行番号一覧(分割出荷は複数行になる)
+    ' "material name|PO number" -> list of shipData row numbers for that combination (a split shipment produces multiple rows)
     Dim byMatPo As Object: Set byMatPo = CreateObject("Scripting.Dictionary")
     byMatPo.CompareMode = vbTextCompare
     Dim i As Long
@@ -436,8 +501,9 @@ NextShipRow:
     Next i
     If byMatPo.Count = 0 Then Exit Sub
 
-    ' M_RawMaterialsのLeadTimeWeeksを材料名で引けるように1回だけ索引化
-    ' (ETA未定(TBC)の仮予測に使う)。
+    ' Index M_RawMaterials' LeadTimeWeeks by material name once, so it can
+    ' be looked up (used for the provisional forecast when ETA is not yet
+    ' set (TBC)).
     Dim ltIdx As Object: Set ltIdx = CreateObject("Scripting.Dictionary")
     ltIdx.CompareMode = vbTextCompare
     Dim rmN As Long: rmN = rmTbl.ListRows.Count
@@ -455,7 +521,7 @@ NextShipRow:
         Next li
     End If
 
-    ' Material_Detailの各ブロックの「Order」行位置を1回だけ収集する(PO_No行はその1つ下)。
+    ' Collect the "Order" row position for each block on Material_Detail once (the PO_No row is the one right below it).
     Dim lastRow As Long: lastRow = mdSheet.Cells(mdSheet.Rows.Count, 2).End(xlUp).Row
     Dim orderRowByMat As Object: Set orderRowByMat = CreateObject("Scripting.Dictionary")
     orderRowByMat.CompareMode = vbTextCompare
@@ -464,7 +530,7 @@ NextShipRow:
     For r = MD_HEADER_ROW + 1 To lastRow
         Dim colAVal As String: colAVal = Trim(CStr(mdSheet.Cells(r, 1).Value))
         If Len(colAVal) > 0 Then curMatCode = colAVal
-        If Len(curMatCode) > 0 And Trim(CStr(mdSheet.Cells(r, 2).Value)) = "Order(発注予定,kg)" Then
+        If Len(curMatCode) > 0 And Trim(CStr(mdSheet.Cells(r, 2).Value)) = "Order (Planned, kg)" Then
             If Not orderRowByMat.Exists(curMatCode) Then orderRowByMat.Add curMatCode, r
         End If
     Next r
@@ -473,7 +539,7 @@ NextShipRow:
     Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
     Dim lastWeekCol As Long: lastWeekCol = MD_WEEK_START_COL + nWeeks - 1
 
-    ' 出荷情報の"材料名"側だけを抜き出し、重複を除いて1材料につき1回だけ処理する。
+    ' Extract just the "material name" side of the shipment info, dedupe it, and process each material only once.
     Dim matNamesSeen As Object: Set matNamesSeen = CreateObject("Scripting.Dictionary")
     matNamesSeen.CompareMode = vbTextCompare
     Dim mpKeyOuter As Variant
@@ -482,16 +548,17 @@ NextShipRow:
         Dim matName As String: matName = Left(CStr(mpKeyOuter), sepPos - 1)
         If matNamesSeen.Exists(matName) Then GoTo NextMatKey
         matNamesSeen.Add matName, True
-        If Not orderRowByMat.Exists(matName) Then GoTo NextMatKey  ' Material_Detailにブロックが無い材料
+        If Not orderRowByMat.Exists(matName) Then GoTo NextMatKey  ' a material with no block on Material_Detail
 
         Dim orderRow As Long: orderRow = orderRowByMat(matName)
         Dim poRow As Long: poRow = orderRow + 1
         Dim blockArr As Variant
         blockArr = mdSheet.Range(mdSheet.Cells(orderRow, MD_WEEK_START_COL), mdSheet.Cells(poRow, lastWeekCol)).Value
-        ' blockArr(1,w)=Order行の値, blockArr(2,w)=PO_No行の値 (w=1..nWeeks)
+        ' blockArr(1,w)=Order row value, blockArr(2,w)=PO_No row value (w=1..nWeeks)
 
-        ' この材料のPO_No行に現れる、not-yet-finalized (no "[DONE]" marker) PO numbers
-        ' 週ごとに集め、PO番号ごとにグループ化する。
+        ' Collect the not-yet-finalized (no "[DONE]" marker) PO numbers
+        ' that appear in this material's PO_No row, week by week, and
+        ' group them by PO number.
         Dim activeByPo As Object: Set activeByPo = CreateObject("Scripting.Dictionary")
         activeByPo.CompareMode = vbTextCompare
         Dim w As Long
@@ -511,18 +578,18 @@ NextShipRow:
         If activeByPo.Count = 0 Then GoTo NextMatKey
 
         Dim blockChanged As Boolean: blockChanged = False
-        Dim commentsToAdd As Object: Set commentsToAdd = CreateObject("Scripting.Dictionary")  ' 週 -> コメント文字列
+        Dim commentsToAdd As Object: Set commentsToAdd = CreateObject("Scripting.Dictionary")  ' week -> comment text
 
         Dim poKey As Variant
         For Each poKey In activeByPo.Keys
             Dim thisMpKey As String: thisMpKey = matName & "|" & CStr(poKey)
-            If Not byMatPo.Exists(thisMpKey) Then GoTo NextPoKey  ' このPO番号の出荷情報はまだCSA Reportに無い
+            If Not byMatPo.Exists(thisMpKey) Then GoTo NextPoKey  ' this PO number's shipment info isn't in the CSA Report yet
 
             Dim shipRowsForPo As Object: Set shipRowsForPo = byMatPo(thisMpKey)
             Dim existingWeeks As Object: Set existingWeeks = activeByPo(poKey)
 
-            ' --- CSA Reportの最新情報から、このPO番号の「あるべき状態」を組み立てる ---
-            Dim newWeeks As Object: Set newWeeks = CreateObject("Scripting.Dictionary")  ' 週 -> Array(qty, frozen)
+            ' --- Build what this PO number's "correct state" should be, from the CSA Report's latest info ---
+            Dim newWeeks As Object: Set newWeeks = CreateObject("Scripting.Dictionary")  ' week -> Array(qty, frozen)
             Dim siKey As Variant
             For Each siKey In shipRowsForPo.Keys
                 Dim shipRow As Long: shipRow = shipRowsForPo(siKey)
@@ -533,8 +600,11 @@ NextShipRow:
                 If IsNumeric(shipData(shipRow, 8)) Then
                     targetWeek = CLng(shipData(shipRow, 8))
                 Else
-                    ' ETAが未定(TBC)。Order_Month + LeadTime_Weeksから仮の週を計算する
-                    ' (月の中央=15日を起点にすることで、月初/月末どちらかに偏らないようにする)。
+                    ' ETA not yet set (TBC). Calculate a provisional week
+                    ' from Order_Month + LeadTime_Weeks (using the middle
+                    ' of the month - the 15th - as the anchor, so it
+                    ' doesn't skew toward either the start or end of the
+                    ' month).
                     Dim orderMonthVal As Variant: orderMonthVal = shipData(shipRow, 9)
                     If IsDate(orderMonthVal) Then
                         Dim ltWeeks As Double: ltWeeks = 0
@@ -545,10 +615,13 @@ NextShipRow:
                 End If
                 If targetWeek > 0 Then
                     Dim frozenFlag As Boolean: frozenFlag = (statusText = "TTAF Stock")
-                    ' 同じPO番号の複数の出荷行(分割出荷)が同じ週に重なることもあるため、
-                    ' 上書きせず合算する。frozen(確定扱い)は、その週に合算された行の
-                    ' 全部がTTAF Stockになって初めて真にする(1件でもまだ輸送中なら、
-                    ' その週はまだGrid_Incomingの計算対象から外さない)。
+                    ' Multiple shipment rows for the same PO number (a
+                    ' split shipment) can land on the same week, so sum
+                    ' rather than overwrite. frozen (treated as finalized)
+                    ' only becomes true once every row summed into that
+                    ' week has become TTAF Stock (if even one is still in
+                    ' transit, that week is not yet excluded from
+                    ' Grid_Incoming's calculation).
                     If newWeeks.Exists(targetWeek) Then
                         Dim existingNW As Variant: existingNW = newWeeks(targetWeek)
                         newWeeks(targetWeek) = Array(CDbl(existingNW(0)) + qty, CBool(existingNW(1)) And frozenFlag)
@@ -559,21 +632,25 @@ NextShipRow:
             Next siKey
             If newWeeks.Count = 0 Then GoTo NextPoKey
 
-            ' --- 「あるべき状態」と今の状態を、週ごとに個別に比較する ---
-            ' (以前の「PO全体をまとめてクリア→まとめて書き直す」方式だと、分割出荷の一部だけ
-            ' already finalized [DONE] with remainder still in transit、というケースで、既に確定済みで何も変わっていない
-            ' 週まで毎回クリア→再書き込みされてしまい、コメントが無関係な週の移動として
-            ' 表示されたり、frozenCellsが同じ確定を何度も数えてしまう不具合があった。
-            ' そのため、週ごとに「今の内容と違うものだけ」を書き換える。)
-            ' weeksToClear: 今アクティブ(未確定)な週のうち、新しい状態には存在しない(=移動元)週
+            ' --- Compare the "correct state" against the current state, week by week ---
+            ' (The earlier approach of "clear the whole PO at once -> rewrite
+            ' it all at once" had a bug: in a case where part of a split
+            ' shipment was already finalized [DONE] with the remainder
+            ' still in transit, even weeks that were already finalized and
+            ' completely unchanged got cleared and rewritten every time,
+            ' making the comment look like an unrelated week move and
+            ' causing frozenCells to count the same finalization
+            ' repeatedly. So only what actually differs from the current
+            ' content is rewritten, week by week.)
+            ' weeksToClear: currently-active (not-yet-finalized) weeks that don't exist in the new state (= a source of a move)
             Dim weeksToClear As Object: Set weeksToClear = CreateObject("Scripting.Dictionary")
             Dim ewk As Variant
             For Each ewk In existingWeeks.Items
                 Dim ewkL As Long: ewkL = CLng(ewk)
                 If Not newWeeks.Exists(ewkL) Then weeksToClear(ewkL) = True
             Next ewk
-            ' weeksToWrite: 新しい状態のうち、今のセルの内容(数量・確定マーク)と実際に違うものだけ
-            Dim weeksToWrite As Object: Set weeksToWrite = CreateObject("Scripting.Dictionary")  ' 週 -> Array(qty,frozen,poText)
+            ' weeksToWrite: only entries in the new state that actually differ from the current cell content (quantity, finalized marker)
+            Dim weeksToWrite As Object: Set weeksToWrite = CreateObject("Scripting.Dictionary")  ' week -> Array(qty,frozen,poText)
             Dim wk As Variant
             For Each wk In newWeeks.Keys
                 Dim nwk As Long: nwk = CLng(wk)
@@ -593,22 +670,22 @@ NextShipRow:
             Next wk
             If weeksToClear.Count = 0 And weeksToWrite.Count = 0 Then GoTo NextPoKey
 
-            ' --- 移動元(weeksToClear)をクリアする(材料ブロックのメモリ上の配列だけを操作) ---
+            ' --- Clear the source weeks (weeksToClear) (operating only on the material block's in-memory array) ---
             Dim oldWeeksSummary As String: oldWeeksSummary = ""
             Dim cwk2 As Variant
             For Each cwk2 In weeksToClear.Keys
                 Dim ow As Long: ow = CLng(cwk2)
-                If Len(oldWeeksSummary) > 0 Then oldWeeksSummary = oldWeeksSummary & "、"
-                oldWeeksSummary = oldWeeksSummary & "週" & ow & "(" & Format(blockArr(1, ow), "0") & "kg)"
+                If Len(oldWeeksSummary) > 0 Then oldWeeksSummary = oldWeeksSummary & ", "
+                oldWeeksSummary = oldWeeksSummary & "week " & ow & " (" & Format(blockArr(1, ow), "0") & "kg)"
                 blockArr(1, ow) = Empty
                 blockArr(2, ow) = Empty
             Next cwk2
 
             Dim changeNote As String
             If Len(oldWeeksSummary) > 0 Then
-                changeNote = "PO#" & poKey & ": " & oldWeeksSummary & " から自動更新されました(" & Format(Date, "yyyy-mm-dd") & ")"
+                changeNote = "PO#" & poKey & ": auto-updated from " & oldWeeksSummary & " (" & Format(Date, "yyyy-mm-dd") & ")"
             Else
-                changeNote = "PO#" & poKey & ": 自動更新されました(" & Format(Date, "yyyy-mm-dd") & ")"
+                changeNote = "PO#" & poKey & ": auto-updated (" & Format(Date, "yyyy-mm-dd") & ")"
             End If
             Dim wwk As Variant
             For Each wwk In weeksToWrite.Keys
