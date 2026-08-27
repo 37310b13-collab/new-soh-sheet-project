@@ -2,67 +2,92 @@ Attribute VB_Name = "RefreshData_BOM"
 Option Explicit
 
 ' ============================================================================
-' RefreshData_BOM モジュール
+' RefreshData_BOM module
 '
-'   RefreshBOM : 「Raw Material - Look Up」を選択すると、M_BOM（原単位）を更新する。
-'                対象は4シート:
-'                  ・Slurry Data Base / Powder Data Base / Solution … 行そのまま転記。
-'                    A列=Intermediate、D列=RM Code、M列=1バッチあたり使用量。
-'                    RM CodeにはM_RawMaterials上のRM_Code(例:CHEM-1030)だけでなく、
-'                    他の中間体コード(SOL-SCH・TPP-103等、Slurry/PowderがSolutionや
-'                    別のPowderを材料として使うケース)がそのまま入ることがあるが、
-'                    そのままM_BOMの行として書き込む(Grid_Requirement側で無視される
-'                    だけで実害は無い)。
-'                  ・Catalyst Data Base … Substrate行(H列"Substrate SC"が埋まっている行)
-'                    だけを使う(化学品・スラリー参照行はSlurry側で既に原単位計算済み
-'                    のため、ここで拾うと二重計上になる)。Corning供給のSubstrate
-'                    (E列Descriptionに"CORNING"を含む)は対象外。中間体名はA列の
-'                    Catalyst名(例:"18461-0Q110-1st COAT")から短縮製品コード
-'                    (例:"0Q110")を抽出したもの、RM_CodeはH列、数量はF列
-'                    (catalyst1個あたりの使用量。PP_Grid側でcatalystは個数管理のため)。
-'                新しい材料×中間体の組み合わせが見つかった場合、Material_Detailの
-'                該当材料ブロックにも中間体の内訳行（No. of batches／使用量(kg)）を
-'                自動的に追加する（SyncMaterialDetailIntermediates）。これにより、
-'                AddMaterialで追加したばかりの材料(BOM未登録のため内訳行が無いミニ
-'                ブロック)も、RefreshBOMを1回実行するだけで既存の材料と同じ見た目になる
-'                (AddMaterialを2回実行する必要はない)。既存材料が新しい中間体で
-'                使われ始めた場合も同様に自動反映される。
+'   RefreshBOM : When you select "Raw Material - Look Up", updates M_BOM
+'                (the usage rates). Targets 4 sheets:
+'                  - Slurry Data Base / Powder Data Base / Solution ...
+'                    rows are transcribed as-is. Column A = Intermediate,
+'                    column D = RM Code, column M = usage per batch.
+'                    RM Code can hold not just an M_RawMaterials RM_Code
+'                    (e.g. CHEM-1030) but also another intermediate code
+'                    (SOL-SCH, TPP-103, etc., for cases where a Slurry/
+'                    Powder uses a Solution or another Powder as an
+'                    ingredient) - these are written into M_BOM as-is
+'                    regardless (they're simply ignored on the
+'                    Grid_Requirement side, with no ill effect).
+'                  - Catalyst Data Base ... only uses Substrate rows (rows
+'                    where column H "Substrate SC" is filled in) (chemical/
+'                    slurry reference rows already have their usage rate
+'                    calculated on the Slurry side, so picking them up here
+'                    too would double-count them). Corning-supplied
+'                    Substrate (column E Description contains "CORNING")
+'                    is excluded. The intermediate name is the shortened
+'                    product code extracted from column A's Catalyst name
+'                    (e.g. "18461-0Q110-1st COAT" -> "0Q110"), RM_Code is
+'                    column H, and the quantity is column F (usage per one
+'                    catalyst unit, since catalysts are tracked by unit
+'                    count on the PP_Grid side).
+'                When a new material x intermediate combination is found,
+'                the corresponding intermediate breakdown rows (No. of
+'                batches / Usage (kg)) are also automatically added to that
+'                material's block on Material_Detail
+'                (SyncMaterialDetailIntermediates). This means a material
+'                just added by AddMaterial (a mini block with no breakdown
+'                rows yet, since it isn't in the BOM) ends up looking the
+'                same as existing materials after just one run of
+'                RefreshBOM (no need to run AddMaterial twice). The same
+'                automatic sync happens when an existing material starts
+'                being used in a new intermediate.
 '
-' 【過去に修正済みの不具合】PP_Gridのパススルー数式(独自の生産計画を持たず、他の中間体の
-' 原料としてのみ使われる中間体の行に入っている、SUMPRODUCT+M_BOM[PPGridRow]による
-' 逆算数式)には、かつてその中間体自身のレシピ行についてもINDEX(PP_Grid[#Data],
-' M_BOM[PPGridRow],...)が評価されてしまい、最終的に0倍されて計算結果には影響しなくても
-' 「そのセル自身を参照する経路」が実際に発生してしまうという構造的な欠陥があった
-' (LibreOfficeでの検証では黙って0扱いされるため気づけなかったが、本物のExcelでは
-' 循環参照として検出される)。PP_Grid内の既存のパススルー数式をIF(...,NA(),...)による
-' ガード付きの安全な形に書き換える一度だけの移行用マクロ(FixPassthroughCircularRefs)を
-' 実行済みのため、VBAコードからは削除した。新しく生成されるパススルー数式(build_soh.py・
-' RefreshBOM実行時)は最初からこのガード付きの形で作られる。
+' [Bug already fixed in the past] PP_Grid's pass-through formulas (the
+' SUMPRODUCT+M_BOM[PPGridRow] back-calculation formula placed in the row
+' of an intermediate that has no production plan of its own and is only
+' ever used as an ingredient of other intermediates) used to have a
+' structural flaw where, for that intermediate's own recipe row,
+' INDEX(PP_Grid[#Data],M_BOM[PPGridRow],...) would also get evaluated,
+' creating an actual "path that references the cell itself," even though
+' it was ultimately multiplied by 0 and had no effect on the result
+' (testing in LibreOffice silently treated it as 0 so this went unnoticed,
+' but real Excel detects it as a circular reference). A one-time migration
+' macro (FixPassthroughCircularRefs) that rewrote the existing pass-through
+' formulas in PP_Grid into a safe form guarded with IF(...,NA(),...) has
+' already been run, so it has been removed from the VBA code. Newly
+' generated pass-through formulas (from build_soh.py / when RefreshBOM
+' runs) are built with this guard from the start.
 '
-'   FixTheoreticalStockMonthlyReset : Grid_TheoreticalStock(理論在庫)は、運用開始時点
-'                (T_OpeningStock)から一度もリセットされず、実績を一切見ないままロール
-'                フォワードし続ける仕様だったため、長期間経つと誤差が無限に積み上がって
-'                しまう。このマクロは、月が変わる最初の週だけ前週の実在庫(Grid_Stock)を
-'                起点に再同期するよう数式を書き換え、「毎月リセットして今月分の計画と
-'                実績のズレだけを見たい」という要望に対応する。週1列目(T_OpeningStock起点)
-'                は対象外。何度実行しても同じ結果になるため再実行しても安全。
+'   FixTheoreticalStockMonthlyReset : Grid_TheoreticalStock (theoretical
+'                stock) used to never reset from the moment operations
+'                began (T_OpeningStock), rolling forward forever without
+'                ever looking at actuals, so error would accumulate
+'                without bound over a long enough period. This macro
+'                rewrites the formulas so that, only in the first week a
+'                new month begins, it re-syncs from the previous week's
+'                actual stock (Grid_Stock), addressing the request to
+'                "reset every month and only see this month's plan-vs-
+'                actual gap." Week 1 (which starts from T_OpeningStock) is
+'                excluded. Running it any number of times produces the
+'                same result, so it's safe to re-run.
 '
-' 全体の設計方針(パフォーマンス・DataBodyRange・DisplayAlerts等)はRefreshData_Utilities
-' モジュール冒頭のコメントを参照してください。
+' For the overall design rationale (performance, DataBodyRange,
+' DisplayAlerts, etc.), see the comment at the top of the
+' RefreshData_Utilities module.
 ' ============================================================================
 
 Sub RefreshBOM()
     Dim srcPath As Variant
-    srcPath = Application.GetOpenFilename("Excel ファイル (*.xlsx),*.xlsx", , _
-        "Raw Material - Look Up を選択してください")
+    srcPath = Application.GetOpenFilename("Excel Files (*.xlsx),*.xlsx", , _
+        "Please select Raw Material - Look Up")
     If srcPath = False Then Exit Sub
 
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
-    ' 「読み取り専用を推奨」設定のファイルだと、DisplayAlerts=Trueのままでは
-    ' Workbooks.Open時に確認ダイアログが表示され、応答待ちで処理が不安定になる
-    ' (最終的にsrcWbが正しく取得できない不具合の原因になっていた)ため抑制する。
+    ' For a file with "read-only recommended" set, leaving DisplayAlerts=True
+    ' causes a confirmation dialog to appear during Workbooks.Open, which
+    ' destabilizes processing while waiting for a response (this was the
+    ' cause of a bug where srcWb ultimately failed to be obtained correctly)
+    ' - so suppress it.
     Application.DisplayAlerts = False
 
     Dim srcWb As Workbook
@@ -73,14 +98,16 @@ Sub RefreshBOM()
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
     Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
 
-    ' RM_Code(Part Name)の存在チェック用と、Catalyst短縮コード抽出時の
-    ' 「既知の中間体名かどうか」の判定(末尾"s"表記ゆれの解決)用に、それぞれの
-    ' 名前の集合を1回だけ作る。
+    ' Build each name set once: one to check whether an RM_Code (Part Name)
+    ' exists, and one to determine "is this a known intermediate name"
+    ' (used when resolving the trailing-"s" spelling variant) while
+    ' extracting Catalyst short codes.
     Dim rmCodeSet As Object: Set rmCodeSet = BuildNameIndex(rmTbl, "Part Name")
     Dim knownIntermediates As Object: Set knownIntermediates = BuildNameIndex(ppGrid, "Intermediate")
 
-    ' 差分件数(更新/新規/削除)を数えるため、更新前のM_BOMの内容を(pk->True)のセットとして
-    ' 一旦保持しておく(この後の実データ更新には使わない、件数計算専用)。
+    ' To count the diff (updated/added/removed), hold the pre-update
+    ' M_BOM content as a (pk->True) set (used only for this count, not for
+    ' the actual data update that follows).
     Dim oldPairs As Object: Set oldPairs = CreateObject("Scripting.Dictionary")
     oldPairs.CompareMode = vbTextCompare
     Dim oldN As Long: oldN = bomTbl.ListRows.Count
@@ -92,13 +119,17 @@ Sub RefreshBOM()
         Next oi
     End If
 
-    ' 新しいBOM内容を、シートへは一切書き込まずメモリ上のDictionaryに組み立てる
-    ' (pk="Intermediate|RM_Code" -> Array(Intermediate, RM_Code, Qty))。
-    ' Look Upはこのシステムの唯一のBOM情報源なので、最終的にM_BOM全体をこの内容で
-    ' まるごと置き換える(1行ずつListRows.Addで追加すると、M_BOMを参照する大量の数式
-    ' 〈Grid_Requirement・Material_Detail・PP_Gridのパススルー数式〉の依存関係チェックが
-    ' 追加のたびに走り、行数が千を超えるあたりから極端に遅くなる「フリーズ」不具合の
-    ' 原因になっていたため、書き込みは最後に1回のブロック書き込みで済ませる)。
+    ' Assemble the new BOM content entirely in an in-memory Dictionary,
+    ' without writing anything to the sheet yet
+    ' (pk="Intermediate|RM_Code" -> Array(Intermediate, RM_Code, Qty)).
+    ' Since Look Up is this system's single source of truth for BOM
+    ' information, M_BOM is ultimately replaced in full with this content
+    ' (adding rows one at a time via ListRows.Add triggers a dependency
+    ' recheck on every add across the large number of formulas that
+    ' reference M_BOM - Grid_Requirement, Material_Detail, PP_Grid's
+    ' pass-through formulas - which was the cause of a "freeze" bug once
+    ' the row count passed roughly a thousand; so the write is done as a
+    ' single block write at the end instead).
     Dim newRows As Object: Set newRows = CreateObject("Scripting.Dictionary")
     newRows.CompareMode = vbTextCompare
     Dim unresolved As String: unresolved = ""
@@ -116,9 +147,10 @@ Sub RefreshBOM()
             knownIntermediates, unresolved)
     End If
 
-    ' srcWbが既にNothingになっているケース(取込元ファイル側の自動処理等で、開いた
-    ' 直後にワークブックが閉じられてしまう場合がある)でも、後始末処理自体が
-    ' 「オブジェクト変数が設定されていません」で落ちないようにガードする。
+    ' Guard the cleanup step itself against failing with "object variable
+    ' not set," even in the case where srcWb has already become Nothing
+    ' (some automated process on the source file's side can close the
+    ' workbook right after it's opened).
     If Not srcWb Is Nothing Then srcWb.Close SaveChanges:=False
 
     Dim added As Long, updated As Long, removedCount As Long
@@ -131,9 +163,11 @@ Sub RefreshBOM()
         If Not newRows.Exists(k) Then removedCount = removedCount + 1
     Next k
 
-    ' M_BOMを1回のブロック書き込みで丸ごと置き換える。PPGridRow列(D列)は本来Excelの
-    ' テーブル機能がListRows.Add時に自動複製する数式列だが、ここではAddを使わないため
-    ' 明示的に数式文字列として組み立てる(build_soh.pyの生成パターンと同一)。
+    ' Replaces the whole of M_BOM with a single block write. The
+    ' PPGridRow column (column D) is normally a formula column that
+    ' Excel's Table feature auto-duplicates on ListRows.Add, but since Add
+    ' isn't used here, it's explicitly built as a formula string instead
+    ' (identical to build_soh.py's generation pattern).
     Dim n As Long: n = newRows.Count
     If Not bomTbl.DataBodyRange Is Nothing Then bomTbl.DataBodyRange.Delete
     If n > 0 Then
@@ -152,10 +186,12 @@ Sub RefreshBOM()
         bomTbl.DataBodyRange.Formula = outArr
     End If
 
-    ' Material_Detailの中間体内訳行(No. of batches／使用量(kg))を、更新後のM_BOMの内容に
-    ' 合わせて同期する。M_BOMの更新自体は上で既に確定しているため、この同期処理で
-    ' エラーが出てもM_BOM/PP_Grid/Grid_Requirementへの反映は失われない(On Error Resume Next
-    ' で個別に捕捉し、失敗してもメッセージで知らせるだけに留める)。
+    ' Syncs Material_Detail's intermediate breakdown rows (No. of batches /
+    ' Usage (kg)) to match the now-updated M_BOM content. Since the M_BOM
+    ' update itself is already committed above, an error in this sync step
+    ' does not lose the changes already applied to M_BOM/PP_Grid/
+    ' Grid_Requirement (caught individually with On Error Resume Next; on
+    ' failure it's just reported in the message).
     Dim addedDetailRows As Long: addedDetailRows = 0
     Dim syncErrMsg As String: syncErrMsg = ""
     On Error Resume Next
@@ -171,28 +207,30 @@ Sub RefreshBOM()
     Application.DisplayAlerts = True
 
     Dim msg As String
-    msg = "M_BOM を更新しました。" & vbCrLf & "更新: " & updated & " 件、新規追加: " & added & _
-          " 件、削除: " & removedCount & " 件"
+    msg = "M_BOM has been updated." & vbCrLf & "Updated: " & updated & ", added: " & added & _
+          ", removed: " & removedCount
     If addedDetailRows > 0 Then
-        msg = msg & vbCrLf & "Material_Detailに追加した中間体の内訳行: " & addedDetailRows & " 組"
+        msg = msg & vbCrLf & "Intermediate breakdown row pairs added to Material_Detail: " & addedDetailRows
     End If
     If Len(syncErrMsg) > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "(注意) Material_Detailの内訳行の自動追加中にエラーが" & vbCrLf & _
-              "発生しました: " & syncErrMsg & vbCrLf & "M_BOM自体の更新は正常に完了しています。"
+        msg = msg & vbCrLf & vbCrLf & "(Note) An error occurred while automatically adding" & vbCrLf & _
+              "Material_Detail's breakdown rows: " & syncErrMsg & vbCrLf & "The M_BOM update itself completed successfully."
     End If
     If Len(unresolved) > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "M_RawMaterials・PP_Gridのどちらにも見つからないコード" & vbCrLf & _
-              "(未登録の新しい材料の可能性。AddMaterialでの登録漏れがないか確認してください):" & vbCrLf & unresolved
+        msg = msg & vbCrLf & vbCrLf & "Codes found in neither M_RawMaterials nor PP_Grid" & vbCrLf & _
+              "(possibly an unregistered new material - please check whether it was missed in AddMaterial):" & vbCrLf & unresolved
     End If
-    msg = msg & vbCrLf & vbCrLf & "新規追加した組み合わせも、Grid_RequirementがM_BOMを直接参照しているため" & vbCrLf & "その場で自動反映されます。"
+    msg = msg & vbCrLf & vbCrLf & "Since Grid_Requirement references M_BOM directly, newly added combinations" & vbCrLf & "are also reflected automatically right away."
     MsgBox msg, vbInformation
     Exit Sub
 
 ErrHandler:
-    ' 【重要】On Error Resume Next はErr オブジェクトを自動的にクリアしてしまう(VBAの仕様)ため、
-    ' 後始末処理より前に、エラー番号・内容を必ず変数へ退避しておく。これを怠ると、
-    ' 下のMsgBoxが常に「(空欄)」を表示してしまい、本当のエラー原因が一切分からなくなる
-    ' (実際にこの不具合が発生し、原因調査ができない状態になっていたため修正)。
+    ' [Important] On Error Resume Next automatically clears the Err object
+    ' (a VBA quirk), so the error number/description must be saved into
+    ' variables before any cleanup code runs. Skipping this means the
+    ' MsgBox below always shows "(blank)" and the real cause of the error
+    ' is never known (this actually happened and made troubleshooting
+    ' impossible, hence the fix).
     Dim errNum As Long: errNum = Err.Number
     Dim errMsg As String: errMsg = Err.Description
     On Error Resume Next
@@ -200,22 +238,27 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "更新処理でエラーが発生しました: (" & errNum & ") " & errMsg, vbCritical
+    MsgBox "An error occurred during the refresh: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
-' Grid_TheoreticalStock(理論在庫)の数式を、月が変わる最初の週だけGrid_Stock(実在庫)を
-' 起点に再同期する形に書き換える。それ以外の週は従来通り「前週の理論在庫+入庫-消費」の
-' ロールフォワードのまま(週1列目はT_OpeningStock起点のままで対象外)。以前は運用開始時点
-' から一度もリセットされず誤差が無限に積み上がっていく仕様だったが、「月1回リセットして
-' 今月の計画と実績のズレだけを見たい」という要望に対応する。何度実行しても同じ結果になる
-' ため、再実行しても安全。build_soh.pyで新規に作られるブックは最初からこの数式で生成される。
+' Rewrites Grid_TheoreticalStock's (theoretical stock) formulas so that,
+' only in the first week a new month begins, they re-sync from
+' Grid_Stock (actual stock). Every other week still rolls forward as
+' before ("previous week's theoretical stock + incoming - consumption"),
+' unchanged (week 1, which starts from T_OpeningStock, is unaffected and
+' excluded). It used to never reset from the moment operations began,
+' letting error accumulate without bound - this addresses the request to
+' "reset once a month and only see this month's plan-vs-actual gap."
+' Running it any number of times produces the same result, so it's safe
+' to re-run. Workbooks newly generated by build_soh.py are built with this
+' formula from the start.
 Sub FixTheoreticalStockMonthlyReset()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
     Dim dataRange As Range: Set dataRange = theoTbl.DataBodyRange
     If dataRange Is Nothing Then
-        MsgBox "Grid_TheoreticalStockにデータ行がありません。", vbExclamation
+        MsgBox "Grid_TheoreticalStock has no data rows.", vbExclamation
         Exit Sub
     End If
 
@@ -225,14 +268,14 @@ Sub FixTheoreticalStockMonthlyReset()
     Dim firstDataRow As Long: firstDataRow = dataRange.Row
     Dim firstDataCol As Long: firstDataCol = dataRange.Column
     Dim nRows As Long: nRows = dataRange.Rows.Count
-    Dim nCols As Long: nCols = dataRange.Columns.Count  ' 1列目=Part Name, 2列目=Week1, 3列目=Week2...
+    Dim nCols As Long: nCols = dataRange.Columns.Count  ' column 1=Part Name, column 2=Week1, column 3=Week2...
 
     Dim allFormulas As Variant: allFormulas = dataRange.Formula
 
     Dim r As Long, c As Long, fixedCells As Long: fixedCells = 0
     For r = 1 To nRows
         Dim actualRow As Long: actualRow = firstDataRow + r - 1
-        For c = 3 To nCols  ' 2列目(週1)はT_OpeningStock起点のままなので対象外
+        For c = 3 To nCols  ' column 2 (week 1) starts from T_OpeningStock and is excluded
             Dim w As Long: w = c - 1
             Dim curCol As String: curCol = ColLetter(firstDataCol + c - 1)
             Dim prevCol As String: prevCol = ColLetter(firstDataCol + c - 2)
@@ -250,8 +293,8 @@ Sub FixTheoreticalStockMonthlyReset()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "Grid_TheoreticalStockを月次リセット方式に更新しました。" & vbCrLf & _
-           "書き換えたセル数: " & fixedCells, vbInformation
+    MsgBox "Grid_TheoreticalStock has been switched to the monthly-reset formula." & vbCrLf & _
+           "Cells rewritten: " & fixedCells, vbInformation
     Exit Sub
 
 ErrHandler:
@@ -259,23 +302,26 @@ ErrHandler:
     Dim errMsg2 As String: errMsg2 = Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "修正処理でエラーが発生しました: (" & errNum2 & ") " & errMsg2, vbCritical
+    MsgBox "An error occurred during the fix: (" & errNum2 & ") " & errMsg2, vbCritical
 End Sub
 
-' Slurry Data Base/Powder Data Base/Solutionシート共通の処理。行そのままA列=Intermediate、
-' D列=RM Code、M列=1バッチあたり使用量として取り込む。RM CodeはM_RawMaterialsのPart Name
-' そのものの場合も、他の中間体コード(SOL-SCH等)の場合もあるが、区別せずそのままM_BOMに書き込む
-' (Grid_Requirement側はM_RawMaterialsに実在するPart Nameだけを見るため、中間体コードの行は
-' 実害なく無視される)。
+' Common processing for the Slurry Data Base/Powder Data Base/Solution
+' sheets. Rows are imported as-is: column A = Intermediate, column D = RM
+' Code, column M = usage per batch. RM Code may be an M_RawMaterials Part
+' Name directly, or another intermediate code (SOL-SCH, etc.) - either way
+' it's written into M_BOM without distinction (the Grid_Requirement side
+' only looks at Part Names that actually exist in M_RawMaterials, so
+' intermediate-code rows are ignored with no ill effect).
 Private Sub ProcessLookupFlatSheet(sh As Worksheet, newRows As Object, _
         rmCodeSet As Object, knownIntermediates As Object, ByRef unresolved As String)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
-    If lastRow > 5000 Then lastRow = 5000  ' 異常値対策
+    If lastRow > 5000 Then lastRow = 5000  ' guard against an outlier value
     If lastRow < 2 Then Exit Sub
 
-    ' シート全体を1回だけ配列として読み込む（.Cells(r,c).Valueをループ内で毎回呼ぶと遅いため）
+    ' Read the whole sheet into an array just once (calling
+    ' .Cells(r,c).Value on every loop iteration is slow).
     Dim data As Variant
-    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, 13)).Value  ' M列(13)まで
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, 13)).Value  ' through column M (13)
 
     Dim r As Long
     For r = 2 To lastRow
@@ -293,9 +339,12 @@ Private Sub ProcessLookupFlatSheet(sh As Worksheet, newRows As Object, _
     Next r
 End Sub
 
-' Catalyst Data BaseシートのSubstrate行(H列"Substrate SC"が埋まっている行)だけを使う。
-' Corning供給のSubstrate(E列Descriptionに"CORNING"を含む)は対象外。中間体名はA列の
-' Catalyst名から短縮製品コードを抽出したもの、RM_CodeはH列、数量はF列(catalyst1個あたり)。
+' Only uses the Catalyst Data Base sheet's Substrate rows (rows where
+' column H "Substrate SC" is filled in). Corning-supplied Substrate
+' (column E Description contains "CORNING") is excluded. The intermediate
+' name is the shortened product code extracted from column A's Catalyst
+' name, RM_Code is column H, and the quantity is column F (per one
+' catalyst unit).
 Private Sub ProcessLookupCatalystSheet(sh As Worksheet, newRows As Object, _
         rmCodeSet As Object, knownIntermediates As Object, ByRef unresolved As String)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
@@ -303,14 +352,14 @@ Private Sub ProcessLookupCatalystSheet(sh As Worksheet, newRows As Object, _
     If lastRow < 2 Then Exit Sub
 
     Dim data As Variant
-    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, 8)).Value  ' H列(8)まで
+    data = sh.Range(sh.Cells(1, 1), sh.Cells(lastRow, 8)).Value  ' through column H (8)
 
     Dim r As Long
     For r = 2 To lastRow
         Dim subSC As String: subSC = Trim(CStr(data(r, 8)))
         If Len(subSC) = 0 Then GoTo NextRow
         Dim desc As String: desc = UCase(Trim(CStr(data(r, 5))))
-        If InStr(desc, "CORNING") > 0 Then GoTo NextRow  ' Corning供給は対象外
+        If InStr(desc, "CORNING") > 0 Then GoTo NextRow  ' Corning-supplied is excluded
         Dim catName As String: catName = Trim(CStr(data(r, 1)))
         Dim v As Variant: v = data(r, 6)
         If Len(catName) = 0 Or Not IsNumeric(v) Then GoTo NextRow
@@ -324,11 +373,12 @@ NextRow:
     Next r
 End Sub
 
-' Catalyst名(例:"18461-0Q110-1st COAT")から短縮製品コード(例:"0Q110")を抽出する。
-' 「18461-」プレフィックスを除去し、最初のスペース/ハイフンまでのトークンを取り出し、
-' 先頭が"O"(アルファベットのオー)なら"0"(ゼロ)に置換する(元データの表記ゆれ)。
-' それでも中間体マスタに見つからず末尾が"s"の場合は、末尾を除去して再試行する
-' (例:"0T420s"→"0T420")。
+' Extracts a shortened product code (e.g. "0Q110") from a Catalyst name
+' (e.g. "18461-0Q110-1st COAT"). Strips the "18461-" prefix, takes the
+' token up to the first space/hyphen, and if it starts with "O" (letter O)
+' replaces it with "0" (zero) (a spelling variant in the source data). If
+' it still isn't found in the intermediate master and ends in "s", strips
+' the trailing "s" and tries again (e.g. "0T420s" -> "0T420").
 Private Function CatalystShortCode(catName As String, knownIntermediates As Object) As String
     Dim s As String: s = catName
     If Left(s, 6) = "18461-" Then s = Mid(s, 7)
@@ -357,9 +407,11 @@ Private Function SheetExists(wb As Workbook, sName As String) As Boolean
     SheetExists = Not sh Is Nothing
 End Function
 
-' RefreshBOM実行後に呼ばれる。更新後のM_BOMの内容(材料コード×中間体の組み合わせ)を見て、
-' Material_Detailの各材料ブロックに、まだ内訳行(No. of batches／使用量(kg))が無い中間体が
-' あれば、その2行を「合計使用量(kg)/週」行の直前にペアで挿入する。
+' Called after RefreshBOM runs. Looks at the updated M_BOM content
+' (material code x intermediate combinations) and, for any intermediate
+' that doesn't yet have breakdown rows (No. of batches / Usage (kg)) in
+' its material's block on Material_Detail, inserts that pair of 2 rows
+' right before the "Total Usage (kg)/week" row.
 Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPairs As Long)
     addedPairs = 0
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
@@ -369,8 +421,9 @@ Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPai
     Dim nWeeks As Long: nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
     If nWeeks <= 0 Then Exit Sub
 
-    ' M_BOMを「材料コード -> その材料を使う中間体名の一覧(登場順、重複除去)」の
-    ' Dictionaryにまとめる(1回だけ配列読み込み)。
+    ' Assemble M_BOM into a Dictionary of "material code -> list of
+    ' intermediate names that use that material (in order of appearance,
+    ' duplicates removed)" (a single array read).
     Dim byMat As Object: Set byMat = CreateObject("Scripting.Dictionary")
     byMat.CompareMode = vbTextCompare
     Dim bomN As Long: bomN = bomTbl.ListRows.Count
@@ -392,10 +445,12 @@ Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPai
     Next bi
     If byMat.Count = 0 Then Exit Sub
 
-    ' 書式コピー用のテンプレート行(シート内で最初に見つかる「No. of batches」行のペア)。
-    ' Rangeオブジェクトとして保持するため、以降このシート上のどこで行挿入が起きても
-    ' Excel側が自動的に参照先の行位置を追従してくれる(挿入行の直下に別の行を挿入しても
-    ' ズレない、標準的なVBAオブジェクト参照の挙動)。
+    ' The template row pair for copying formatting (the first "No. of
+    ' batches" row pair found in the sheet). Held as a Range object, so
+    ' Excel automatically tracks its target row position even as row
+    ' insertions happen elsewhere on this sheet from here on (standard VBA
+    ' object-reference behavior: inserting another row right below it
+    ' doesn't shift it).
     Dim lastRowScan As Long: lastRowScan = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
     Dim templateRow As Long: templateRow = 0
     Dim tr As Long
@@ -421,7 +476,7 @@ Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPai
             Dim sumRow As Long: sumRow = 0
             Do While rr <= lastRowScan
                 Dim lbl As String: lbl = Trim(CStr(sh.Cells(rr, 2).Value))
-                If lbl = "合計使用量(kg)/週" Then
+                If lbl = "Total Usage (kg)/week" Then
                     sumRow = rr
                     Exit Do
                 End If
@@ -439,8 +494,8 @@ Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPai
                         lastRowScan = lastRowScan + 2
                     End If
                 Next k
-                r = insertAt  ' insertAtは元々sumRowだった行(合計使用量行)の新しい位置。
-                               ' A列が空なので、外側ループの空白スキップでそのまま次ブロックまで進む
+                r = insertAt  ' insertAt is the new position of what was originally sumRow (the total-usage row).
+                               ' Column A is blank there, so the outer loop's blank-row skip carries on to the next block as-is
             Else
                 If sumRow > 0 Then r = sumRow + 1 Else r = headerRow + 1
             End If
@@ -448,8 +503,9 @@ Private Sub SyncMaterialDetailIntermediates(bomTbl As ListObject, ByRef addedPai
     Loop
 End Sub
 
-' Material_Detailの指定位置(insertAtRow)に、中間体1件分の内訳行2行
-' (No. of batches／使用量(kg))を挿入する。書式はtemplateRows(既存の内訳行ペア)から複製する。
+' Inserts, at the specified position (insertAtRow) on Material_Detail, the
+' 2 breakdown rows for one intermediate (No. of batches / Usage (kg)).
+' Formatting is duplicated from templateRows (an existing breakdown row pair).
 Private Sub InsertIntermediateRowPair(sh As Worksheet, insertAtRow As Long, headerRow As Long, _
         interName As String, nWeeks As Long, templateRows As Range)
     sh.Rows(insertAtRow & ":" & (insertAtRow + 1)).Insert Shift:=xlDown
@@ -464,7 +520,7 @@ Private Sub InsertIntermediateRowPair(sh As Worksheet, insertAtRow As Long, head
     sh.Cells(batchesRow, helperCol).Font.Size = 8
     sh.Cells(batchesRow, helperCol).Font.Color = RGB(128, 128, 128)
 
-    sh.Cells(usageRow, 2).Value = "使用量(kg)"
+    sh.Cells(usageRow, 2).Value = "Usage (kg)"
     sh.Cells(usageRow, 3).Value = "=SUMIFS(M_BOM[RM_Qty_Per_Batch],M_BOM[Intermediate],$B" & batchesRow & _
         ",M_BOM[Part Name],$A" & headerRow & ")"
 
