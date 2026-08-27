@@ -2,21 +2,23 @@ Attribute VB_Name = "PO_Export"
 Option Explicit
 
 ' ============================================================================
-' PO_Export モジュール
+' PO_Export module
 '
-' 【導入方法】
-'   1. SOH_Master.xlsm を「マクロを有効にする」で開く
-'   2. Alt+F11 でVBEを開く → 「ファイル」→「ファイルのインポート」→ このファイル(PO_Export.bas)を選択
-'      （コピー＆貼り付けで導入する場合は、1行目の Attribute VB_Name = "..." を必ず削除してから
-'       貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイルエラーになります）
-'   3. Dashboardシート等にボタンを配置し、下記のExportChemical / ExportHazardous /
-'      ExportSubstrateJPNCHN / ExportSubstratePoland を
-'      ボタンのマクロ登録先として割り当てる
+' [How to install]
+'   1. Open SOH_Master.xlsm with "Enable Macros"
+'   2. Alt+F11 to open the VBE -> "File" -> "Import File" -> select this file (PO_Export.bas)
+'      (If installing via copy & paste, be sure to delete the "Attribute VB_Name = ..."
+'       line 1 before pasting. That line cannot be used via paste and causes a
+'       compile error if included.)
+'   3. Place buttons on the Dashboard sheet etc., and assign ExportChemical / ExportHazardous /
+'      ExportSubstrateJPNCHN / ExportSubstratePoland below
+'      as the macro each button runs
 '
-' 【動作】
-'   PO_Draft_* シートを別ブックとして複製し、数式を値に変換（発行時点でスナップ
-'   ショット化）した上で、日付・Revision付きのファイル名で保存します。
-'   保存後、元シートのRevisionセルを自動で+1します。
+' [Behavior]
+'   Duplicates the PO_Draft_* sheet into a separate workbook, converts formulas to
+'   values (snapshotting the content at the time of issue), then saves it with a
+'   filename that includes the date and revision number.
+'   After saving, the Revision cell on the original sheet is automatically incremented by 1.
 ' ============================================================================
 
 Sub ExportChemical()
@@ -48,12 +50,13 @@ Private Sub ExportPODraft(ByVal sheetName As String, ByVal fileLabel As String)
 
     Set srcWs = ThisWorkbook.Worksheets(sheetName)
 
-    ' --- Revision番号を読み取り、発行後にインクリメントする ---
-    ' 名前付き範囲"PORevision"があればそれを使う(SetupPODraftLetterheadLayoutで新レイアウトに
-    ' 移行済みのシートはRevisionセルがP11にある)。無い場合(未移行の旧レイアウト)は
-    ' 従来通りP5にフォールバックする。ここを直さないまま新レイアウトへ移行すると、
-    ' 常に空欄のP5を読んで(revNo=0扱いのまま)、発行のたびにP5へ"1"を書き込んでしまい、
-    ' レターヘッドの空白セルを静かに壊してしまうところだった。
+    ' --- Read the revision number and increment it after issuing ---
+    ' Use the named range "PORevision" if it exists (sheets already migrated to the
+    ' new layout by SetupPODraftLetterheadLayout have the Revision cell at P11).
+    ' If it doesn't exist (old layout, not yet migrated), fall back to P5 as before.
+    ' Without this fallback, migrating to the new layout would have kept reading the
+    ' always-blank P5 (treating it as revNo=0) and writing "1" into P5 on every
+    ' issue, silently corrupting a blank letterhead cell.
     On Error Resume Next
     Set revCell = srcWs.Range("PORevision")
     On Error GoTo ErrHandler
@@ -64,16 +67,16 @@ Private Sub ExportPODraft(ByVal sheetName As String, ByVal fileLabel As String)
         revNo = 0
     End If
 
-    ' --- シートを新規ブックへ複製 ---
+    ' --- Duplicate the sheet into a new workbook ---
     srcWs.Copy
     Set newWb = ActiveWorkbook
 
-    ' --- 数式を値に変換（発行時点の内容を固定） ---
+    ' --- Convert formulas to values (freeze the content as of the issue date) ---
     With newWb.Worksheets(1).UsedRange
         .Value = .Value
     End With
 
-    ' --- 保存先・ファイル名 ---
+    ' --- Save location / filename ---
     saveFolder = ThisWorkbook.Path & Application.PathSeparator & "PO_Issued"
     Set fso = CreateObject("Scripting.FileSystemObject")
     If Not fso.FolderExists(saveFolder) Then
@@ -86,13 +89,13 @@ Private Sub ExportPODraft(ByVal sheetName As String, ByVal fileLabel As String)
 
     newWb.Close SaveChanges:=False
 
-    ' --- 元シートのRevisionを更新 ---
+    ' --- Update the Revision on the original sheet ---
     revCell.Value = revNo + 1
     ThisWorkbook.Save
 
-    MsgBox "発注書を発行しました:" & vbCrLf & saveFolder & Application.PathSeparator & fileName, vbInformation
+    MsgBox "Order form issued:" & vbCrLf & saveFolder & Application.PathSeparator & fileName, vbInformation
     Exit Sub
 
 ErrHandler:
-    MsgBox "発行処理でエラーが発生しました: " & Err.Description, vbCritical
+    MsgBox "An error occurred while issuing the order form: " & Err.Description, vbCritical
 End Sub

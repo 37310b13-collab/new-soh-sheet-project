@@ -1,143 +1,167 @@
 Attribute VB_Name = "RefreshData_Utilities"
 Option Explicit
 
-Public Const MD_HEADER_ROW As Long = 6       ' Material_Detail: ヘッダー行。build_soh.pyのMD_TABLE_ROWと対応
-Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: 週データ開始列(D列)。build_soh.pyのWEEK_START_COLと対応
-Public Const SS_TABLE_ROW As Long = 5        ' T_SelfStock/T_TTAFStock: 見出し行(週ラベル)。build_soh.pyのSS_TABLE_ROWと対応
-Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: 材料データの開始行。build_soh.pyのDATA_START_ROWと対応
+Public Const MD_HEADER_ROW As Long = 6       ' Material_Detail: header row. Corresponds to build_soh.py's MD_TABLE_ROW
+Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: week-data start column (column D). Corresponds to build_soh.py's WEEK_START_COL
+Public Const SS_TABLE_ROW As Long = 5        ' T_SelfStock/T_TTAFStock: header row (week labels). Corresponds to build_soh.py's SS_TABLE_ROW
+Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material data. Corresponds to build_soh.py's DATA_START_ROW
 
 ' ============================================================================
-' SOH管理ブック VBAマクロ 全体像（このコメントはRefreshData_Utilitiesモジュールにのみ書かれています）
+' SOH management workbook VBA macros - overview (this comment is written only in the RefreshData_Utilities module)
 '
-' 目的: Python等の外部環境を使わず、Excel(VBA)だけで毎月のデータ更新を完結させる。
+' Purpose: complete the monthly data refresh entirely within Excel (VBA), without any external environment like Python.
 '
-' 【モジュール構成】以前は1つの巨大な標準モジュール(RefreshData.bas)にすべてのマクロが
-' 入っていましたが、メンテナンス性のため機能ごとに以下の7モジュールへ分割しています。
-' マクロ名や動作は分割前と一切変わりません。
+' [Module layout] All macros used to live in a single large standard module
+' (RefreshData.bas); for maintainability they are now split by function into
+' the 8 modules below. Macro names and behavior are unchanged from before the split.
 '
-'   RefreshData_Utilities      : このモジュール。Public Const(MD_HEADER_ROW等)と、
-'                                 複数モジュールから共通で使うヘルパー関数
+'   RefreshData_Utilities      : This module. Public Consts (MD_HEADER_ROW etc.) and
+'                                 helper functions shared across multiple modules
 '                                 (BuildNameIndex/NormalizeText/
-'                                 WeekIndexForDate/ColLetter)。他の全モジュールが
-'                                 これに依存するため、最初にインポートしてください。
-'   RefreshData_ProductionPlan : RefreshWeeklyBatches（「Powder & Slurry & Pgm Plan」を
-'                                 取り込み、PP_Gridを更新）
-'   RefreshData_BOM             : RefreshBOM（「Raw Material - Look Up」を
-'                                 取り込み、M_BOM・Material_Detailの内訳行を更新）
-'   RefreshData_StockActuals    : RefreshSelfStock・RefreshTTAFStock（自社/TTAF在庫実績の取込み）
-'   RefreshData_Shipments       : RefreshShipments（CSA ReportのShipping Scheduleを取込み）
-'   RefreshData_Display         : HideInactiveIntermediates・ShowAllIntermediates・
-'                                 JumpToSelectedWeek（表示の切り替えのみ。データは変更しない）
-'   RefreshData_MaterialMgmt    : AddMaterial・RemoveMaterial・RemoveIntermediate
-'                                 （材料・中間体の追加/削除）
+'                                 WeekIndexForDate/ColLetter). All other modules
+'                                 depend on this one, so import it first.
+'   RefreshData_ProductionPlan : RefreshWeeklyBatches (imports "Powder & Slurry & Pgm Plan"
+'                                 and updates PP_Grid)
+'   RefreshData_BOM             : RefreshBOM (imports "Raw Material - Look Up"
+'                                 and updates M_BOM / Material_Detail's breakdown rows)
+'   RefreshData_StockActuals    : RefreshSelfStock / RefreshTTAFStock (import self/TTAF actual stock)
+'   RefreshData_Shipments       : RefreshShipments (imports the CSA Report's Shipping Schedule)
+'   RefreshData_Display         : HideInactiveIntermediates / ShowAllIntermediates /
+'                                 JumpToSelectedWeek (display toggles only; never changes data)
+'   RefreshData_MaterialMgmt    : AddMaterial / RemoveMaterial / RemoveIntermediate
+'                                 (add/remove materials and intermediates)
+'   RefreshData_PODraft         : SetupPODraftLetterheadLayout and other PO_Draft_*
+'                                 letterhead-layout setup/maintenance macros
 '
-' 各マクロの詳しい説明は、それぞれが実装されているモジュールの冒頭コメントを参照してください。
-' いずれのマクロも、それぞれ対応するシートだけを更新します。T_Shipments・T_OpeningStock・
-' T_StockCount・SafetyStock_Qty等、運用中に手入力した内容には一切触れません。
+' For a detailed explanation of each macro, see the comment at the top of the
+' module where it is implemented. Every macro only updates the sheet(s) it is
+' responsible for. It never touches content you entered by hand during normal
+' operation, such as T_Shipments, T_OpeningStock, T_StockCount, or SafetyStock_Qty.
 '
-' 【導入方法(全モジュール共通)】
-'   1. SOH_Master.xlsm（マクロ有効ブックとして保存）を開く
-'   2. Alt+F11 → 「ファイル」→「ファイルのインポート」→ macros/フォルダの7つの.basファイルを
-'      すべて選択してインポートする（1ファイルずつでも、複数選択して一括でも構いません。
-'      インポート順序は結果に影響しません）
-'      （コピー＆貼り付けで導入する場合は、各ファイルの1行目の Attribute VB_Name = "..." を
-'       必ず削除してから貼り付けてください。この行は貼り付けでは使えず、含めるとコンパイル
-'       エラーになります。また、貼り付け先は各モジュール名に対応する標準モジュールを
-'       個別に挿入してください）
-'   3. Alt+F8 でマクロ一覧から実行したいマクロ(RefreshWeeklyBatches等)を選択、
-'      または任意のシートに図形を挿入して「マクロの登録」で割り当てる
+' [How to install (applies to all modules)]
+'   1. Open SOH_Master.xlsm (saved as a macro-enabled workbook)
+'   2. Alt+F11 -> "File" -> "Import File" -> select all 8 .bas files in the
+'      macros/ folder and import them (one at a time or multiple selected at
+'      once is fine either way - import order does not affect the result)
+'      (If installing via copy & paste, be sure to delete the
+'       "Attribute VB_Name = ..." line 1 of each file before pasting. That
+'       line cannot be used via paste and causes a compile error if
+'       included. Also insert a separate standard module for each module
+'       name before pasting its content in.)
+'   3. Alt+F8 to pick the macro to run from the list (RefreshWeeklyBatches
+'      etc.), or insert a shape on any sheet and assign it via "Assign Macro"
 '
-' 【選択週の自動スクロール(JumpToSelectedWeek)を有効にする場合の追加手順（任意）】
-'   標準モジュールへのインポートだけでは動きません。以下のコードを
-'   「Dashboard」シート・「Material_Detail」シート・「T_SelfStock」シート・「T_TTAFStock」シート
-'   それぞれの“シート自身のコードモジュール”に直接貼り付けてください（VBEのプロジェクト
-'   エクスプローラーでシート名をダブルクリックすると開きます。標準モジュールに貼り付けても
-'   発火しません）。JumpToSelectedWeek本体はRefreshData_Displayモジュールにあります。
+' [Extra steps if you want to enable auto-scroll to the selected week
+'  (JumpToSelectedWeek) - optional]
+'   Importing it into a standard module alone does not make it run. Paste the
+'   code below directly into the "sheet's own code module" for each of the
+'   "Dashboard", "Material_Detail", "T_SelfStock", and "T_TTAFStock" sheets
+'   (double-click the sheet name in the VBE's Project Explorer to open it - it
+'   will not fire if pasted into a standard module). The JumpToSelectedWeek
+'   routine itself lives in the RefreshData_Display module.
 '
-'   ' --- Dashboardシートのコードモジュールに貼り付け ---
+'   ' --- Paste into the Dashboard sheet's code module ---
 '   Private Sub Worksheet_Change(ByVal Target As Range)
 '       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 11)   ' 11 = K列(週データ開始列)
+'       Call JumpToSelectedWeek(Me, "F1", 11)   ' 11 = column K (week-data start column)
 '   End Sub
 '
-'   ' --- Material_Detailシートのコードモジュールに貼り付け ---
+'   ' --- Paste into the Material_Detail sheet's code module ---
 '   Private Sub Worksheet_Change(ByVal Target As Range)
 '       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = D列(週データ開始列)
+'       Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = column D (week-data start column)
 '   End Sub
 '
-'   ' --- T_SelfStockシートのコードモジュールに貼り付け ---
+'   ' --- Paste into the T_SelfStock sheet's code module ---
 '   Private Sub Worksheet_Change(ByVal Target As Range)
 '       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = B列(週データ開始列)
+'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = column B (week-data start column)
 '   End Sub
 '
-'   ' --- T_TTAFStockシートのコードモジュールに貼り付け ---
+'   ' --- Paste into the T_TTAFStock sheet's code module ---
 '   Private Sub Worksheet_Change(ByVal Target As Range)
 '       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = B列(週データ開始列)
+'       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = column B (week-data start column)
 '   End Sub
 '
-' 【パフォーマンスについて】どのRefresh*マクロも、外部ファイルのシートを1セルずつ.Cells(r,c).Value
-' で読む代わりに、対象範囲を1回だけ配列として読み込み(Range.Value)、以降はメモリ上の配列だけを
-' 参照する設計にしています。また、PP_Grid(中間体名->行番号)・
-' T_SelfStock_Log/T_TTAFStock_Log((RM_Code,週の月曜日)->行番号)への書き込みも、呼び出すたびに
-' .Find()や全行スキャンをする代わりに、実行の最初にDictionaryを1回だけ作って参照する設計です
-' （このモジュールのBuildNameIndex、RefreshData_StockActualsのBuildStockRowIndex）。
-' これは実際にExcelが強制終了する不具合(1セルずつの読み書きや毎回の全行スキャンがCOM通信の
-' 積み重ねで極めて遅くなることが原因)が複数回報告されたことを受けての対策です。
+' [About performance] Every Refresh* macro reads its target range as a single
+' array (Range.Value) once, instead of reading an external file's cells one
+' at a time via .Cells(r,c).Value, and afterward only touches the in-memory
+' array. Likewise, writes to PP_Grid (intermediate name -> row number) and
+' T_SelfStock_Log/T_TTAFStock_Log ((RM_Code, week's Monday) -> row number)
+' build a Dictionary once at the start of the run and look values up in it,
+' instead of calling .Find() or scanning every row on each write (see
+' BuildNameIndex in this module and BuildStockRowIndex in
+' RefreshData_StockActuals). This is a countermeasure against a real bug that
+' was reported multiple times, where Excel actually force-quit (caused by
+' cell-by-cell reads/writes or a full-row scan on every write becoming
+' extremely slow from the accumulated COM round-trips).
 '
-' 【M_BOMへの書き込みについて】RefreshBOMは、Look Upから読み取った新しいBOM内容を一旦メモリ上の
-' Dictionaryに組み立ててから、M_BOM全体を1回のブロック書き込み(Range.Formula = 2次元配列)で
-' 丸ごと置き換える設計にしています。以前は行ごとにListRows.Addで追加していましたが、M_BOMは
-' Grid_Requirement・Material_Detail・PP_Gridのパススルー数式など非常に多くの数式から参照されて
-' いるため、行を1行追加するたびにそれら全ての依存関係の再チェックが走り、行数が千を超える
-' あたりから実質的にフリーズするほど遅くなる不具合が実際に報告されたための対策です。
+' [About writing to M_BOM] RefreshBOM first assembles the new BOM content
+' read from Look Up into an in-memory Dictionary, then replaces the whole of
+' M_BOM in a single block write (Range.Formula = a 2D array). It used to add
+' rows one at a time via ListRows.Add, but because M_BOM is referenced by a
+' very large number of formulas (Grid_Requirement, Material_Detail, PP_Grid's
+' pass-through formulas, etc.), adding a single row triggered a dependency
+' recheck across all of them, and this was reported to slow to a near-freeze
+' once the row count passed roughly a thousand - hence this design.
 '
-' 【既存行の更新に.DataBodyRangeを使わない理由】RefreshBOM/RefreshWeeklyBatchesの実行時に
-' 「(91) オブジェクト変数または With ブロック変数が設定されていません」というエラーが報告され
-' ました。原因は、Excel/VBAの既知のクセとして、ListObject.DataBodyRangeが(特にListRows.Add
-' で新しい行を追加した直後など)不安定にNothingを返すことがあるためです。新規行の追加時は元々
-' 各Sub内で.ListRows.Add後の戻り値(newRow.Range)を使っておりこの問題を回避できていましたが、
-' 既存行の値を更新する側だけ.DataBodyRange.Cells(...)という不安定な書き方が残っていました。
-' すべて.ListRows(行番号).Range.Cells(...)という、行追加直後でも安定して動く書き方に統一
-' しています。
+' [Why existing rows are not updated via .DataBodyRange] Running
+' RefreshBOM/RefreshWeeklyBatches was reported to sometimes raise the error
+' "Object variable or With block variable not set" (error 91). The cause is
+' a known Excel/VBA quirk where ListObject.DataBodyRange can unreliably
+' return Nothing (especially right after adding a new row with
+' ListRows.Add). New-row code already used the return value of .ListRows.Add
+' (newRow.Range) in each Sub, which avoided this problem, but the code path
+' that updates existing rows still used the unstable
+' .DataBodyRange.Cells(...) form. Everything has now been unified to use
+' .ListRows(rowNumber).Range.Cells(...), which works reliably even
+' immediately after a row is added.
 '
-' 【DisplayAlertsを抑制している理由】.DataBodyRangeの修正後も、取込元ファイルを開いた直後の
-' srcWbが「Nothing」になり、後始末のsrcWb.Closeで同じ(91)エラーが再発するケースが報告されま
-' した。取込元ファイル(Powder & Slurry & Pgm Plan、Raw Material - Look Up等)は
-' 手動で開く際に「読み取り専用を推奨」の確認ダイアログが出るファイルであることが確認できて
-' おり、Application.DisplayAlerts=Trueのままだと、VBAのWorkbooks.Open実行時にもこのダイアログ
-' が表示されて処理が止まる(応答待ちのまま次の行に進めない、または想定外の状態でオブジェクトが
-' 返る)ことが原因と考えられます。Workbooks.Open前にApplication.DisplayAlerts=Falseを設定して
-' このようなダイアログを抑制し、後始末時にTrueへ戻すようにしました。念のため、srcWb.Close自体
-' も引き続きIf Not srcWb Is Nothing Thenでガードしています。
+' [Why DisplayAlerts is suppressed] Even after the .DataBodyRange fix, a
+' case was reported where srcWb became Nothing right after opening the
+' source file, and the same error (91) recurred at the srcWb.Close cleanup
+' step. The source files (Powder & Slurry & Pgm Plan, Raw Material - Look
+' Up, etc.) are confirmed to trigger a "read-only recommended" confirmation
+' dialog when opened manually; with Application.DisplayAlerts left True,
+' this dialog is believed to also appear during VBA's Workbooks.Open call
+' and stall execution (waiting for a response instead of moving to the next
+' line, or the object coming back in an unexpected state). Application.
+' DisplayAlerts is now set to False before Workbooks.Open to suppress such
+' dialogs, and restored to True during cleanup. As a precaution, the
+' srcWb.Close call itself is still guarded with If Not srcWb Is Nothing Then.
 '
-' 【T_SelfStock/T_TTAFStockの二層構造について】RefreshSelfStock/RefreshTTAFStockは、目に
-' 見えるT_SelfStock/T_TTAFStockシートには一切書き込みません。書き込み先は非表示の
-' T_SelfStock_Log/T_TTAFStock_Log（実施日ベースの生ログ）で、目に見える方のシートは
-' そこから毎回計算し直す数式(材料×週のグリッド)だけで組み立てられています。
-' _Logシート側のWeekIndex列はDate列から自動計算される数式列です（RefreshSelfStock/
-' RefreshTTAFStockはDateだけを書き込み、WeekIndexは書き込みません）。Cal_Weeks!B1
-' (AnchorYear)を進めても、記録済みの実績データが「別の週のデータ」として誤表示される
-' ことがないようにするためです。詳細はRefreshData_StockActualsモジュール冒頭を参照。
+' [About the two-layer structure of T_SelfStock/T_TTAFStock]
+' RefreshSelfStock/RefreshTTAFStock never write to the visible
+' T_SelfStock/T_TTAFStock sheets at all. They write to the hidden
+' T_SelfStock_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
+' visible sheet is built entirely from formulas (a material x week grid)
+' that recompute from that log every time. The WeekIndex column on the
+' _Log sheet side is a formula column calculated automatically from the
+' Date column (RefreshSelfStock/RefreshTTAFStock only write Date, never
+' WeekIndex). This ensures that advancing Cal_Weeks!B1 (AnchorYear) never
+' causes already-recorded actuals to be misdisplayed as "another week's
+' data." See the top of the RefreshData_StockActuals module for details.
 '
-' 【注意: 完全に新しいsubstrate/Catコードが増えた場合】
-'   RefreshWeeklyBatchesはPP_GridとM_BOMには自動で行を追加しますが、
-'   M_RawMaterials(原材料マスタ)への新規substrateコードの追加はVBAでは行いません。
-'   新しいsubstrateコード(TTAF在庫実績シートやDashboardに現れないコード)に気づいたら、
-'   M_RawMaterialsシートに手動で1行追加してください(RM_Code, TTAF_Code, Description,
-'   Supplier, Category="Substrate")。
+' [Note: when an entirely new substrate/Cat code is added]
+'   RefreshWeeklyBatches automatically adds rows to PP_Grid and M_BOM, but
+'   it does not add new substrate codes to M_RawMaterials (the raw material
+'   master) via VBA.
+'   If you notice a new substrate code (one that doesn't appear on the TTAF
+'   stock actuals sheet or Dashboard), please add a row to M_RawMaterials
+'   manually (RM_Code, TTAF_Code, Description, Supplier, Category="Substrate").
 '
-' 【注意】この環境ではVBAを実際に実行して検証できません。貴社のExcelで動作確認を
-'        お願いします。エラーが出た場合は内容を教えてください。
+' [Note] This environment cannot actually run and verify VBA. Please test it
+'        in your own Excel. If you hit an error, let us know what it says.
 ' ============================================================================
 
-' tblの指定した1列(colName)の値->行番号のDictionaryを1回だけ作る。
-' 旧実装は.Find()を使っており、Excelの既定の挙動として大文字/小文字を区別しない
-' 検索だった。同じ挙動を保つため、CompareMode=vbTextCompareで大文字/小文字を
-' 区別しないDictionaryにしている（区別してしまうと、表記ゆれ(TSP-049 と tsp-049等)を
-' 同じ中間体として扱えず、実行のたびに重複行が増えていく別の不具合につながるため）。
+' Builds a Dictionary of value -> row number for the given column (colName)
+' of tbl, once. The old implementation used .Find(), whose default Excel
+' behavior is a case-insensitive search. To preserve that same behavior,
+' this uses a Dictionary with CompareMode=vbTextCompare (case-insensitive)
+' (treating case as significant would fail to recognize spelling variants
+' such as "TSP-049" vs "tsp-049" as the same intermediate, leading to a
+' separate bug where duplicate rows kept accumulating on every run).
 Public Function BuildNameIndex(tbl As ListObject, colName As String) As Object
     Dim idx As Object: Set idx = CreateObject("Scripting.Dictionary")
     idx.CompareMode = vbTextCompare
@@ -150,11 +174,12 @@ Public Function BuildNameIndex(tbl As ListObject, colName As String) As Object
         data = tbl.ListColumns(colName).DataBodyRange.Value
         Dim i As Long
         For i = 1 To n
-            ' Trim()しておかないと、M_RawMaterials側のセルに前後の余分な空白が
-            ' 紛れ込んでいた場合、呼び出し側でTrim()済みの文字列と比較しても
-            ' 一致せず、該当行だけ静かに照合漏れする不具合につながる
-            ' (実際にEster Film/Original Towel/PP FilmがRefreshSelfStockで
-            ' 反映されない不具合として発覚した)。
+            ' Without Trim(), if a cell on the M_RawMaterials side has stray
+            ' leading/trailing whitespace mixed in, comparing it against the
+            ' caller's already-Trim()'d string will fail to match, silently
+            ' dropping just that row from the lookup (this actually happened
+            ' as a bug where Ester Film/Original Towel/PP Film were not
+            ' reflected by RefreshSelfStock).
             Dim k As String: k = Trim(CStr(data(i, 1)))
             If Not idx.Exists(k) Then idx(k) = i
         Next i
@@ -162,10 +187,11 @@ Public Function BuildNameIndex(tbl As ListObject, colName As String) As Object
     Set BuildNameIndex = idx
 End Function
 
-' 材料名・中間体名等の表記ゆれ(大文字小文字・記号・スペースの違い)を吸収するための
-' 正規化(英数字だけを大文字で残す)。RefreshData_BOM・RefreshData_StockActuals・
-' RefreshData_Shipmentsの複数モジュールで、外部ファイルの名称とM_RawMaterials/PP_Grid側の
-' 名称を突き合わせる際に共通して使う。
+' Normalization (keep only alphanumerics, uppercased) used to absorb
+' spelling variants (case, symbols, spacing differences) in material/
+' intermediate names. Used in common across multiple modules -
+' RefreshData_BOM, RefreshData_StockActuals, RefreshData_Shipments - when
+' matching an external file's names against the M_RawMaterials/PP_Grid side.
 Public Function NormalizeText(s As String) As String
     Dim i As Long, ch As String, result As String
     s = UCase(s)
@@ -178,14 +204,15 @@ Public Function NormalizeText(s As String) As String
     NormalizeText = result
 End Function
 
-' 日付からCal_Weeksを引いてWeekIndexを求める。RefreshData_StockActuals(実績取込みの
-' 対象週判定)とRefreshData_Display(HideInactiveIntermediatesの「今週」判定)の両方から
-' 使われる共通処理。
+' Looks up Cal_Weeks by date to get the WeekIndex. Shared routine used by
+' both RefreshData_StockActuals (determining the target week for actuals
+' import) and RefreshData_Display (HideInactiveIntermediates' "this week"
+' determination).
 Public Function WeekIndexForDate(wb As Workbook, d As Date) As Long
     Dim calTbl As ListObject: Set calTbl = wb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks")
     Dim n As Long: n = calTbl.ListRows.Count
     If n > 0 Then
-        ' 列: 1=WeekIndex, 2=WeekStart, 6=WeekEnd。1回の配列読み込みで全列まとめて取得する。
+        ' Columns: 1=WeekIndex, 2=WeekStart, 6=WeekEnd. Read all columns together in one array read.
         Dim data As Variant
         data = calTbl.DataBodyRange.Value
         Dim i As Long
@@ -196,12 +223,13 @@ Public Function WeekIndexForDate(wb As Workbook, d As Date) As Long
             End If
         Next i
     End If
-    WeekIndexForDate = 1 ' 見つからない場合はWeek1にフォールバック
+    WeekIndexForDate = 1 ' fall back to Week1 if not found
 End Function
 
-' 列番号(例:28)を列名(例:AB)に変換する。ワークシートに依存しない純粋な計算。
-' RefreshData_BOM(InsertIntermediateRowPair)とRefreshData_MaterialMgmt(Append*/Delete*系)の
-' 両方から使われる共通処理。
+' Converts a column number (e.g. 28) to a column letter (e.g. AB). A pure
+' calculation with no dependency on any worksheet. Shared routine used by
+' both RefreshData_BOM (InsertIntermediateRowPair) and
+' RefreshData_MaterialMgmt (the Append*/Delete* family).
 Public Function ColLetter(colNum As Long) As String
     Dim s As String, n As Long, r As Long
     n = colNum
@@ -213,13 +241,17 @@ Public Function ColLetter(colNum As Long) As String
     ColLetter = s
 End Function
 
-' PO_Draft_*シートの数式(発注数量・在庫参照)で使う、基準週セルへの参照文字列を返す。
-' シート固有(ローカルスコープ)の名前付き範囲"BaseWeek"が定義されていればその名前をそのまま
-' 返す(セルがP7からP13等に移動しても、名前の参照先さえ直しておけば数式は書き換え不要になる。
-' RefreshData_MaterialMgmt.basのAppendPODraftRowが$P$7を直接埋め込んでいたために、基準週セルを
-' 移動した既存シート(手動でP7→P13に移動した場合等)で新規追加行だけ壊れる不具合があった)。
-' まだSetupPODraftLetterheadLayout(RefreshData_PODraft)を実行していない未移行のシートでは
-' "BaseWeek"という名前が無いため、その場合だけ従来通り$P$7にフォールバックする。
+' Returns the reference string to use for the base-week cell in PO_Draft_*
+' sheet formulas (order quantity / stock lookups). If the sheet-local
+' (local-scope) named range "BaseWeek" is defined, its name is returned
+' as-is (so even if the cell moves, e.g. from P7 to P13, only the name's
+' target needs fixing and formulas never need to be rewritten. Because
+' RefreshData_MaterialMgmt.bas's AppendPODraftRow used to hard-code $P$7
+' directly, any existing sheet whose base-week cell had been moved, e.g.
+' manually from P7 to P13, would only have its newly-appended rows break).
+' Sheets not yet migrated by SetupPODraftLetterheadLayout
+' (RefreshData_PODraft) have no "BaseWeek" name, so only in that case does
+' this fall back to $P$7 as before.
 Public Function BaseWeekRef(sh As Worksheet) As String
     On Error Resume Next
     Dim nm As Name: Set nm = sh.Names("BaseWeek")

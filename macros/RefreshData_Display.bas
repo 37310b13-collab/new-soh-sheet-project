@@ -2,42 +2,52 @@ Attribute VB_Name = "RefreshData_Display"
 Option Explicit
 
 ' ============================================================================
-' RefreshData_Display モジュール
+' RefreshData_Display module
 '
 ' HideInactiveIntermediates / ShowAllIntermediates / JumpToSelectedWeek
 '
-' いずれもデータを更新するマクロではなく、見た目(行の表示/非表示、ウィンドウの
-' スクロール位置)だけを操作するものです。
+' None of these are data-refresh macros - they only operate on appearance
+' (row show/hide, window scroll position).
 '
-' Material_Detailシートは、材料(RM_Code)ごとに「中間体名／No. of batches」
-' 「使用量(kg)」の行が縦に並ぶブロック構成になっている。将来しばらく(半年・1年など)
-' 生産予定の無い中間体の行を、ユーザー指定期間に応じてボタン一つで折りたたみ、
-' 見た目のスクロール量を減らせるようにする。材料の合計使用量・TTAF在庫実績・
-' 自社在庫実績・合計在庫(週末時点)の行は、非表示の対象にせず常に見える状態を保つ
-' （在庫量そのものは常に把握できるようにするため）。
+' The Material_Detail sheet is laid out as vertical blocks per material
+' (RM_Code), each with an "Intermediate name / No. of batches" row and a
+' "Usage (kg)" row. For intermediates with no production planned for a
+' while (six months, a year, etc.), this lets the user collapse those rows
+' with a single button click, for a given period, to reduce the amount of
+' scrolling. The material's total usage, TTAF stock (actual), self stock
+' (actual), and total stock (end of week) rows are never hidden and always
+' stay visible (so the stock level itself can always be checked at a glance).
 '
-' 判定方法: 「今週」から指定月数分の週について、その中間体の「No. of batches」行が
-' 全て0(または空白)であれば、その中間体の2行(No. of batches行＋使用量(kg)行)を隠す。
-' 1つでも0以外の週があれば表示したままにする。実行のたびにまず全行を再表示してから
-' 判定し直すため、期間を変えて何度実行しても結果は指定した条件どおりになる。
+' How it decides: for the weeks from "this week" through the
+' specified number of months, if that intermediate's "No. of batches" row
+' is all 0 (or blank), both of its rows (No. of batches row + Usage (kg)
+' row) are hidden. If even one week is non-zero, it stays visible. Every
+' run first re-shows all rows before re-evaluating, so re-running with a
+' different period always produces a result matching the newly specified
+' condition.
 '
-' 行位置はラベル文字列(列C="No. of batches")で判定しており、build_soh.py側で
-' 行数が増減しても自動的に追従する。ただし週データの開始列(MD_WEEK_START_COL=E列)
-' とヘッダー行(MD_HEADER_ROW=6行目、RefreshData_Utilitiesで定義)は、build_soh.pyの
-' WEEK_START_COL/MD_TABLE_ROWと値を合わせる必要がある(シート構成を変更した場合は
-' ここも合わせて変更すること)。
+' Row position is determined by the label text (column C = "No. of
+' batches"), so it automatically tracks row-count changes made on the
+' build_soh.py side. However, the week-data start column
+' (MD_WEEK_START_COL = column E) and header row (MD_HEADER_ROW = row 6,
+' defined in RefreshData_Utilities) must be kept in sync with
+' build_soh.py's WEEK_START_COL/MD_TABLE_ROW values (if the sheet layout
+' changes, update these too).
 '
-' 【ボタンの割り当て方(手動での一度だけの作業。openpyxlではボタンを自動作成できないため)】
-'   1. Material_Detailシートを開く
-'   2. 「挿入」タブ →「図形」等で好きな形の図形を1~2個描く(例:「非表示にする」「全部表示」)
-'   3. 図形を右クリック →「マクロの登録」→ HideInactiveIntermediates (もう1つには
-'      ShowAllIntermediates)を選択
-'   4. お好みでシート上部の空いている場所(A1付近など)に配置する
+' [How to assign the buttons (one-time manual setup - openpyxl cannot
+'  create buttons automatically)]
+'   1. Open the Material_Detail sheet
+'   2. "Insert" tab -> "Shapes" etc. and draw 1-2 shapes of your choice
+'      (e.g. "Hide", "Show All")
+'   3. Right-click the shape -> "Assign Macro" -> choose HideInactiveIntermediates
+'      (and ShowAllIntermediates for the other one)
+'   4. Place them wherever convenient near the top of the sheet (e.g. near A1)
 '
-' 【JumpToSelectedWeekの導入方法(任意)】標準モジュールへのインポートだけでは動きません。
-' Dashboard/Material_Detail/T_SelfStock/T_TTAFStock各シート自身のコードモジュールに
-' Worksheet_Changeを設置する必要があります。詳細はRefreshData_Utilitiesモジュール冒頭の
-' コメントを参照してください。
+' [How to install JumpToSelectedWeek (optional)] Importing it into a
+' standard module alone does not make it run. You must add a
+' Worksheet_Change to the code module of each of the Dashboard/
+' Material_Detail/T_SelfStock/T_TTAFStock sheets themselves. See the
+' comment at the top of the RefreshData_Utilities module for details.
 ' ============================================================================
 
 Sub HideInactiveIntermediates()
@@ -47,22 +57,22 @@ Sub HideInactiveIntermediates()
     Set sh = wb.Sheets("Material_Detail")
     On Error GoTo 0
     If sh Is Nothing Then
-        MsgBox "Material_Detailシートが見つかりません。", vbExclamation
+        MsgBox "The Material_Detail sheet was not found.", vbExclamation
         Exit Sub
     End If
 
     Dim monthsStr As String
-    monthsStr = InputBox("今週から何ヶ月間、全週バッチ数0の中間体を非表示にしますか？" & _
-        vbCrLf & "（例: 6 → 半年間生産予定の無い中間体を非表示、12 → 1年間）" & _
-        vbCrLf & "半角数字で入力してください。", "非表示にする期間(月数)", "6")
-    If monthsStr = "" Then Exit Sub  ' キャンセル
+    monthsStr = InputBox("Hide intermediates with 0 batches every week, starting from this week, for how many months?" & _
+        vbCrLf & "(e.g. 6 -> hide intermediates with no production planned for 6 months, 12 -> 1 year)" & _
+        vbCrLf & "Please enter a number.", "Period to hide (months)", "6")
+    If monthsStr = "" Then Exit Sub  ' cancelled
     If Not IsNumeric(monthsStr) Then
-        MsgBox "数値を入力してください。", vbExclamation
+        MsgBox "Please enter a number.", vbExclamation
         Exit Sub
     End If
     Dim months As Double: months = CDbl(monthsStr)
     If months <= 0 Then
-        MsgBox "1以上の数値を入力してください。", vbExclamation
+        MsgBox "Please enter a number of 1 or greater.", vbExclamation
         Exit Sub
     End If
 
@@ -78,7 +88,7 @@ Sub HideInactiveIntermediates()
     Dim startCol As Long: startCol = MD_WEEK_START_COL + curWeek - 1
     Dim endCol As Long: endCol = MD_WEEK_START_COL + endWeek - 1
     If endCol < startCol Then
-        MsgBox "対象週が見つかりませんでした。", vbExclamation
+        MsgBox "No target weeks were found.", vbExclamation
         Exit Sub
     End If
 
@@ -88,7 +98,7 @@ Sub HideInactiveIntermediates()
     Dim lastRow As Long
     lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
 
-    ' まず全行を再表示してから判定する(期間を変えて再実行しても常に指定条件どおりになるように)
+    ' Re-show all rows first, then re-evaluate (so re-running with a different period always matches the specified condition)
     If lastRow >= MD_HEADER_ROW Then sh.Rows(MD_HEADER_ROW & ":" & lastRow).Hidden = False
 
     Dim r As Long, hiddenCount As Long, shownCount As Long
@@ -109,12 +119,12 @@ Sub HideInactiveIntermediates()
             Next c
             If allZero Then
                 sh.Rows(r).Hidden = True
-                sh.Rows(r + 1).Hidden = True   ' 対応する「使用量(kg)」行も一緒に隠す
+                sh.Rows(r + 1).Hidden = True   ' also hide the matching "Usage (kg)" row
                 hiddenCount = hiddenCount + 1
             Else
                 shownCount = shownCount + 1
             End If
-            r = r + 2   ' No. of batches行＋使用量(kg)行のペア分をスキップ
+            r = r + 2   ' skip past the No. of batches row + Usage (kg) row pair
         Else
             r = r + 1
         End If
@@ -123,20 +133,23 @@ Sub HideInactiveIntermediates()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "完了しました。" & vbCrLf & _
-           "今週(week " & curWeek & ")から" & thresholdWeeks & "週間、全週バッチ数0の中間体を非表示にしました。" & vbCrLf & _
-           "非表示: " & hiddenCount & " 件 / 表示中: " & shownCount & " 件" & vbCrLf & _
-           "（材料名の行・在庫関連の行は常に表示されます）", vbInformation
+    MsgBox "Done." & vbCrLf & _
+           "Hid intermediates with 0 batches every week for " & thresholdWeeks & " weeks starting from this week (week " & curWeek & ")." & vbCrLf & _
+           "Hidden: " & hiddenCount & " / Shown: " & shownCount & vbCrLf & _
+           "(The material name row and stock-related rows always stay visible)", vbInformation
 End Sub
 
-' Dashboard/Material_Detail/T_SelfStock/T_TTAFStockのC1(選択週)を入力したときに呼ばれる
-' 想定の共通処理。選択週の値を別セルに複製する(ピン留め列)方式は廃止し、代わりに
-' 「本物の週データ列」が常にラベル列のすぐ右(固定ペインの直後)に見えるよう、ウィンドウを
-' 横スクロールするだけにしている。値の複製が一切ないため、各シート・Grid_Stock等の間で
-' 数字が食い違う余地がない。
-' 呼び出し元のシート自身のWorksheet_Changeから、対象シート・週No解決済みセル(F1)・
-' 週データ開始列(Dashboardは9=I列、Material_Detailは4=D列、T_SelfStock/T_TTAFStockは
-' 2=B列)を渡して呼び出す。
+' Common routine, meant to be called when C1 (selected week) is entered on
+' Dashboard/Material_Detail/T_SelfStock/T_TTAFStock. Rather than copying the
+' selected week's value into a separate pinned column, this simply scrolls
+' the window horizontally so the "real week-data column" always appears
+' right next to the label column (right after the frozen pane). Because
+' nothing is ever duplicated, there is no chance for numbers to disagree
+' between sheets, Grid_Stock, etc.
+' Called from each sheet's own Worksheet_Change with the target sheet, the
+' resolved week-number cell (F1), and the week-data start column (9 =
+' column I for Dashboard, 4 = column D for Material_Detail, 2 = column B
+' for T_SelfStock/T_TTAFStock).
 Public Sub JumpToSelectedWeek(sh As Worksheet, weekIndexCell As String, weekStartCol As Long)
     Dim wIdx As Variant
     wIdx = sh.Range(weekIndexCell).Value
@@ -155,11 +168,11 @@ Sub ShowAllIntermediates()
     Set sh = wb.Sheets("Material_Detail")
     On Error GoTo 0
     If sh Is Nothing Then
-        MsgBox "Material_Detailシートが見つかりません。", vbExclamation
+        MsgBox "The Material_Detail sheet was not found.", vbExclamation
         Exit Sub
     End If
     Dim lastRow As Long
     lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
     If lastRow >= MD_HEADER_ROW Then sh.Rows(MD_HEADER_ROW & ":" & lastRow).Hidden = False
-    MsgBox "すべての中間体行を再表示しました。", vbInformation
+    MsgBox "All intermediate rows are now shown again.", vbInformation
 End Sub
