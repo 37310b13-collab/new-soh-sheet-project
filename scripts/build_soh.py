@@ -388,7 +388,7 @@ for col, w in zip("ABC", [14, 16, 12]):
 
 # WeekIndexを「日付から毎回ライブ計算する式」にするための共通部品。
 # Cal_Weeks!$B$1(AnchorYear)が変わっても、記録した日付から正しい週番号を再計算できるため、
-# AnchorYearを進めても過去の実績データ(T_Shipments/T_StockCount/T_SelfStock/T_TTAFStock)が
+# AnchorYearを進めても過去の実績データ(T_Shipments/T_SelfStock/T_TTAFStock)が
 # 別の週のものとして誤表示されることがなくなる。
 #
 # 2種類の式を使い分ける:
@@ -396,7 +396,7 @@ for col, w in zip("ABC", [14, 16, 12]):
 #     T_Shipments(まだ着荷していない発注)用。古い発注でも「本来もう届いているはず」として
 #     week1に表示され続けてほしいため。
 #   week_index_formula_strict : 表示ウィンドウの外側の日付はどの週にも一致させず空欄にする。
-#     T_StockCount/T_SelfStock/T_TTAFStock(実績の記録)用。クランプしてしまうと、AnchorYearを
+#     T_SelfStock/T_TTAFStock(実績の記録)用。クランプしてしまうと、AnchorYearを
 #     進めた後にウィンドウ外へ出た古い実績データがweek1の集計に紛れ込み、直近の実績値が
 #     狂ってしまうため。
 ANCHOR_MONDAY_EXPR = "(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3))"
@@ -469,17 +469,9 @@ print("Shipment rows seeded:", len(ship_rows))
 # なりました(5.10章参照)。
 ws.freeze_panes = "A2"
 
-# ============================================================ T_StockCount (INPUT, physical count overrides)
-# 列順: RM_Code, Date(手入力=棚卸を実施した日), WeekIndex(Dateから自動計算), CountedQty, Notes
-ws = wb.create_sheet("T_StockCount")
-ws.append(["Part Name", "CountDate", "WeekIndex", "CountedQty", "Notes"])
-ws.append(["(e.g.) CHEM-1010", START_MONDAY, None, 0, "Add a row here when a physical count is taken (enter Date; WeekIndex is calculated automatically)"])
-ws.cell(row=2, column=3).value = week_index_formula_strict("$B2")
-style_header(ws, 5)
-add_table(ws, "T_StockCount", "A1:E2")
-ws.cell(row=2, column=2).number_format = "yyyy-mm-dd"
-for col, w in zip("ABCDE", [16, 14, 10, 12, 30]):
-    ws.column_dimensions[col].width = w
+# T_StockCount(手動棚卸による在庫修正シート)は廃止しました。自社倉庫のdaily checkが
+# そのまま実地棚卸を兼ねているため、Grid_Stockで別途「手動棚卸」を最優先する分岐を
+# 持つ必要が無くなったための整理です。詳細はdocs/SOH_System_Guide.mdを参照してください。
 
 # ============================================================ T_SelfStock / T_TTAFStock (自社/TTAF倉庫の実績)
 # 設計: VBAが書き込む生データは「実施日」をキーにした安全な形(_Logシート、非表示)に保存する。
@@ -632,7 +624,7 @@ ws_req = wb.create_sheet("Grid_Requirement")
 ws_in = wb.create_sheet("Grid_Incoming")
 ws_st = wb.create_sheet("Grid_Stock")
 # Grid_TheoreticalStock: Grid_Stockと行位置(rr)を完全にそろえた、常に「前週+入庫-消費」だけで
-# 計算する純粋なロールフォワード専用シート。T_StockCount(棚卸)や自社/TTAF実績には一切
+# 計算する純粋なロールフォワード専用シート。自社/TTAF実績には一切
 # 反応しない(Grid_Stockのような優先順位の切り替えが無い)。Dashboardで「理論在庫」行として
 # 表示し、実際の値(Grid_Stock=「実在庫」行)との乖離を確認できるようにするために追加した。
 ws_theo = wb.create_sheet("Grid_TheoreticalStock")
@@ -677,11 +669,8 @@ for i, r in enumerate(rm_master):
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=IF({_md_has_block},IF({_md_received},0,IFERROR({_md_order_val},0)),{_shipments_val})"
         )
-        # T_StockCountは棚卸(手動・低頻度)のためCOUNTIFS/SUMIFSのままでよい。
         # T_SelfStock/T_TTAFStockは「材料×週」のグリッド形式(直接セル参照)になったため、
         # SUMIFS不要でGrid_Requirement/Incomingと同じ直接参照で済む(高速・行数増加の心配もない)。
-        has_count = f"COUNTIFS(T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
-        count_val = f"SUMIFS(T_StockCount[CountedQty],T_StockCount[Part Name],$A{rr},T_StockCount[WeekIndex],{w})"
         ss_row = ss_row_map[rm]
         has_self = f"('T_SelfStock'!{cl}{ss_row}<>\"\")"
         self_val = f"'T_SelfStock'!{cl}{ss_row}"
@@ -697,13 +686,14 @@ for i, r in enumerate(rm_master):
         # 動きではなく、純粋に合計在庫へ新規に入ってくる量なので、TTAF供給材料かどうかで
         # 特別扱いする必要はなく、他の材料と同じ「前週+入庫-消費」で計算してよい。
         normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
-        # 優先順位: 手動棚卸(T_StockCount) > 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
+        # 優先順位: 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
+        # (以前は手動棚卸T_StockCountを最優先する3段階の分岐だったが、自社倉庫のdaily check
+        # がそのまま実地棚卸を兼ねているため手動棚卸シート自体を廃止し、2段階に簡略化した)
         ws_st.cell(row=rr, column=1 + w).value = (
-            f"=IF({has_count}>0,{count_val},"
-            f"IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal}))"
+            f"=IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal})"
         )
 
-        # Grid_TheoreticalStock: T_StockCount・自社/TTAF実績を一切見ない、純粋な
+        # Grid_TheoreticalStock: 自社/TTAF実績を一切見ない、純粋な
         # 「前週+入庫-消費」のロールフォワードだが、月が変わる最初の週だけは前週の
         # 実在庫(Grid_Stock)を起点に再同期する(月をまたいで誤差が無限に積み上がるのを防ぎ、
         # 「今月の計画と実績がどれだけずれているか」を毎月リセットして確認できるようにする
@@ -1446,7 +1436,7 @@ readme_lines = [
     "                        (since TTAF is both the supplier and a warehouse). For non-TTAF materials it is,",
     "                        as before, the arrival record at our own company. Can be bulk-updated from the CSA Report's",
     "                        Shipping Schedule via RefreshShipments (manual entry also works).",
-    "  T_OpeningStock/T_StockCount : for data entry",
+    "  T_OpeningStock      : for data entry",
     "  T_SelfStock/T_TTAFStock : Shows self/TTAF actual stock as a material x week grid (output/viewing only).",
     "                        Updated by RefreshSelfStock/RefreshTTAFStock. Please do not enter data manually",
     "                        (the raw data is safely stored in the hidden T_SelfStock_Log/T_TTAFStock_Log).",
@@ -1457,7 +1447,7 @@ readme_lines = [
     "  Import the RefreshData_*.bas files (8 files) from the macros/ folder, then run RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
     "  RefreshTTAFStock / RefreshShipments (just choose the source file when prompted.",
     "  See docs/SOH_System_Guide.md for details; not fully verified, so please confirm it works as expected).",
-    "  Entries in T_Shipments, T_OpeningStock, T_StockCount, etc. are not overwritten",
+    "  Entries in T_Shipments, T_OpeningStock, etc. are not overwritten",
     "  (T_Shipments is only updated when you run RefreshShipments).",
     "  HideInactiveIntermediates / ShowAllIntermediates, which hide/restore intermediate rows in Material_Detail,",
     "  require a one-time manual button assignment (see docs/SOH_System_Guide.md for details).",
@@ -1468,9 +1458,8 @@ readme_lines = [
     "  3. Run RefreshSelfStock once the physical count of our own warehouse is done on Monday morning each week",
     "  4. Run RefreshTTAFStock and RefreshShipments once the CSA Report arrives each Monday",
     "  5. Enter the quantity to order directly into Material_Detail's \"Order (Planned, kg)\" row",
-    "  6. After a physical stock count, add the measured values to T_StockCount (enter the count date in the Date column; WeekIndex is calculated automatically)",
-    "  7. Check the weeks shown in red (below SafetyStock min) on Dashboard, and print the order form from PO_Draft_*",
-    "  8. At the start of the month, compare last month's final week against this month's start on Dashboard to check for stock discrepancies (transcribe into",
+    "  6. Check the weeks shown in red (below SafetyStock min) on Dashboard, and print the order form from PO_Draft_*",
+    "  7. At the start of the month, compare last month's final week against this month's start on Dashboard to check for stock discrepancies (transcribe into",
     "     the Plan Increase and Decrease / Inventory Releases report format)",
     "",
     "[Assumptions / items to verify] See docs/SOH_System_Guide.md for details",
@@ -1600,7 +1589,6 @@ nav_targets = [
     ("PO_Draft_Substrate_Poland", "Order form draft (Substrate, Poland)"),
     ("T_Shipments", "Order/arrival entry (for TTAF-supplied materials, represents arrival at the TTAF warehouse)"),
     ("T_OpeningStock", "Opening stock entry"),
-    ("T_StockCount", "Physical stock count entry"),
     ("T_SelfStock", "Self warehouse actual stock (material x week; auto-updated by RefreshSelfStock)"),
     ("T_TTAFStock", "TTAF warehouse actual stock (material x week; auto-updated by RefreshTTAFStock)"),
 ]
@@ -1623,7 +1611,7 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 # ---- シートの並び順を業務で使う順に ----
 order = ["README", "Control_Panel", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
          "PO_Draft_Substrate_JPN_CHN", "PO_Draft_Substrate_Poland",
-         "T_Shipments", "T_OpeningStock", "T_StockCount",
+         "T_Shipments", "T_OpeningStock",
          "T_SelfStock", "T_TTAFStock",
          "M_RawMaterials", "M_BOM", "PP_Grid",
          "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",

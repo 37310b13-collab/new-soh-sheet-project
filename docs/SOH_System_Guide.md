@@ -46,7 +46,7 @@
 `RefreshData_MaterialMgmt`・`RefreshData_PODraft`の8モジュールに分割しています
 （マクロ名・動作は分割前と同じ）。
 更新マクロはいずれも、対象ファイルを選ぶだけで該当シートの値だけを更新し、
-**それ以外の入力済みデータ（T_Shipments・T_OpeningStock・T_StockCount・基準在庫の設定値など）
+**それ以外の入力済みデータ（T_Shipments・T_OpeningStock・基準在庫の設定値など）
 には一切触れません。**
 
 | マクロ | 対象ファイル | 更新するシート |
@@ -174,14 +174,13 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | Material_Detailで手入力したOrderの値を、材料コード・週で突き合わせてそのまま転記（自動計算はしない） |
 | T_Shipments | 入力（RefreshShipmentsでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
-| T_StockCount | 入力 | 棚卸実測値（誤差リセット用、手動） |
 | T_SelfStock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_SelfStock_Log`が更新されると自動反映。手入力不可 |
 | T_TTAFStock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`T_TTAFStock_Log`が更新されると自動反映。手入力不可 |
-| M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code・固定週次消費量_要入力(5.9章参照) |
+| M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code・FixedWeeklyConsumption(5.9章参照) |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
 | PP_Grid | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
 | (非表示) T_SelfStock_Log / T_TTAFStock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
-| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock | 内部計算 | 通常は開く必要なし。Grid_TheoreticalStockはDashboardの「理論在庫」行の元になる、実績(T_StockCount・自社/TTAF実績)を考慮しないロールフォワード専用シート。ただし月が変わる最初の週だけは前週の実在庫(Grid_Stock)を起点に再同期するため、誤差は最大でも1か月分しか蓄積しない |
+| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock | 内部計算 | 通常は開く必要なし。Grid_TheoreticalStockはDashboardの「理論在庫」行の元になる、自社/TTAF実績を考慮しないロールフォワード専用シート。ただし月が変わる最初の週だけは前週の実在庫(Grid_Stock)を起点に再同期するため、誤差は最大でも1か月分しか蓄積しない |
 
 ## 4. 着荷予定(CSA Order)の入力方法
 
@@ -218,10 +217,9 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
    （`RefreshShipments`はShipping Scheduleの全PO・全材料を一括で`T_Shipments`に反映）
 5. 発注する数量は`Material_Detail`の該当材料ブロックの「Order(発注予定,kg)」行に、発注したい
    週の列へ直接手入力する
-6. 棚卸を実施した週は`T_StockCount`に追記
-7. `Dashboard`で赤色（基準在庫の下限未満）の週を確認し、`PO_Draft_*`（手入力したOrderの値が
+6. `Dashboard`で赤色（基準在庫の下限未満）の週を確認し、`PO_Draft_*`（手入力したOrderの値が
    自動転記されます）から注文書を発行
-8. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
+7. 月初は、前月最終週と当月頭の`Dashboard`を見比べて在庫差異を確認し、従来通り
    Plan Increase and Decrease / Inventory Releasesの報告フォーマットに転記
 
 ## 5.5 表示ウィンドウを先の年へ進める（年次作業・Dec-27以降の追加方法）
@@ -240,7 +238,7 @@ B1セル(AnchorYear)=2026を起点に、2026年〜2027年末あたりまでを�
    週番号の並びに合わせて自然に上書きされます（切り替え直後は空欄/0が見えることがありますが、
    次のRefresh実行で解消します）
 
-**過去の実績データの生ログ(`T_StockCount`/非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`)は安全です**:
+**過去の実績データの生ログ(非表示の`T_SelfStock_Log`/`T_TTAFStock_Log`)は安全です**:
 これらのシートの`WeekIndex`列は、記録した`Date`(実際の暦日)から**毎回ライブ計算する数式**に
 なっており、`AnchorYear`が変わっても記録済みのデータが「別の週のデータ」として誤表示される
 ことはありません。**AnchorYearを変更する前に事前バックアップを取る必要はなく**、必要なタイミング
@@ -253,7 +251,7 @@ B1セル(AnchorYear)=2026を起点に、2026年〜2027年末あたりまでを�
 からは見えなくなります（生ログ自体は上記の通り安全に残っているので、データが失われるわけでは
 ありません。あくまで「一覧表示の対象期間」が今の2年間に絞られる、というイメージです）。
 
-（本項目は、`T_Shipments`のEffective_Week計算式および`T_StockCount`/`T_SelfStock_Log`/`T_TTAFStock_Log`の
+（本項目は、`T_Shipments`のEffective_Week計算式および`T_SelfStock_Log`/`T_TTAFStock_Log`の
 WeekIndex計算式が、いずれもビルド時点のAnchorYearを固定値として埋め込んでいた不具合を修正した
 上で有効です。）
 
@@ -274,12 +272,12 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 **理論在庫／実在庫の2段表示**: `Dashboard`は材料ごとに2行（上段=グレー文字の「理論在庫」、
 下段=通常の黒文字の「実在庫」）を並べています。
 
-- **理論在庫**: `T_StockCount`（手動棚卸）や自社/TTAF在庫実績を一切考慮しない、
+- **理論在庫**: 自社/TTAF在庫実績を一切考慮しない、
   「前週在庫＋入庫－消費」だけで計算するロールフォワード値（非表示の
   `Grid_TheoreticalStock`シートを参照）。ただし月が変わる最初の週だけは、前週の実在庫
   (`Grid_Stock`)を起点に再同期します（毎月リセットされるため、誤差が無期限に積み上がる
   ことはなく、月内の乖離だけを見られます）。
-- **実在庫**: 従来どおりの`Grid_Stock`（手動棚卸 > 自社+TTAF実績の合計 > 通常のロールフォワード、
+- **実在庫**: 従来どおりの`Grid_Stock`（自社+TTAF実績の合計 > 通常のロールフォワード、
   の優先順位）を参照した値。実際の発注判断にはこちらを使います。
 - **乖離(kg)列**: 「実績週」列(H列)と同じ基準週（自社在庫実績が入っている直近の週）時点での
   「実在庫－理論在庫」。理論在庫が月初にリセットされる仕様のため、この値は「今月に入って
@@ -294,7 +292,7 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 
 - `TTAF在庫(実績,kg)`: `T_TTAFStock`（材料×週のグリッド）の該当セルをそのまま参照
 - `自社在庫(実績,kg)`: `T_SelfStock`（同上）の該当セルをそのまま参照
-- `合計在庫(週末時点,kg)`: `Grid_Stock`をそのまま参照（手動棚卸`T_StockCount` > 自社+TTAF実績の
+- `合計在庫(週末時点,kg)`: `Grid_Stock`をそのまま参照（自社+TTAF実績の
   合計（両方揃っている週のみ） > 通常のロールフォワード、という優先順位で計算される値。
   Dashboardの在庫グリッドと同じ値のため、両シートの数字は必ず一致します）
 
@@ -393,7 +391,7 @@ Order・PO_No・合計在庫の6行のみ）になります。その後**通常�
 同様に、`RefreshBOM`を実行するだけで内訳行が自動的に追加されます。
 
 **`RemoveMaterial`マクロ**: Part Name（RM_Code）を入力すると、`AddMaterial`が追加する全シートから
-該当行を削除します。**`T_Shipments`・`T_StockCount`・`T_SelfStock_Log`/
+該当行を削除します。**`T_Shipments`・`T_SelfStock_Log`/
 `T_TTAFStock_Log`・`M_BOM`のデータは削除しません**（履歴として残しておき、万一同じPart Nameを
 `AddMaterial`で再登録した場合は自動的に再びつながる設計です）。
 
@@ -557,7 +555,7 @@ Category・Origin_Countryを基準に作り直します（`SyncPODraftCategories
   該当行、`M_BOM`のその中間体を使う原単位の行（複数の材料で使われていれば全件）、
   `Material_Detail`側のその中間体の内訳行（この中間体を使っているすべての材料ブロックから）
   を削除します。原材料側のデータ（`T_Shipments`・`T_OpeningStock`・
-  `T_StockCount`・実績ログ・`M_RawMaterials`）は削除しません。
+  実績ログ・`M_RawMaterials`）は削除しません。
   - 中間体の行を明示的に削除しなくても、生産計画から単に消えれば以降の週の「No. of
     batches」は0のまま更新されなくなり、使用量計算（原単位×バッチ数）も自動的に0になるため
     在庫計算が狂うことはありません。また`HideInactiveIntermediates`で表示上も折りたためます。
@@ -799,8 +797,6 @@ Original ETDが両方空欄になることは無いため、「両方空欄」�
   （`SyncMaterialDetailIntermediates`）。
 - **輸入品が早着・遅着したとき**: `T_Shipments`のETA・着荷日を書き換えるだけで、入荷が計上される
   週が自動的にシフトします。
-- **棚卸で実測とズレがあったとき**: `T_StockCount`に1行追記すると、その週の在庫が上書きされ、
-  以降はそこから積み上げ直されます。
 
 ## 7. 動作検証結果
 
@@ -848,7 +844,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 （表が育つほど遅くなる／週ごとに同じ検索を繰り返す）が他に残っていないか確認し、以下も
 あわせて修正しました。いずれも計算結果は変更前後で完全一致することをLibreOfficeで確認済みです。
 
-- `Grid_Stock`の在庫ロールフォワード式: `T_StockCount`/`T_SelfStock`/`T_TTAFStock`の該当有無・
+- `Grid_Stock`の在庫ロールフォワード式: `T_SelfStock`/`T_TTAFStock`の該当有無・
   値の取得に`SUMPRODUCT`のブール配列積を使っていましたが、これは対象表が育つほど遅くなる
   上記と同じ性質を持っていました。`T_SelfStock`/`T_TTAFStock`は(Part Name,WeekIndex)ごとに
   上書き更新される設計のため、定常状態では行数が「原材料数×週数(101×104≈10,504)」程度で

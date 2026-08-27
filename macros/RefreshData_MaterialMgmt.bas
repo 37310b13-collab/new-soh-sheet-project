@@ -28,7 +28,7 @@ Option Explicit
 '   RemoveMaterial : Removes a material no longer in use from the system.
 '                 Entering the Part Name (RM_Code) via InputBox deletes the
 '                 matching row from every sheet AddMaterial adds to. Data
-'                 in T_Shipments, T_StockCount, T_SelfStock_Log/
+'                 in T_Shipments, T_SelfStock_Log/
 '                 T_TTAFStock_Log, and M_BOM is not deleted (kept as
 '                 history - adding the same Part Name again with
 '                 AddMaterial automatically reconnects it).
@@ -39,7 +39,7 @@ Option Explicit
 '                 Material_Detail (No. of batches / Usage (kg), from every
 '                 material block that uses this intermediate). Raw
 '                 material-side data (T_Shipments, T_OpeningStock,
-'                 T_StockCount, actuals logs, M_RawMaterials) is not
+'                 actuals logs, M_RawMaterials) is not
 '                 deleted.
 '                 (Note) The "add" side for intermediates is already
 '                 automated. RefreshWeeklyBatches/RefreshBOM automatically
@@ -301,15 +301,13 @@ Sub AddMaterial()
     End If
     Dim ssRow As Long: ssRow = ssRowSelf
 
-    ' Grid_Stock's formula (priority order: manual stock count > sum of
-    ' self+TTAF actuals > normal roll-forward)
+    ' Grid_Stock's formula (priority order: sum of self+TTAF actuals >
+    ' normal roll-forward)
     Dim priorExpr As String, normalExpr As String
-    Dim hasCount As String, countVal As String, hasSelf As String, selfVal As String, hasTTAF As String, ttafVal As String
+    Dim hasSelf As String, selfVal As String, hasTTAF As String, ttafVal As String
     For w = 1 To nWeeks
         col = 1 + w
         cl = ColLetter(col)
-        hasCount = "COUNTIFS(T_StockCount[Part Name],$A" & grow & ",T_StockCount[WeekIndex]," & w & ")"
-        countVal = "SUMIFS(T_StockCount[CountedQty],T_StockCount[Part Name],$A" & grow & ",T_StockCount[WeekIndex]," & w & ")"
         hasSelf = "('T_SelfStock'!" & cl & ssRow & "<>"""")"
         selfVal = "'T_SelfStock'!" & cl & ssRow
         hasTTAF = "('T_TTAFStock'!" & cl & ssRow & "<>"""")"
@@ -321,9 +319,9 @@ Sub AddMaterial()
         End If
         normalExpr = priorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
         stRow.Range.Cells(1, col).Value = _
-            "=IF(" & hasCount & ">0," & countVal & ",IF((" & hasSelf & ")*(" & hasTTAF & ")>0," & selfVal & "+" & ttafVal & "," & normalExpr & "))"
+            "=IF((" & hasSelf & ")*(" & hasTTAF & ")>0," & selfVal & "+" & ttafVal & "," & normalExpr & ")"
 
-        ' Grid_TheoreticalStock: never looks at T_StockCount or
+        ' Grid_TheoreticalStock: never looks at
         ' self/TTAF actuals - a pure "previous week + incoming -
         ' consumption" roll-forward, except that only in the first week a
         ' new month begins does it re-sync from the previous week's actual
@@ -408,7 +406,7 @@ Sub RemoveMaterial()
               "Grid_Requirement, Grid_Incoming, Grid_Stock, Grid_TheoreticalStock," & vbCrLf & _
               "T_OpeningStock, T_SelfStock, T_TTAFStock, Dashboard, Material_Detail," & vbCrLf & _
               "and the matching PO_Draft). This cannot be undone." & vbCrLf & vbCrLf & _
-              "(Past data for this material remaining in T_Shipments, T_StockCount," & vbCrLf & _
+              "(Past data for this material remaining in T_Shipments," & vbCrLf & _
               "the actuals logs, and M_BOM will not be deleted)" & vbCrLf & vbCrLf & "Are you sure?", _
               vbYesNo + vbExclamation, "Confirm Remove Material") <> vbYes Then Exit Sub
 
@@ -439,7 +437,7 @@ Sub RemoveMaterial()
     Application.ScreenUpdating = True
 
     MsgBox "Removed material """ & rmCode & """." & vbCrLf & vbCrLf & _
-           "(Past data for this material remaining in T_Shipments, T_StockCount," & vbCrLf & _
+           "(Past data for this material remaining in T_Shipments," & vbCrLf & _
            "the actuals logs, and M_BOM has not been deleted. Delete it manually if needed.)", vbInformation
     Exit Sub
 
@@ -486,7 +484,7 @@ Sub RemoveIntermediate()
               "- M_BOM: usage-rate rows for this intermediate, " & bomCount & " row(s)" & vbCrLf & _
               "- Material_Detail: this intermediate's breakdown rows (No. of batches / Usage (kg))," & vbCrLf & _
               "  from every material block that uses it" & vbCrLf & vbCrLf & _
-              "Raw material-side data (T_Shipments, T_OpeningStock, T_StockCount, actuals logs," & vbCrLf & _
+              "Raw material-side data (T_Shipments, T_OpeningStock, actuals logs," & vbCrLf & _
               "M_RawMaterials, etc.) is never deleted." & vbCrLf & vbCrLf & _
               "This cannot be undone. Are you sure?", _
               vbYesNo + vbExclamation, "Confirm Remove Intermediate") <> vbYes Then Exit Sub
@@ -505,7 +503,7 @@ Sub RemoveIntermediate()
 
     MsgBox "Removed intermediate """ & canonicalName & """." & vbCrLf & _
            "Breakdown row pairs removed from Material_Detail: " & removedDetailPairs & " (material block count)" & vbCrLf & vbCrLf & _
-           "(T_Shipments, T_OpeningStock, T_StockCount, actuals logs, and" & vbCrLf & _
+           "(T_Shipments, T_OpeningStock, actuals logs, and" & vbCrLf & _
            "M_RawMaterials have not been deleted)", vbInformation
     Exit Sub
 

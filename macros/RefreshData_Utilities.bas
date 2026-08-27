@@ -36,7 +36,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' For a detailed explanation of each macro, see the comment at the top of the
 ' module where it is implemented. Every macro only updates the sheet(s) it is
 ' responsible for. It never touches content you entered by hand during normal
-' operation, such as T_Shipments, T_OpeningStock, T_StockCount, or SafetyStock_Qty.
+' operation, such as T_Shipments, T_OpeningStock, or SafetyStock_Qty.
 '
 ' [How to install (applies to all modules)]
 '   1. Open SOH_Master.xlsm (saved as a macro-enabled workbook)
