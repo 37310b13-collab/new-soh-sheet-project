@@ -2,75 +2,99 @@ Attribute VB_Name = "RefreshData_MaterialMgmt"
 Option Explicit
 
 ' ============================================================================
-' RefreshData_MaterialMgmt モジュール
+' RefreshData_MaterialMgmt module
 '
 ' AddMaterial / RemoveMaterial / RemoveIntermediate
 '
-' 材料(原材料)・中間体(生産される製品コード)をPythonを使わず、Excel(VBA)だけで
-' 追加・削除するためのマクロです。
+' Macros for adding/removing materials (raw materials) and intermediates
+' (produced product codes) using only Excel (VBA), without Python.
 '
-'   AddMaterial : 新しい材料(TTAF供給品)をシステムに追加する。InputBoxで
-'                 Part Name(RM_Code)・Description・Supplier・Category・TTAF_Codeを
-'                 順に入力すると、M_RawMaterials・Grid_Requirement・Grid_Incoming・
-'                 Grid_Stock・Grid_TheoreticalStock・T_OpeningStock・T_SelfStock・
-'                 T_TTAFStock・Dashboard・Material_Detail・対応するPO_Draft_*シートの
-'                 一番下に、必要な行をまとめて追加する。追加直後はまだM_BOMに使用実績が
-'                 無いため、Material_Detailのブロックは中間体の内訳が無いミニブロック
-'                 (合計欄のみ)になる。RefreshBOM実行後(RefreshData_BOMモジュール)、
-'                 実際にこの材料を使う中間体が見つかれば内訳行も自動的に追加される。
-'                 Dashboardには材料ごとに「理論在庫」「実在庫」の2行を追加する
-'                 （5.6章参照）。
-'   RemoveMaterial : 使わなくなった材料をシステムから削除する。InputBoxでPart Name
-'                 (RM_Code)を入力すると、AddMaterialが追加する全シートから該当行を
-'                 削除する。T_Shipments・T_StockCount・
-'                 T_SelfStock_Log/T_TTAFStock_Log・M_BOMのデータは削除しない
-'                 (履歴として残すため。再度AddMaterialで同じPart Nameを追加すれば
-'                 自動的に再びつながる)。
-'   RemoveIntermediate : 生産中止になった中間体(完成品コード)をシステムから削除する。
-'                 InputBoxで中間体名を入力すると、PP_Grid・M_BOMの該当行と、
-'                 Material_Detailの該当内訳行(No. of batches／使用量(kg)。この中間体を
-'                 使っているすべての材料ブロックから)を削除する。原材料側のデータ
-'                 (T_Shipments・T_OpeningStock・T_StockCount・
-'                 実績ログ・M_RawMaterials)は削除しない。
-'                 (参考) 中間体の"追加"側は既に自動化済みです。RefreshWeeklyBatches/
-'                 RefreshBOMが、生産計画・原単位表に新しい中間体を見つけるたびに
-'                 PP_Grid・M_BOM・Material_Detailへ自動的に行を追加するため、
-'                 専用の"AddIntermediate"マクロは不要です。
+'   AddMaterial : Adds a new material (a TTAF-supplied item) to the
+'                 system. Entering the Part Name (RM_Code), Description,
+'                 Supplier, Category, and TTAF_Code in sequence via
+'                 InputBox adds the necessary rows in bulk to the bottom
+'                 of M_RawMaterials, Grid_Requirement, Grid_Incoming,
+'                 Grid_Stock, Grid_TheoreticalStock, T_OpeningStock,
+'                 T_SelfStock, T_TTAFStock, Dashboard, Material_Detail,
+'                 and the matching PO_Draft_* sheet. Right after adding,
+'                 since there's no usage history in M_BOM yet, its block
+'                 on Material_Detail is a mini block with no intermediate
+'                 breakdown (totals row only). After running RefreshBOM
+'                 (the RefreshData_BOM module), once an intermediate that
+'                 actually uses this material is found, the breakdown rows
+'                 are added automatically too. Adds 2 rows per material to
+'                 Dashboard, "Theoretical Stock" and "Actual Stock" (see
+'                 section 5.6).
+'   RemoveMaterial : Removes a material no longer in use from the system.
+'                 Entering the Part Name (RM_Code) via InputBox deletes the
+'                 matching row from every sheet AddMaterial adds to. Data
+'                 in T_Shipments, T_StockCount, T_SelfStock_Log/
+'                 T_TTAFStock_Log, and M_BOM is not deleted (kept as
+'                 history - adding the same Part Name again with
+'                 AddMaterial automatically reconnects it).
+'   RemoveIntermediate : Removes a discontinued intermediate (a finished
+'                 product code) from the system. Entering the intermediate
+'                 name via InputBox deletes the matching rows from PP_Grid
+'                 and M_BOM, and the matching breakdown rows on
+'                 Material_Detail (No. of batches / Usage (kg), from every
+'                 material block that uses this intermediate). Raw
+'                 material-side data (T_Shipments, T_OpeningStock,
+'                 T_StockCount, actuals logs, M_RawMaterials) is not
+'                 deleted.
+'                 (Note) The "add" side for intermediates is already
+'                 automated. RefreshWeeklyBatches/RefreshBOM automatically
+'                 add rows to PP_Grid/M_BOM/Material_Detail every time they
+'                 find a new intermediate in the production plan/usage
+'                 rate table, so a dedicated "AddIntermediate" macro isn't
+'                 needed.
 '
-' 【追加(AddMaterial)の位置】既存行の途中に割り込ませるのではなく、必ず各シートの
-' 一番下に追加します。途中に割り込ませると既存行がずれるリスクが大きいためです。
+' [Where AddMaterial inserts] Rather than inserting in the middle of
+' existing rows, it always adds at the very bottom of each sheet, since
+' inserting in the middle carries a much larger risk of shifting existing
+' rows.
 '
-' 【安全性についての補足(RemoveIntermediate)】PP_Grid・M_BOMの行を削除しても、他の
-' 中間体・他の材料の計算には影響しません。理由は、Grid_Requirement・Material_Detailから
-' PP_Grid/M_BOMを参照する数式がすべてMATCH/構造化参照(テーブル名[列名]形式)で組まれており、
-' 固定の行番号を直接使っていないためです(MATCHは削除後の新しい行位置を毎回再計算し、
-' 構造化参照は削除後のテーブルの行数に自動的に追従します)。
+' [A note on safety (RemoveIntermediate)] Deleting rows from PP_Grid/M_BOM
+' does not affect the calculations of other intermediates or other
+' materials. The reason: every formula on Grid_Requirement/Material_Detail
+' that references PP_Grid/M_BOM is built with MATCH/structured references
+' (the TableName[ColumnName] form), never a hard-coded row number (MATCH
+' recalculates the new row position every time after a deletion, and
+' structured references automatically follow the table's row count after
+' deletion).
 '
-' 【重要な注意点】どの操作も元に戻せません(Ctrl+Zでは戻せない場合があります)。実行前に
-' ファイルのバックアップ(コピー)を取っておくことを強くおすすめします。
+' [Important caution] None of these operations can be undone (Ctrl+Z may
+' not undo them). We strongly recommend backing up (copying) the file
+' before running any of them.
 '
-' 全体の設計方針はRefreshData_Utilitiesモジュール冒頭のコメントを参照してください。
+' For the overall design rationale, see the comment at the top of the
+' RefreshData_Utilities module.
 '
-' 【材料の並び順について】M_RawMaterials・Dashboard・Material_Detail等は、
-' Substrate→その他Chemical→Ester Film/PP Film→TPZ系、の順に並べている(build_soh.pyの
-' rm_master.sort()と同じ規則)。AddMaterialは常に末尾に追加するのではなく、新しい材料が
-' 属するグループの末尾に挿入することでこの並び順を維持する(ClassifyGroup/
-' FindGroupInsertPosition/FindRowByCodeを参照)。
+' [About material ordering] M_RawMaterials, Dashboard, Material_Detail,
+' etc. are ordered as Substrate -> other Chemical -> Ester Film/PP Film ->
+' TPZ-family (the same rule as build_soh.py's rm_master.sort()).
+' AddMaterial doesn't always add at the very end - it inserts at the end
+' of the group the new material belongs to, preserving this order (see
+' ClassifyGroup/FindGroupInsertPosition/FindRowByCode).
 '
-' SyncPODraftCategories : M_RawMaterialsのCategory・Origin_Countyを後から書き換えた際、
-'                 PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す
-'                 (詳細は各Subの直前コメントを参照)。
+' SyncPODraftCategories : When M_RawMaterials' Category/Origin_County is
+'                 changed later, re-syncs the PO_Draft_* sheet assignment
+'                 to match the actual values (see the comment right above
+'                 each Sub for details).
 '
-' ※一度だけ実行する移行用マクロ(FixOpeningStockColumnReference・
-' SetupOrderManagementMigration・SetupSubstratePODraftByCountry等)は、対応する移行が
-' 完了した後にこのモジュールから削除済みです。何が実施されたかはdocs/SOH_System_Guide.md
-' とgitの変更履歴を参照してください。
+' Note: one-time migration macros (FixOpeningStockColumnReference,
+' SetupOrderManagementMigration, SetupSubstratePODraftByCountry, etc.)
+' have been removed from this module once their respective migrations
+' were completed. See docs/SOH_System_Guide.md and the git change history
+' for what was done.
 ' ============================================================================
 
-' rmCode/descVal/categoryValから、材料が属するグループ(0=Substrate, 1=その他Chemical,
-' 2=Ester Film・PP Film, 3=TPZ系)を判定する。build_soh.pyの_rm_sort_group()と同じ規則
-' (判定の優先順位も含めて完全に一致させること。Ester Film/PP FilmはCategoryに関わらず
-' 常にグループ2、TPZ系はCategoryに関わらず常にグループ3を優先する)。
+' Determines, from rmCode/descVal/categoryVal, which group a material
+' belongs to (0=Substrate, 1=other Chemical, 2=Ester Film/PP Film,
+' 3=TPZ-family). Follows the exact same rule as build_soh.py's
+' _rm_sort_group() (match the priority order of the checks exactly too:
+' Ester Film/PP Film always take priority as group 2 regardless of
+' Category, and the TPZ-family always takes priority as group 3
+' regardless of Category).
 Private Function ClassifyGroup(rmCode As String, descVal As String, categoryVal As String) As Long
     Dim codeUpper As String: codeUpper = UCase(Trim(rmCode))
     Dim descUpper As String: descUpper = UCase(Trim(descVal))
@@ -85,11 +109,15 @@ Private Function ClassifyGroup(rmCode As String, descVal As String, categoryVal 
     End If
 End Function
 
-' M_RawMaterials内で、targetGroupの材料を挿入すべき位置(1始まりのListRows位置)を返す。
-' 「同じグループの最後の行の直後」に挿入することで、既存の並び順(Substrate→その他Chemical→
-' Ester Film/PP Film→TPZ系)を保つ。該当グループの行が1つも無ければ、それより後のグループの
-' 最初の行の直前に挿入する位置を返す。全体の末尾に追加すべき場合はListRows.Count+1を返す
-' (呼び出し側は、この値がCount+1かどうかで「末尾への追加」か「途中への挿入」かを判定する)。
+' Returns the position (a 1-based ListRows position) within M_RawMaterials
+' where a material in targetGroup should be inserted. Inserting "right
+' after the last row of the same group" preserves the existing order
+' (Substrate -> other Chemical -> Ester Film/PP Film -> TPZ-family). If
+' that group has no rows at all, returns the position right before the
+' first row of the next group after it. If it should be added at the very
+' end overall, returns ListRows.Count+1 (the caller determines "added at
+' the end" vs. "inserted in the middle" by whether this value equals
+' Count+1).
 Private Function FindGroupInsertPosition(rmTbl As ListObject, targetGroup As Long) As Long
     Dim n As Long: n = rmTbl.ListRows.Count
     If n = 0 Then
@@ -107,8 +135,9 @@ Private Function FindGroupInsertPosition(rmTbl As ListObject, targetGroup As Lon
     FindGroupInsertPosition = lastLE + 1
 End Function
 
-' シートのcolIdx列を、startRowから使用範囲の最終行(colIdx列基準)まで探し、値がrmCodeと
-' 完全一致(Trim比較)する最初の行番号を返す(見つからなければ0)。
+' Searches column colIdx of a sheet, from startRow through the last used
+' row (by that column), and returns the row number of the first row whose
+' value exactly matches rmCode (compared with Trim), or 0 if not found.
 Private Function FindRowByCode(sh As Worksheet, colIdx As Long, rmCode As String, startRow As Long) As Long
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, colIdx).End(xlUp).Row
     If lastRow < startRow Then
@@ -131,52 +160,55 @@ Sub AddMaterial()
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
     Dim rmCode As String
-    rmCode = Trim(InputBox("追加する材料コード(Part Name)を入力してください。" & vbCrLf & "（例: CHEM-9999）", "材料の追加"))
+    rmCode = Trim(InputBox("Please enter the material code (Part Name) to add." & vbCrLf & "(e.g. CHEM-9999)", "Add Material"))
     If Len(rmCode) = 0 Then Exit Sub
 
     If Not IsMaterialCodeFree(rmTbl, rmCode) Then
-        MsgBox "その材料コードは既に登録されています: " & rmCode, vbExclamation
+        MsgBox "That material code is already registered: " & rmCode, vbExclamation
         Exit Sub
     End If
 
     Dim descVal As String
-    descVal = Trim(InputBox("材料名(Description)を入力してください。", "材料の追加"))
+    descVal = Trim(InputBox("Please enter the material name (Description).", "Add Material"))
     If Len(descVal) = 0 Then Exit Sub
 
     Dim supplierVal As String
-    supplierVal = Trim(InputBox("仕入先(Supplier)を入力してください。", "材料の追加", "TTAF"))
+    supplierVal = Trim(InputBox("Please enter the supplier.", "Add Material", "TTAF"))
 
     Dim categoryVal As String
-    categoryVal = Trim(InputBox("カテゴリを入力してください。" & vbCrLf & _
-        "Chemical / Hazardous Chemical / Substrate のいずれかを、そのまま入力してください。", _
-        "材料の追加", "Chemical"))
+    categoryVal = Trim(InputBox("Please enter the category." & vbCrLf & _
+        "Enter exactly one of: Chemical / Hazardous Chemical / Substrate.", _
+        "Add Material", "Chemical"))
     If categoryVal <> "Chemical" And categoryVal <> "Hazardous Chemical" And categoryVal <> "Substrate" Then
-        MsgBox "カテゴリは Chemical / Hazardous Chemical / Substrate のいずれかで入力してください。" & vbCrLf & _
-               "入力値: " & categoryVal, vbExclamation
+        MsgBox "Please enter the category as one of: Chemical / Hazardous Chemical / Substrate." & vbCrLf & _
+               "You entered: " & categoryVal, vbExclamation
         Exit Sub
     End If
 
     Dim ttafCodeVal As String
-    ttafCodeVal = Trim(InputBox("TTAF_Code(TTAF側の部品番号)を入力してください。分からなければ空欄のままでOKです。", "材料の追加"))
+    ttafCodeVal = Trim(InputBox("Please enter the TTAF_Code (the part number on the TTAF side). Leave it blank if you don't know it.", "Add Material"))
 
-    ' Origin_Country: Substrateは原産国(Japan/China/Poland)によって発注書(PO_Draft)の
-    ' シートが分かれるため、Substrateの場合だけ確認する(Chemical/Hazardous Chemicalでは
-    ' 無関係)。Japan/China/Poland以外(空欄・その他)の場合はどのPO_Draft_*にも入らない
-    ' (汎用の受け皿シートは無い設計。発注する際に正しい原産国を入力し直してください)。
+    ' Origin_Country: for Substrate, the order form (PO_Draft) sheet
+    ' depends on the country of origin (Japan/China/Poland), so this is
+    ' only asked for Substrate (irrelevant for Chemical/Hazardous
+    ' Chemical). Anything other than Japan/China/Poland (blank or
+    ' anything else) won't appear on any PO_Draft_* sheet (there is no
+    ' catch-all sheet by design - please re-enter the correct country of
+    ' origin when it comes time to order).
     Dim originCountryVal As String: originCountryVal = ""
     If categoryVal = "Substrate" Then
-        originCountryVal = Trim(InputBox("原産国(Origin_Country)を「Japan」「China」「Poland」の" & vbCrLf & _
-            "いずれかで入力してください(大文字小文字は区別しません)。" & vbCrLf & _
-            "この3つ以外(空欄含む)は、発注書(PO_Draft)のどのシートにも表示されません。" & vbCrLf & _
-            "まだ発注しない・原産国が分からない場合は空欄のままでOKです。", "材料の追加"))
+        originCountryVal = Trim(InputBox("Please enter the country of origin (Origin_Country) as" & vbCrLf & _
+            "one of ""Japan"", ""China"", or ""Poland"" (case-insensitive)." & vbCrLf & _
+            "Anything other than these 3 (blank included) will not appear on any order-form (PO_Draft) sheet." & vbCrLf & _
+            "If you're not ordering yet or don't know the country of origin, it's fine to leave this blank.", "Add Material"))
     End If
 
-    If MsgBox("以下の内容で材料を追加します。" & vbCrLf & vbCrLf & _
-              "材料コード: " & rmCode & vbCrLf & "材料名: " & descVal & vbCrLf & _
-              "仕入先: " & supplierVal & vbCrLf & "カテゴリ: " & categoryVal & vbCrLf & _
+    If MsgBox("The material will be added with the following details." & vbCrLf & vbCrLf & _
+              "Material code: " & rmCode & vbCrLf & "Material name: " & descVal & vbCrLf & _
+              "Supplier: " & supplierVal & vbCrLf & "Category: " & categoryVal & vbCrLf & _
               "TTAF_Code: " & ttafCodeVal & vbCrLf & _
-              IIf(categoryVal = "Substrate", "原産国: " & originCountryVal & vbCrLf, "") & vbCrLf & _
-              "よろしいですか？", vbYesNo + vbQuestion, "材料の追加の確認") <> vbYes Then Exit Sub
+              IIf(categoryVal = "Substrate", "Country of origin: " & originCountryVal & vbCrLf, "") & vbCrLf & _
+              "Is this OK?", vbYesNo + vbQuestion, "Confirm Add Material") <> vbYes Then Exit Sub
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -184,13 +216,16 @@ Sub AddMaterial()
     Dim nWeeks As Long
     nWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks").ListRows.Count
 
-    ' ---- 挿入位置の決定 ----
-    ' 材料の並び順は「Substrate→その他Chemical→Ester Film/PP Film→TPZ系」に揃えている
-    ' (build_soh.pyのrm_master.sort()と同じ規則)。末尾に追加するのではなく、同じグループの
-    ' 最後の行の直後に挿入することで、この並び順を将来の追加でも維持する。
-    ' anchorRmCodeは「新しい行を挿入する位置に、挿入前は何の材料があったか」を表す
-    ' (空文字なら「グループの末尾=ブック全体の末尾に追加」を意味する)。M_RawMaterialsに
-    ' 実際に行を追加する前に読み取っておく必要がある(追加後だとその位置は新しい行になる)。
+    ' ---- Determine the insert position ----
+    ' Materials are kept ordered as "Substrate -> other Chemical -> Ester
+    ' Film/PP Film -> TPZ-family" (the same rule as build_soh.py's
+    ' rm_master.sort()). Rather than adding at the very end, inserting
+    ' right after the last row of the same group preserves this order for
+    ' future additions too. anchorRmCode represents "what material was at
+    ' the position the new row will be inserted into, before the insert"
+    ' (an empty string means "add at the end of the group = the end of the
+    ' whole workbook"). This must be read before actually adding the row to
+    ' M_RawMaterials (after adding, that position would be the new row).
     Dim targetGroup As Long: targetGroup = ClassifyGroup(rmCode, descVal, categoryVal)
     Dim insertPos As Long: insertPos = FindGroupInsertPosition(rmTbl, targetGroup)
     Dim anchorRmCode As String: anchorRmCode = ""
@@ -209,7 +244,7 @@ Sub AddMaterial()
     newRmRow.Range.Cells(1, 7).Value = 0
     newRmRow.Range.Cells(1, 8).Value = 4
     newRmRow.Range.Cells(1, 9).Value = ttafCodeVal
-    newRmRow.Range.Cells(1, 10).Value = 0  ' FixedWeeklyConsumption。必要であれば追加後にExcel上で書き換える
+    newRmRow.Range.Cells(1, 10).Value = 0  ' FixedWeeklyConsumption. Edit it directly in Excel after adding if needed
     newRmRow.Range.Cells(1, 11).Value = originCountryVal
 
     ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock / T_OpeningStock ----
@@ -219,16 +254,18 @@ Sub AddMaterial()
     Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
     Dim osTbl As ListObject: Set osTbl = thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock")
 
-    ' Grid_Requirement/Incoming/Stock/TheoreticalStockはM_RawMaterialsと1行ずつ完全に対応して
-    ' いる必要がある(grow=行番号を共有して直接参照し合っているため)。同じinsertPosで挿入する。
-    ' T_OpeningStockはMATCH参照(順序に依存しない)なので、常に末尾に追加するままでよい。
+    ' Grid_Requirement/Incoming/Stock/TheoreticalStock must correspond
+    ' exactly, row for row, with M_RawMaterials (since grow = the shared
+    ' row number they reference directly). Insert with the same insertPos.
+    ' T_OpeningStock uses MATCH lookups (order-independent), so it's fine
+    ' to keep always adding it at the end.
     Dim reqRow As ListRow: Set reqRow = reqTbl.ListRows.Add(Position:=insertPos)
     Dim inRow As ListRow: Set inRow = inTbl.ListRows.Add(Position:=insertPos)
     Dim stRow As ListRow: Set stRow = stTbl.ListRows.Add(Position:=insertPos)
     Dim theoRow As ListRow: Set theoRow = theoTbl.ListRows.Add(Position:=insertPos)
     Dim osRow As ListRow: Set osRow = osTbl.ListRows.Add
 
-    Dim grow As Long: grow = reqRow.Range.Row  ' Grid_Requirement/Incoming/Stock/TheoreticalStockの実シート行番号(4表とも同じ)
+    Dim grow As Long: grow = reqRow.Range.Row  ' the actual sheet row number for Grid_Requirement/Incoming/Stock/TheoreticalStock (same across all 4 tables)
 
     reqRow.Range.Cells(1, 1).Value = rmCode
     inRow.Range.Cells(1, 1).Value = rmCode
@@ -241,8 +278,9 @@ Sub AddMaterial()
     Dim w As Long, col As Long, cl As String
     For w = 1 To nWeeks
         col = 1 + w
-        ' BOMベースの消費量に加え、M_RawMaterialsのFixedWeeklyConsumptionを単純加算する
-        ' (build_soh.pyのGrid_Requirement生成ロジックと同じ式)。
+        ' In addition to BOM-based consumption, simply adds
+        ' M_RawMaterials' FixedWeeklyConsumption (the same formula as
+        ' build_soh.py's Grid_Requirement generation logic).
         reqRow.Range.Cells(1, col).Value = _
             "=SUMPRODUCT((M_BOM[Part Name]=$A" & grow & ")*M_BOM[RM_Qty_Per_Batch]*" & _
             "IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow]," & (w + 1) & "),0))" & _
@@ -252,18 +290,19 @@ Sub AddMaterial()
             ",T_Shipments[Effective_Week]," & w & ")"
     Next w
 
-    ' ---- T_SelfStock / T_TTAFStock (テーブルではない罫線グリッド。anchorRmCodeの行の直前に
-    ' 挿入することでM_RawMaterialsと同じ並び順を保つ。anchorRmCodeが空なら末尾に追加) ----
+    ' ---- T_SelfStock / T_TTAFStock (a bordered grid, not a Table. Insert
+    ' right before anchorRmCode's row so the order matches M_RawMaterials) ----
     Dim ssRowSelf As Long, ssRowTTAF As Long
     ssRowSelf = InsertOrAppendStockGridRow(thisWb.Sheets("T_SelfStock"), rmCode, nWeeks, "T_SelfStock_Log", "Self_Qty", anchorRmCode)
     ssRowTTAF = InsertOrAppendStockGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, nWeeks, "T_TTAFStock_Log", "TTAF_Qty", anchorRmCode)
     If ssRowSelf <> ssRowTTAF Then
-        MsgBox "警告: T_SelfStockとT_TTAFStockの行番号がずれました(" & ssRowSelf & " / " & ssRowTTAF & ")。" & vbCrLf & _
-               "手動で確認してください。処理は続行します。", vbExclamation
+        MsgBox "Warning: T_SelfStock and T_TTAFStock's row numbers ended up different (" & ssRowSelf & " / " & ssRowTTAF & ")." & vbCrLf & _
+               "Please check manually. Processing will continue.", vbExclamation
     End If
     Dim ssRow As Long: ssRow = ssRowSelf
 
-    ' Grid_Stockの数式(手動棚卸 > 自社+TTAF実績の合計 > 通常のロールフォワード、の優先順位)
+    ' Grid_Stock's formula (priority order: manual stock count > sum of
+    ' self+TTAF actuals > normal roll-forward)
     Dim priorExpr As String, normalExpr As String
     Dim hasCount As String, countVal As String, hasSelf As String, selfVal As String, hasTTAF As String, ttafVal As String
     For w = 1 To nWeeks
@@ -284,11 +323,15 @@ Sub AddMaterial()
         stRow.Range.Cells(1, col).Value = _
             "=IF(" & hasCount & ">0," & countVal & ",IF((" & hasSelf & ")*(" & hasTTAF & ")>0," & selfVal & "+" & ttafVal & "," & normalExpr & "))"
 
-        ' Grid_TheoreticalStock: T_StockCount・自社/TTAF実績を一切見ない、純粋な「前週+入庫-消費」
-        ' のロールフォワードだが、月が変わる最初の週だけは前週の実在庫(Grid_Stock)を起点に
-        ' 再同期する(FixTheoreticalStockMonthlyReset・build_soh.pyと同じ式。ここが古い
-        ' 「一度もリセットしない」式のままだと、AddMaterialで追加した材料だけ他の材料と
-        ' 挙動が食い違ってしまうため、必ず同じ式を使うこと)。
+        ' Grid_TheoreticalStock: never looks at T_StockCount or
+        ' self/TTAF actuals - a pure "previous week + incoming -
+        ' consumption" roll-forward, except that only in the first week a
+        ' new month begins does it re-sync from the previous week's actual
+        ' stock (Grid_Stock) (the same formula as
+        ' FixTheoreticalStockMonthlyReset/build_soh.py - if this were left
+        ' as the old "never reset" formula, a material added via
+        ' AddMaterial would behave inconsistently with every other
+        ' material, so this formula must always be used).
         Dim theoPriorExpr As String
         If w = 1 Then
             theoPriorExpr = "IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
@@ -301,14 +344,15 @@ Sub AddMaterial()
             "=" & theoPriorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
     Next w
 
-    ' ---- Dashboard (テーブルではない罫線グリッド。anchorRmCodeの行の直前に挿入) ----
+    ' ---- Dashboard (a bordered grid, not a Table. Insert right before anchorRmCode's row) ----
     Call AppendDashboardRow(thisWb.Sheets("Dashboard"), rmCode, nWeeks, ssRow, grow, anchorRmCode)
 
-    ' ---- Material_Detail (材料のブロックをanchorRmCodeのブロックの直前に挿入。
-    ' BOM未登録のため中間体行はまだ無い) ----
+    ' ---- Material_Detail (insert the material's block right before
+    ' anchorRmCode's block. No intermediate rows yet since it's not
+    ' registered in the BOM) ----
     Call AppendMaterialDetailBlock(thisWb.Sheets("Material_Detail"), rmCode, descVal, nWeeks, ssRow, grow, anchorRmCode)
 
-    ' ---- PO_Draft_{Category}(Substrateの場合はさらにOrigin_Countryで分岐) ----
+    ' ---- PO_Draft_{Category} (for Substrate, further branches on Origin_Country) ----
     Dim poSheetName As String: poSheetName = POSheetNameForMaterial(categoryVal, originCountryVal)
     If Len(poSheetName) > 0 Then
         Call AppendPODraftRow(thisWb.Sheets(poSheetName), rmCode, ttafCodeVal, nWeeks)
@@ -317,10 +361,11 @@ Sub AddMaterial()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "材料「" & rmCode & "」を追加しました。" & vbCrLf & vbCrLf & _
-           "この材料はまだM_BOM(原単位)に登録されていないため、Material_Detailでは" & vbCrLf & _
-           "「使用中間体なし」の状態です。RefreshBOMを実行すると、実際に使われている" & vbCrLf & _
-           "中間体との組み合わせが見つかり次第、自動的に反映されます。", vbInformation
+    MsgBox "Added material """ & rmCode & """." & vbCrLf & vbCrLf & _
+           "Since this material isn't registered in M_BOM (usage rates) yet, its" & vbCrLf & _
+           "Material_Detail block currently shows ""no intermediates used."" Running RefreshBOM" & vbCrLf & _
+           "will automatically reflect it as soon as a combination with an intermediate that" & vbCrLf & _
+           "actually uses it is found.", vbInformation
     Exit Sub
 
 ErrHandler:
@@ -328,9 +373,9 @@ ErrHandler:
     Dim errMsg As String: errMsg = Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "材料の追加中にエラーが発生しました: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
-           "途中まで反映されている可能性があります。シートの状態を確認してください" & vbCrLf & _
-           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+    MsgBox "An error occurred while adding the material: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
+           "Some changes may have already been applied. Please check the sheets' state" & vbCrLf & _
+           "(if you're unsure, close the file without saving and reopen it to return to the last saved state).", vbCritical
 End Sub
 
 Sub RemoveMaterial()
@@ -339,31 +384,33 @@ Sub RemoveMaterial()
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
 
     Dim rmCode As String
-    rmCode = Trim(InputBox("削除する材料コード(Part Name)を入力してください。", "材料の削除"))
+    rmCode = Trim(InputBox("Please enter the material code (Part Name) to remove.", "Remove Material"))
     If Len(rmCode) = 0 Then Exit Sub
 
     Dim rmFoundRow As Long: rmFoundRow = FindMaterialRow(rmTbl, rmCode)
     If rmFoundRow = 0 Then
-        MsgBox "M_RawMaterialsに見つかりませんでした: " & rmCode, vbExclamation
+        MsgBox "Not found in M_RawMaterials: " & rmCode, vbExclamation
         Exit Sub
     End If
-    ' 実際に登録されている表記(大文字小文字)に揃える。Trim()を通し忘れると、
-    ' M_RawMaterials側のセルに紛れ込んだ余分な空白がそのままrmCodeに乗り移り、
-    ' 以降のDeleteMatchingGridRow等(比較先のセルはTrimしているが、rmCode側は
-    ' 呼び出し元で整形済みという前提)で一致しなくなり、一部のシートだけ削除が
-    ' 失敗する不具合につながる(実際に報告された不具合)。
+    ' Align to the actual registered spelling (case). Skipping Trim() here
+    ' would let stray whitespace mixed into the M_RawMaterials cell carry
+    ' over into rmCode, causing mismatches later in
+    ' DeleteMatchingGridRow etc. (whose target cells are Trim()'d, but
+    ' which assume rmCode itself was already cleaned up by the caller),
+    ' making deletion fail on just some sheets (this actually happened as
+    ' a reported bug).
     rmCode = Trim(CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 1).Value))
     Dim categoryVal As String: categoryVal = CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 4).Value)
     Dim originCountryVal As String: originCountryVal = CStr(rmTbl.ListRows(rmFoundRow).Range.Cells(1, 11).Value)
 
-    If MsgBox("材料「" & rmCode & "」を削除します。" & vbCrLf & _
-              "関係する全シート(M_RawMaterials・Grid_Requirement・Grid_Incoming・Grid_Stock・" & vbCrLf & _
-              "Grid_TheoreticalStock・" & vbCrLf & _
-              "T_OpeningStock・T_SelfStock・T_TTAFStock・Dashboard・Material_Detail・" & vbCrLf & _
-              "該当するPO_Draft)から該当行を削除します。この操作は元に戻せません。" & vbCrLf & vbCrLf & _
-              "（T_Shipments・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
-              "この材料の過去データは削除されません）" & vbCrLf & vbCrLf & "よろしいですか？", _
-              vbYesNo + vbExclamation, "材料の削除の確認") <> vbYes Then Exit Sub
+    If MsgBox("This will remove material """ & rmCode & """." & vbCrLf & _
+              "The matching row will be deleted from every related sheet (M_RawMaterials," & vbCrLf & _
+              "Grid_Requirement, Grid_Incoming, Grid_Stock, Grid_TheoreticalStock," & vbCrLf & _
+              "T_OpeningStock, T_SelfStock, T_TTAFStock, Dashboard, Material_Detail," & vbCrLf & _
+              "and the matching PO_Draft). This cannot be undone." & vbCrLf & vbCrLf & _
+              "(Past data for this material remaining in T_Shipments, T_StockCount," & vbCrLf & _
+              "the actuals logs, and M_BOM will not be deleted)" & vbCrLf & vbCrLf & "Are you sure?", _
+              vbYesNo + vbExclamation, "Confirm Remove Material") <> vbYes Then Exit Sub
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -385,15 +432,15 @@ Sub RemoveMaterial()
 
     Call DeleteMaterialDetailBlock(thisWb.Sheets("Material_Detail"), rmCode)
 
-    ' M_RawMaterials自体は、他シートの検索キーとして使い終わってから最後に削除する
+    ' M_RawMaterials itself is deleted last, only after it's done being used as the search key for the other sheets
     rmTbl.ListRows(rmFoundRow).Delete
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "材料「" & rmCode & "」を削除しました。" & vbCrLf & vbCrLf & _
-           "（T_Shipments・T_StockCount・実績ログ・M_BOMに残っている" & vbCrLf & _
-           "この材料の過去データは削除されていません。必要であれば手動で削除してください）", vbInformation
+    MsgBox "Removed material """ & rmCode & """." & vbCrLf & vbCrLf & _
+           "(Past data for this material remaining in T_Shipments, T_StockCount," & vbCrLf & _
+           "the actuals logs, and M_BOM has not been deleted. Delete it manually if needed.)", vbInformation
     Exit Sub
 
 ErrHandler:
@@ -401,9 +448,9 @@ ErrHandler:
     Dim errMsg As String: errMsg = Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "材料の削除中にエラーが発生しました: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
-           "途中まで削除されている可能性があります。シートの状態を確認してください" & vbCrLf & _
-           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+    MsgBox "An error occurred while removing the material: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
+           "Some deletion may have already been applied. Please check the sheets' state" & vbCrLf & _
+           "(if you're unsure, close the file without saving and reopen it to return to the last saved state).", vbCritical
 End Sub
 
 Sub RemoveIntermediate()
@@ -413,35 +460,36 @@ Sub RemoveIntermediate()
     Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
 
     Dim interName As String
-    interName = Trim(InputBox("削除する中間体名(Intermediate)を入力してください。" & vbCrLf & _
-        "PP_Gridシートの「Intermediate」列に表示されている名称と一致させてください" & vbCrLf & _
-        "(大文字小文字は区別しません)。", "中間体の削除"))
+    interName = Trim(InputBox("Please enter the intermediate name to remove." & vbCrLf & _
+        "It should match the name shown in the ""Intermediate"" column on the PP_Grid sheet" & vbCrLf & _
+        "(case-insensitive).", "Remove Intermediate"))
     If Len(interName) = 0 Then Exit Sub
 
     Dim ppFoundRow As Long: ppFoundRow = FindMaterialRow(ppGrid, interName)
     If ppFoundRow = 0 Then
-        MsgBox "PP_Gridに「" & interName & "」という中間体が見つかりませんでした。" & vbCrLf & _
-               "PP_Gridシートで正確な名称を確認してください。", vbExclamation
+        MsgBox "No intermediate named """ & interName & """ was found in PP_Grid." & vbCrLf & _
+               "Please check the exact name on the PP_Grid sheet.", vbExclamation
         Exit Sub
     End If
-    ' 実際に登録されている表記(大文字小文字)に揃える(入力時のゆらぎを吸収するため)。
-    ' RemoveMaterialと同じ理由でTrim()を通す(セル側に紛れ込んだ余分な空白が
-    ' 以降の削除処理での不一致につながるのを防ぐ)。
+    ' Align to the actual registered spelling (case) (to absorb variation
+    ' in how it was typed). Trim() is applied for the same reason as
+    ' RemoveMaterial (to prevent stray whitespace mixed into the cell from
+    ' causing a mismatch during the deletion steps that follow).
     Dim canonicalName As String
     canonicalName = Trim(CStr(ppGrid.ListRows(ppFoundRow).Range.Cells(1, 1).Value))
 
     Dim bomCount As Long: bomCount = CountMatchingTableRows(bomTbl, canonicalName)
 
-    If MsgBox("中間体「" & canonicalName & "」を削除します。" & vbCrLf & vbCrLf & _
-              "削除される内容:" & vbCrLf & _
-              "・PP_Grid: 該当行(週次バッチ数)を1行削除" & vbCrLf & _
-              "・M_BOM: この中間体を使う原単位の行を " & bomCount & " 件削除" & vbCrLf & _
-              "・Material_Detail: この中間体の内訳行(No. of batches／使用量(kg))を、" & vbCrLf & _
-              "  この中間体を使っているすべての材料ブロックから削除" & vbCrLf & vbCrLf & _
-              "T_Shipments・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
-              "M_RawMaterialsなど、原材料側のデータは一切削除されません。" & vbCrLf & vbCrLf & _
-              "この操作は元に戻せません。よろしいですか？", _
-              vbYesNo + vbExclamation, "中間体の削除の確認") <> vbYes Then Exit Sub
+    If MsgBox("This will remove intermediate """ & canonicalName & """." & vbCrLf & vbCrLf & _
+              "What will be deleted:" & vbCrLf & _
+              "- PP_Grid: the matching row (weekly batch counts), 1 row" & vbCrLf & _
+              "- M_BOM: usage-rate rows for this intermediate, " & bomCount & " row(s)" & vbCrLf & _
+              "- Material_Detail: this intermediate's breakdown rows (No. of batches / Usage (kg))," & vbCrLf & _
+              "  from every material block that uses it" & vbCrLf & vbCrLf & _
+              "Raw material-side data (T_Shipments, T_OpeningStock, T_StockCount, actuals logs," & vbCrLf & _
+              "M_RawMaterials, etc.) is never deleted." & vbCrLf & vbCrLf & _
+              "This cannot be undone. Are you sure?", _
+              vbYesNo + vbExclamation, "Confirm Remove Intermediate") <> vbYes Then Exit Sub
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -449,16 +497,16 @@ Sub RemoveIntermediate()
     Dim removedDetailPairs As Long
     removedDetailPairs = DeleteIntermediateFromMaterialDetail(thisWb.Sheets("Material_Detail"), canonicalName)
     Call DeleteMatchingTableRow(bomTbl, canonicalName)
-    ' PP_Grid自体は、上のFindMaterialRowの検索キーとして使い終わってから最後に削除する
+    ' PP_Grid itself is deleted last, only after it's done being used as the search key for FindMaterialRow above
     Call DeleteMatchingTableRow(ppGrid, canonicalName)
 
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "中間体「" & canonicalName & "」を削除しました。" & vbCrLf & _
-           "Material_Detailから削除した内訳行: " & removedDetailPairs & " 組（材料ブロック数）" & vbCrLf & vbCrLf & _
-           "（T_Shipments・T_OpeningStock・T_StockCount・実績ログ・" & vbCrLf & _
-           "M_RawMaterialsは削除されていません）", vbInformation
+    MsgBox "Removed intermediate """ & canonicalName & """." & vbCrLf & _
+           "Breakdown row pairs removed from Material_Detail: " & removedDetailPairs & " (material block count)" & vbCrLf & vbCrLf & _
+           "(T_Shipments, T_OpeningStock, T_StockCount, actuals logs, and" & vbCrLf & _
+           "M_RawMaterials have not been deleted)", vbInformation
     Exit Sub
 
 ErrHandler:
@@ -466,9 +514,9 @@ ErrHandler:
     Dim errMsg As String: errMsg = Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "中間体の削除中にエラーが発生しました: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
-           "途中まで削除されている可能性があります。シートの状態を確認してください" & vbCrLf & _
-           "(心配な場合は、保存せずにファイルを閉じて開き直せば、直前の保存状態に戻せます)。", vbCritical
+    MsgBox "An error occurred while removing the intermediate: (" & errNum & ") " & errMsg & vbCrLf & vbCrLf & _
+           "Some deletion may have already been applied. Please check the sheets' state" & vbCrLf & _
+           "(if you're unsure, close the file without saving and reopen it to return to the last saved state).", vbCritical
 End Sub
 
 Private Function IsMaterialCodeFree(rmTbl As ListObject, rmCode As String) As Boolean
@@ -495,15 +543,19 @@ Private Function FindMaterialRow(rmTbl As ListObject, rmCode As String) As Long
     Next i
 End Function
 
-' Category(と、Substrateの場合はOrigin_Country)から、対応するPO_Draft_*シート名を返す。
-' SubstrateはOrigin_CountryがPolandなら専用シート(PO_Draft_Substrate_Poland)、
-' Japan/Chinaならまとめて1枚のシート(PO_Draft_Substrate_JPN_CHN)に振り分ける
-' (汎用の受け皿シートは無い設計。ユーザーの明示的な判断: 発注していない・原産国未確認の
-' 品目はどのPO_Draftにも載らなくてよい。再度発注する際にOrigin_Countryを入力して
-' SyncPODraftCategoriesを実行すれば反映される)。build_soh.pyのbuild_po_draft呼び出しと
-' 同じ切り分け。
-' Origin_Countryは大文字小文字を区別せずに判定する(手入力での表記ゆれ、例:"poland"で
-' 一致しなくなり静かにPO_Draftから漏れる、という事態を避けるため)。
+' Returns the matching PO_Draft_* sheet name from Category (and, for
+' Substrate, Origin_Country). For Substrate, an Origin_Country of Poland
+' routes to its own dedicated sheet (PO_Draft_Substrate_Poland), while
+' Japan/China are routed together into a single shared sheet
+' (PO_Draft_Substrate_JPN_CHN) (there is no catch-all sheet by design -
+' the user's explicit decision: items that haven't been ordered yet or
+' whose country of origin isn't confirmed don't need to appear on any
+' PO_Draft. Entering the Origin_Country and running SyncPODraftCategories
+' when it's time to order reflects it). The same split as
+' build_soh.py's build_po_draft calls.
+' Origin_Country is matched case-insensitively (to avoid a hand-typed
+' spelling variant, e.g. "poland", silently failing to match and slipping
+' off of every PO_Draft).
 Public Function POSheetNameForMaterial(categoryVal As String, originCountryVal As String) As String
     Dim originKey As String: originKey = UCase(Trim(originCountryVal))
     Select Case categoryVal
@@ -519,20 +571,26 @@ Public Function POSheetNameForMaterial(categoryVal As String, originCountryVal A
     End Select
 End Function
 
-' 【いつでも実行してよいメンテナンス用マクロ】PO_Draft_Chemical/_Hazardous/_Substrate_*の
-' 各行は、AddMaterial実行時点(またはbuild_soh.py実行時点)のM_RawMaterials[Category]
-' (Substrateの場合はさらに[Origin_Country])の値に基づいて、その時1回だけ該当シートに
-' 追加される(数式でリアルタイムに見て自動的に振り分け直される仕組みではない)。そのため、
-' 後からM_RawMaterialsのCategoryやOrigin_Countryを書き換えても、PO_Draft_*シート側の行は
-' 古いシートに残ったまま自動的には移動しない(実際にこの不具合が報告され、発見された)。
-' このマクロを実行すると、M_RawMaterialsの現在のCategory・Origin_Countryを正として、
-' PO_Draft_*の全シートを全材料分スキャンし直し、矛盾する行(間違ったシートに残っている行・
-' まだどのPO_Draft_*にも無い行)を、正しいシートに削除→再作成する形で移動させる。
-' Substrateで原産国がJapan/China/Poland以外(空欄・その他)の品目は、意図的にどの
-' PO_Draft_*にも入らない(汎用の受け皿シートは無い設計。発注する際にOrigin_Countryを
-' 入力してから、このマクロを実行すればよい)。
-' 発注数量そのもの(Material_Detailへの参照)は行の位置に依存しないため、移動しても
-' 発注情報が失われることはない。既に正しい位置にある行には一切触れない。
+' [Maintenance macro - safe to run anytime] Each row on
+' PO_Draft_Chemical/_Hazardous/_Substrate_* was added to the matching
+' sheet just once, based on M_RawMaterials[Category] (and, for Substrate,
+' [Origin_Country]) as of the moment AddMaterial ran (or as of when
+' build_soh.py ran) - it's not a mechanism that re-sorts itself
+' automatically by reading a live formula. So if M_RawMaterials' Category
+' or Origin_Country is changed afterward, the row on the PO_Draft_* side
+' stays behind on the old sheet and doesn't move on its own (this bug was
+' actually reported and found in practice). Running this macro treats
+' M_RawMaterials' current Category/Origin_Country as authoritative,
+' rescans every material across all PO_Draft_* sheets, and moves any
+' inconsistent row (one left on the wrong sheet, or one not yet on any
+' PO_Draft_*) to the correct sheet by deleting and re-creating it. A
+' Substrate item whose country of origin is anything other than
+' Japan/China/Poland (blank or otherwise) is intentionally left off every
+' PO_Draft_* (there's no catch-all sheet by design - enter the
+' Origin_Country when it's time to order, then run this macro). The order
+' quantity itself (a reference to Material_Detail) doesn't depend on row
+' position, so moving a row never loses order information. Rows already in
+' the correct place are left completely untouched.
 Sub SyncPODraftCategories()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
@@ -545,9 +603,9 @@ Sub SyncPODraftCategories()
     Dim poSheetNames As Variant
     poSheetNames = Array("PO_Draft_Chemical", "PO_Draft_Hazardous", _
         "PO_Draft_Substrate_Poland", "PO_Draft_Substrate_JPN_CHN")
-    Const PO_HDR_TABLE_ROW As Long = 26  ' build_soh.pyのPO_HDR_UOM_FIRM_ROWと同じ固定値(見出し最終行。データはこの直下から)
+    Const PO_HDR_TABLE_ROW As Long = 26  ' the same fixed value as build_soh.py's PO_HDR_UOM_FIRM_ROW (last header row - data starts right below it)
 
-    ' 現在PO_Draft_*の各シートに実際に存在する材料コード(D列)を、"どのシートにあるか"付きで収集する。
+    ' Collect the material codes (column D) currently present on each PO_Draft_* sheet, tagged with "which sheet they're on".
     Dim currentSheetOf As Object: Set currentSheetOf = CreateObject("Scripting.Dictionary")
     currentSheetOf.CompareMode = vbTextCompare
     Dim si As Long
@@ -568,7 +626,7 @@ Sub SyncPODraftCategories()
     Dim movedCount As Long: movedCount = 0
     Dim addedCount As Long: addedCount = 0
     If rmN > 0 Then
-        Dim rmData As Variant: rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 11).Value  ' Part Name,Description,Supplier,Category,UOM,...,TTAF_Code(9列目),固定週次消費量(10列目),Origin_Country(11列目)
+        Dim rmData As Variant: rmData = rmTbl.ListColumns(1).DataBodyRange.Resize(rmN, 11).Value  ' Part Name,Description,Supplier,Category,UOM,...,TTAF_Code(col 9),FixedWeeklyConsumption(col 10),Origin_Country(col 11)
         Dim i As Long
         For i = 1 To rmN
             Dim rmCode As String: rmCode = Trim(CStr(rmData(i, 1)))
@@ -597,9 +655,9 @@ Sub SyncPODraftCategories()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "PO_Draft_*シートの振り分けをM_RawMaterialsの現在のCategoryに合わせて同期しました。" & vbCrLf & vbCrLf & _
-           "シートを移動した材料: " & movedCount & " 件" & vbCrLf & _
-           "新たに追加した材料(どのPO_Draftにも無かった分): " & addedCount & " 件", vbInformation
+    MsgBox "Synced the PO_Draft_* sheet assignment to match M_RawMaterials' current Category." & vbCrLf & vbCrLf & _
+           "Materials moved to a different sheet: " & movedCount & vbCrLf & _
+           "Materials newly added (not on any PO_Draft before): " & addedCount, vbInformation
     Exit Sub
 
 ErrHandler:
@@ -607,16 +665,20 @@ ErrHandler:
     Dim errMsg5 As String: errMsg5 = Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "処理中にエラーが発生しました: (" & errNum5 & ") " & errMsg5, vbCritical
+    MsgBox "An error occurred during processing: (" & errNum5 & ") " & errMsg5, vbCritical
 End Sub
 
-' T_SelfStock/T_TTAFStockに新しい材料の行を追加する。テーブル機能を使わない罫線グリッドの
-' ため、行の追加は自前で行う。anchorRmCode(M_RawMaterials側で同じ挿入位置にあった材料の
-' コード)が指定されていれば、その材料の行の直前にExcelの行挿入(Rows.Insert)で割り込ませる
-' ことで、M_RawMaterials・Dashboard等と同じ並び順を保つ。Rows.Insertは同一ブック内の
-' 他のすべての数式の行参照を自動的に補正するため、既存行の数式を書き換える必要は無い。
-' anchorRmCodeが空文字(その材料のグループが最後のグループで、後に続く材料が無い)の場合は
-' 従来通り一番下に追加する。実際に追加/挿入した行番号を返す。
+' Adds a row for a new material to T_SelfStock/T_TTAFStock. Since these
+' are a bordered grid rather than a Table, row addition is handled
+' manually. If anchorRmCode (the code of the material that was at the same
+' insert position on the M_RawMaterials side) is given, an Excel row
+' insertion (Rows.Insert) is used to insert right before that material's
+' row, preserving the same order as M_RawMaterials/Dashboard/etc.
+' Rows.Insert automatically adjusts every other formula's row references
+' throughout the workbook, so no existing row's formula needs to be
+' rewritten. If anchorRmCode is an empty string (this material's group is
+' the last group, with no material following it), it's added at the very
+' bottom as before. Returns the row number actually added/inserted at.
 Private Function InsertOrAppendStockGridRow(sh As Worksheet, rmCode As String, nWeeks As Long, logTableName As String, qtyColName As String, anchorRmCode As String) As Long
     Dim targetRow As Long, formatSrcRow As Long
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
@@ -627,7 +689,7 @@ Private Function InsertOrAppendStockGridRow(sh As Worksheet, rmCode As String, n
     If anchorRow > 0 Then
         sh.Rows(anchorRow).Insert Shift:=xlDown
         targetRow = anchorRow
-        formatSrcRow = anchorRow + 1  ' 挿入で1行下にずれた、元anchor行から書式を複製する
+        formatSrcRow = anchorRow + 1  ' the original anchor row, now shifted down 1 row by the insert - copy formatting from here
     Else
         targetRow = lastRow + 1
         formatSrcRow = lastRow
@@ -649,15 +711,21 @@ Private Function InsertOrAppendStockGridRow(sh As Worksheet, rmCode As String, n
     InsertOrAppendStockGridRow = targetRow
 End Function
 
-' Dashboardに新しい材料の2行(理論在庫→実在庫の順)を追加する(ssRow=T_SelfStock/T_TTAFStock
-' 側の行番号、grow=Grid_Requirement/Incoming/Stock側の行番号)。anchorRmCodeが指定されていれば
-' その材料の行の直前にExcelの行挿入で割り込ませ、M_RawMaterialsと同じ並び順を保つ
-' (空文字なら従来通り末尾に追加)。
-' Part Name(A列)は両方の行に同じ値を書くため、RemoveMaterialのDeleteMatchingGridRow
-' (A列一致で削除)が2行ともまとめて削除してくれる(削除側の特別対応は不要)。列位置は
-' build_soh.pyのLEFT_COLS/DASH_ROW_LABEL_COL/DASH_DIFF_COLと対応: 1=Part Name,2=Description,
-' 3=Category,4=基準在庫下限,5=基準在庫上限,6=自社在庫(実績),7=TTAF在庫(実績),8=実績週,
-' 9=行種別,10=乖離(kg)、週データは11列目(K列)から。
+' Adds 2 rows for a new material to Dashboard (Theoretical Stock, then
+' Actual Stock, in that order) (ssRow = the row number on the
+' T_SelfStock/T_TTAFStock side, grow = the row number on the
+' Grid_Requirement/Incoming/Stock side). If anchorRmCode is given, an
+' Excel row insertion is used to insert right before that material's row,
+' preserving the same order as M_RawMaterials (an empty string means
+' added at the very bottom as before).
+' Since Part Name (column A) gets the same value written on both rows,
+' RemoveMaterial's DeleteMatchingGridRow (which deletes by matching column
+' A) removes both rows together (no special handling is needed on the
+' deletion side). Column positions correspond to build_soh.py's
+' LEFT_COLS/DASH_ROW_LABEL_COL/DASH_DIFF_COL: 1=Part Name,
+' 2=Description, 3=Category, 4=SafetyStock_Min, 5=SafetyStock_Max,
+' 6=Self Stock (Actual), 7=TTAF Stock (Actual), 8=Actual Week, 9=Row Type,
+' 10=Variance (kg); the week data starts at column 11 (column K).
 Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long, ssRow As Long, grow As Long, anchorRmCode As String)
     Dim theoRow As Long, actualRow As Long, formatSrcTheo As Long, formatSrcActual As Long
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
@@ -669,8 +737,8 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
         sh.Rows(anchorRow & ":" & (anchorRow + 1)).Insert Shift:=xlDown
         theoRow = anchorRow
         actualRow = anchorRow + 1
-        formatSrcTheo = anchorRow + 2   ' 挿入で2行下にずれた、元anchorペアの理論在庫行
-        formatSrcActual = anchorRow + 3 ' 同、実在庫行
+        formatSrcTheo = anchorRow + 2   ' the original anchor pair's Theoretical Stock row, now shifted down 2 rows by the insert
+        formatSrcActual = anchorRow + 3 ' likewise, the Actual Stock row
     Else
         theoRow = lastRow + 1
         actualRow = lastRow + 2
@@ -682,9 +750,13 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     Dim ssSelfRng As String: ssSelfRng = "'T_SelfStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssTTAFRng As String: ssTTAFRng = "'T_TTAFStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssLabelRng As String: ssLabelRng = "'T_SelfStock'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
-    ' 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。理論在庫が月初にリセット
-    ' されるため、表示期間の最終週(2年後)を見ても常にほぼ0にしかならない。実績週(8列目)と
-    ' 同じ基準(自社在庫実績が入っている直近の週)で比較する(build_soh.pyと同じ式)。
+    ' Variance (kg) = Actual Stock (Grid_Stock) - Theoretical Stock
+    ' (Grid_TheoreticalStock). Since theoretical stock resets at the start
+    ' of each month, looking at the last week of the displayed period (2
+    ' years out) would almost always show close to 0. So this compares
+    ' using the same reference as the Actual Week column (column 8 - the
+    ' most recent week that has self-stock actuals entered) (the same
+    ' formula as build_soh.py).
     Dim gsLastCol As String: gsLastCol = ColLetter(1 + nWeeks)
     Dim lastActualColIdx As String
     lastActualColIdx = "LOOKUP(2,1/(" & ssSelfRng & "<>""""),COLUMN(" & ssSelfRng & "))"
@@ -709,23 +781,24 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
         sh.Cells(rr, 10).Value = diffFormula
     Next idx
 
-    sh.Cells(theoRow, 9).Value = "理論在庫"
+    sh.Cells(theoRow, 9).Value = "Theoretical Stock"
     sh.Cells(theoRow, 9).Font.Italic = True
     sh.Cells(theoRow, 9).Font.Color = RGB(128, 128, 128)
-    sh.Cells(actualRow, 9).Value = "実在庫"
+    sh.Cells(actualRow, 9).Value = "Actual Stock"
     sh.Cells(actualRow, 9).Font.Bold = True
 
     Dim w As Long, col As Long
     For w = 1 To nWeeks
-        col = 10 + w  ' Dashboardの週データ開始列=11(K列)
+        col = 10 + w  ' Dashboard's week-data start column = 11 (column K)
         sh.Cells(theoRow, col).Value = "='Grid_TheoreticalStock'!" & ColLetter(1 + w) & grow
         sh.Cells(theoRow, col).Font.Italic = True
         sh.Cells(theoRow, col).Font.Color = RGB(128, 128, 128)
         sh.Cells(actualRow, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
     Next w
 
-    ' 書式コピー: 末尾に追加する場合は直前の材料ペア、途中に挿入する場合は挿入により
-    ' 押し出されたanchor材料のペアから、それぞれ複製する
+    ' Format copy: when adding at the end, duplicate from the immediately
+    ' preceding material pair; when inserting in the middle, duplicate from
+    ' the anchor material's pair that got pushed down by the insert
     On Error Resume Next
     sh.Rows(formatSrcTheo).Copy
     sh.Rows(theoRow).PasteSpecial xlPasteFormats
@@ -735,16 +808,21 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     On Error GoTo 0
 End Sub
 
-' Material_Detailに新しい材料のブロックを追加する。追加直後はM_BOMに未登録のため、
-' 中間体の行(No. of batches/使用量)は無く、「合計使用量(0のはず)・TTAF在庫・自社在庫・
-' Order・PO_No・合計在庫・注記」の7行だけのミニブロックになる。RefreshBOM実行後、この材料が
-' 実際に使われている中間体が見つかれば、SyncMaterialDetailIntermediates(RefreshData_BOM
-' モジュール、RefreshBOMの末尾で自動的に呼ばれる)がこのブロックに中間体の内訳行を
-' 自動的に追加する（AddMaterialを再度実行する必要はない）。
-' anchorRmCodeが指定されていれば、そのブロックの直前に割り込ませる(M_RawMaterialsと同じ
-' 並び順を保つ)。空文字、または該当ブロックが見つからない場合は従来通り末尾に追加する。
+' Adds a new material's block to Material_Detail. Right after adding,
+' since it isn't registered in M_BOM yet, there are no intermediate rows
+' (No. of batches/Usage), so it's a mini block with just 7 rows (Total
+' Usage - should be 0, TTAF Stock, Self Stock, Order, PO_No, Total Stock,
+' and the comment). After RefreshBOM runs, once an intermediate that
+' actually uses this material is found,
+' SyncMaterialDetailIntermediates (in the RefreshData_BOM module, called
+' automatically at the end of RefreshBOM) automatically adds the
+' intermediate breakdown rows to this block (no need to run AddMaterial
+' again). If anchorRmCode is given, this block is inserted right before
+' that block (preserving the same order as M_RawMaterials). If it's an
+' empty string, or the matching block can't be found, it's added at the
+' bottom as before.
 Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal As String, nWeeks As Long, ssRow As Long, grow As Long, anchorRmCode As String)
-    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row  ' B列(項目)基準
+    Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row  ' based on column B (item)
     Dim headerRow As Long
     Dim formatSrcHeader As Long, formatSrcContentFirst As Long
 
@@ -754,10 +832,13 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     End If
 
     If anchorHeaderRow > 0 Then
-        ' 8行(空白1+ヘッダー1+内訳6)分のスペースを、anchorブロックの直前に挿入する。
-        ' anchorが一番最初のブロック(直前に空白行が無い)かどうかで挿入位置が変わるが、
-        ' どちらの場合も「挿入後、元anchorヘッダーは8行下にずれる」点は共通のため、
-        ' 書式コピー元の行番号(formatSrcHeader等)は同じ式で求められる。
+        ' Insert 8 rows' worth of space (1 blank + 1 header + 6 breakdown)
+        ' right before the anchor block. The insert position differs
+        ' depending on whether the anchor is the very first block (with no
+        ' blank row right before it), but either way "after inserting, the
+        ' original anchor header shifts down 8 rows" holds true, so the
+        ' format-copy source row numbers (formatSrcHeader etc.) can be
+        ' computed with the same formula regardless.
         Dim spacerExists As Boolean: spacerExists = (anchorHeaderRow > MD_HEADER_ROW + 1)
         Dim insertAt As Long
         If spacerExists Then
@@ -774,7 +855,7 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
         formatSrcHeader = anchorHeaderRow + 8
         formatSrcContentFirst = anchorHeaderRow + 9
     Else
-        headerRow = lastRow + 2  ' 直前ブロックとの間に空白行を1行はさむ
+        headerRow = lastRow + 2  ' leave 1 blank row between this and the previous block
         formatSrcHeader = MD_HEADER_ROW + 1
         formatSrcContentFirst = lastRow - 5
     End If
@@ -786,7 +867,7 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     r = headerRow
 
     r = r + 1
-    sh.Cells(r, 2).Value = "合計使用量(kg)/週"
+    sh.Cells(r, 2).Value = "Total Usage (kg)/week"
     sh.Cells(r, 2).Font.Bold = True
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
@@ -794,24 +875,27 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     Next w
 
     r = r + 1
-    sh.Cells(r, 2).Value = "TTAF在庫(実績,kg)"
+    sh.Cells(r, 2).Value = "TTAF Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
         sh.Cells(r, col).Value = "='T_TTAFStock'!" & ColLetter(1 + w) & ssRow
     Next w
 
     r = r + 1
-    sh.Cells(r, 2).Value = "自社在庫(実績,kg)"
+    sh.Cells(r, 2).Value = "Self Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
         sh.Cells(r, col).Value = "='T_SelfStock'!" & ColLetter(1 + w) & ssRow
     Next w
 
-    ' Order行: 発注予定数量を材料×週で直接手入力する欄。PO_Draft_*シートは、
-    ' mdOrderHelperCol列(この行にだけPart Nameを複製した見えない列)をMATCHで特定し、
-    ' ここに入力された値をそのまま転記する(build_soh.pyのMaterial_Detail生成と同じ設計)。
+    ' Order row: the field where the planned order quantity is entered
+    ' directly, per material x week. The PO_Draft_* sheets locate this row
+    ' via MATCH on the mdOrderHelperCol column (a hidden column that
+    ' duplicates the Part Name only on this row), and transcribe whatever
+    ' value is entered here as-is (the same design as build_soh.py's
+    ' Material_Detail generation).
     r = r + 1
-    sh.Cells(r, 2).Value = "Order(発注予定,kg)"
+    sh.Cells(r, 2).Value = "Order (Planned, kg)"
     Dim mdOrderHelperCol As Long: mdOrderHelperCol = MD_WEEK_START_COL + nWeeks + 1
     sh.Cells(r, mdOrderHelperCol).Value = rmCode
     sh.Cells(r, mdOrderHelperCol).Font.Size = 8
@@ -819,12 +903,14 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
         sh.Cells(r, col).Value = Empty
-        sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
+        sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' equivalent to INPUT_FILL (FFF2CC)
     Next w
 
-    ' PO_No行: Order行のすぐ下に、対応するPO番号を材料×週で入力する欄(発行され次第、
-    ' 後から追記でよい)。RefreshShipmentsが、この行とCSA Reportの出荷行を突き合わせ、
-    ' Statusに応じてOrder行のセルを自動的に移動/凍結する(build_soh.pyと同じレイアウト)。
+    ' PO_No row: right below the Order row, the field where the matching
+    ' PO number is entered per material x week (fine to fill in later,
+    ' once it's issued). RefreshShipments matches this row against the CSA
+    ' Report's shipment rows and automatically moves/finalizes the Order
+    ' row's cells depending on Status (the same layout as build_soh.py).
     r = r + 1
     sh.Cells(r, 2).Value = "PO_No"
     sh.Cells(r, 2).Font.Size = 9
@@ -832,22 +918,25 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
         sh.Cells(r, col).Value = Empty
-        sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' INPUT_FILL(FFF2CC)相当
+        sh.Cells(r, col).Interior.Color = RGB(255, 242, 204)  ' equivalent to INPUT_FILL (FFF2CC)
         sh.Cells(r, col).Font.Size = 9
         sh.Cells(r, col).Font.Color = RGB(128, 128, 128)
     Next w
 
     r = r + 1
-    sh.Cells(r, 2).Value = "合計在庫(週末時点,kg)"
+    sh.Cells(r, 2).Value = "Total Stock (End of Week, kg)"
     sh.Cells(r, 2).Font.Bold = True
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
         sh.Cells(r, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
     Next w
 
-    ' 罫線・書式のコピー: 末尾に追加する場合は既存の最初のヘッダー行・直前ブロックの末尾6行から、
-    ' 途中に挿入する場合は挿入で押し出されたanchorブロック自身のヘッダー行・先頭6行から複製する
-    ' (ブロックの長さは材料によって違うが、先頭のヘッダー行・その後6行の並びは常に同じ順序のため)。
+    ' Copy borders/formatting: when adding at the end, duplicate from the
+    ' first existing header row and the last 6 rows of the immediately
+    ' preceding block; when inserting in the middle, duplicate from the
+    ' anchor block's own header row and its first 6 rows, pushed down by
+    ' the insert (block length varies by material, but the header row
+    ' followed by 6 rows is always in the same order).
     On Error Resume Next
     sh.Rows(formatSrcHeader).Copy
     sh.Rows(headerRow).PasteSpecial xlPasteFormats
@@ -856,39 +945,51 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     Application.CutCopyMode = False
     On Error GoTo 0
 
-    ' MOQ入力欄(ヘッダー行のC列)は手入力用のため、コピーされた書式の上から個別に設定し直す
+    ' The MOQ input field (column C of the header row) is for manual
+    ' entry, so it's reset individually on top of the copied formatting
     With sh.Cells(headerRow, 3)
         .Value = Empty
         .Font.Bold = False
     End With
     On Error Resume Next
-    sh.Cells(headerRow, 3).AddComment "MOQ(最小発注量)を入力してください（手書きでOK）"
+    sh.Cells(headerRow, 3).AddComment "Please enter MOQ (Minimum Order Quantity) - manual entry is fine"
     On Error GoTo 0
 End Sub
 
-' 該当カテゴリのPO_Draft_*シートの一番下に新しい材料の行を追加する。基準週セルへの参照は
-' BaseWeekRef(RefreshData_Utilities)経由で取得する。かつては"$P$7"を直接埋め込んでいたため、
-' 基準週セルをP7から動かしたシート(例: 手動レイアウト変更でP13に移動)では、AddMaterialや
-' SyncPODraftCategoriesで新規追加された行だけ古い(空の)セルを参照してしまう不具合があった。
+' Adds a new material's row to the bottom of the matching category's
+' PO_Draft_* sheet. The reference to the base-week cell is obtained via
+' BaseWeekRef (RefreshData_Utilities). It used to hard-code "$P$7"
+' directly, which meant that on a sheet whose base-week cell had been
+' moved off P7 (e.g. moved to P13 via a manual layout change), only rows
+' newly added by AddMaterial or SyncPODraftCategories would reference the
+' old (empty) cell.
 Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As String, nWeeks As Long)
-    ' 最終行の判定はD列(CSA Code)ではなくE列(UOM)基準で行う。新レイアウトではB20:B26/
-    ' C20:C26/D20:D26が縦に結合されたヘッダーセルのため、データ行が1件も無い状態だと
-    ' D列でのEnd(xlUp)が結合の先頭(20行目、ヘッダーの途中)を拾ってしまい、新しい行を
-    ' ヘッダーの真ん中に書き込んでしまう不具合があった。E列は結合されておらず、
-    ' ヘッダー最終行(UOMラベル)・データ行(kg)のどちらも必ず値を持つため、この問題が起きない
-    ' (旧レイアウトでもE列に同じUOM見出し・kgがあるため、どちらのレイアウトでも正しく動く)。
+    ' Determines the last row based on column E (UOM) rather than column D
+    ' (CSA Code). In the new layout, B20:B26/C20:C26/D20:D26 are header
+    ' cells merged vertically, so with zero data rows, End(xlUp) on column
+    ' D would land on the top of that merge (row 20, partway through the
+    ' header) and write the new row into the middle of the header - a bug.
+    ' Column E is never merged, and both the last header row (the UOM
+    ' label) and every data row (kg) always carry a value there, so this
+    ' issue never happens (the old layout also has the same UOM
+    ' header/kg in column E, so this works correctly under either layout).
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 5).End(xlUp).Row
     Dim newRow As Long: newRow = lastRow + 1
     Dim bwRefExpr As String: bwRefExpr = BaseWeekRef(sh)
 
-    ' 書式は先に直前行(lastRow)からコピーし、値・数式はその"後"で書き込む。順序が逆だと、
-    ' コピー元がヘッダー行(26行目。H26:K26/L26:T26が"Firm"/"Forecast"ラベル用に結合されている)
-    ' だった場合に、その結合状態までコピーされてしまい、結合後に複数セルへ個別に書き込んだ
-    ' 値・数式が最後の1つ(K27やT27)だけを残して上書きされてしまう不具合があった
-    ' (空のPO_Draft_*シートに1件目を追加する時に発生し、その1件目からさらに2件目・3件目…と
-    ' 直前行の書式コピーが連鎖するため、結合が芋づる式に全行へ伝播してしまっていた)。
-    ' 対策として、書式コピーの直後に週データ列(H〜T)の結合を必ず解除してから、
-    ' 値・数式を書き込む。
+    ' Formatting is copied from the previous row (lastRow) first, and the
+    ' values/formulas are written only "after" that. If the order were
+    ' reversed, and the copy source happened to be the header row (row 26,
+    ' where H26:K26/L26:T26 are merged for the "Firm"/"Forecast" labels),
+    ' that merge would get copied too, and writing separate values/
+    ' formulas into what was now one merged cell would leave only the last
+    ' one written (K27 or T27) intact, overwriting all the others - a bug.
+    ' (This happened when adding the first item to an empty PO_Draft_*
+    ' sheet, and since each subsequent addition copies formatting from
+    ' "the row before it," the merge propagated down through every
+    ' following row like a chain.) As a fix, right after the format copy,
+    ' the week-data columns (H through T) are always explicitly unmerged
+    ' before any value/formula is written.
     sh.Rows(lastRow).Copy
     sh.Rows(newRow).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
@@ -898,8 +999,9 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
         sh.Range(sh.Cells(newRow, PO_FIRST_WEEK_COL_), sh.Cells(newRow, PO_FIRST_WEEK_COL_ + PO_N_WEEKS_ - 1)).UnMerge
     End If
 
-    ' Grid_Stock内の行位置はMATCHで毎回動的に求める(材料の追加・削除で行位置がずれても
-    ' 数式側が自動的に正しい行を追従できるようにするため)。
+    ' The row position within Grid_Stock is dynamically looked up every
+    ' time via MATCH (so the formula automatically keeps following the
+    ' correct row even if adding/removing materials shifts row positions).
     Dim growMatch As String: growMatch = "MATCH($D" & newRow & ",Grid_Stock[Part Name],0)"
 
     sh.Cells(newRow, 2).Value = "=IFERROR(INDEX(M_RawMaterials[Description],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),"""")"
@@ -912,8 +1014,10 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     Const PO_FIRST_WEEK_COL As Long = 8
     Const PO_N_WEEKS As Long = 13
     Dim w As Long, col As Long
-    ' 発注数量はGrid_Stockから自動計算せず、Material_DetailのOrder(発注予定,kg)行に
-    ' 手入力された値をそのまま転記する(build_soh.pyのbuild_po_draft()と同じ式)。
+    ' The order quantity is not auto-calculated from Grid_Stock - it's
+    ' transcribed as-is from whatever value was manually entered into
+    ' Material_Detail's Order (Planned, kg) row (the same formula as
+    ' build_soh.py's build_po_draft()).
     Dim mdOrderHelperCol As Long: mdOrderHelperCol = MD_WEEK_START_COL + nWeeks + 1
     Dim mdOrderHelperColLetter As String: mdOrderHelperColLetter = ColLetter(mdOrderHelperCol)
     Dim mdWeekFirstColLetter As String: mdWeekFirstColLetter = ColLetter(MD_WEEK_START_COL)
@@ -925,20 +1029,22 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
         With sh.Cells(newRow, col)
             .Value = "=IFERROR(INDEX(Material_Detail!$" & mdWeekFirstColLetter & ":$" & mdWeekLastColLetter & _
                 "," & mdOrderMatch & "," & bwRefExpr & "+" & (w - 1) & "),0)"
-            ' 発注数量0の週は数字を表示しない(空欄に見せる)ための表示形式。値自体は0のまま。
+            ' The number format that hides the digit for a week with 0 order quantity (makes it look blank). The value itself stays 0.
             .NumberFormat = "0;-0;;@"
         End With
     Next w
     Dim totalCol As Long: totalCol = PO_FIRST_WEEK_COL + PO_N_WEEKS
     sh.Cells(newRow, totalCol).Value = "=SUM(" & ColLetter(PO_FIRST_WEEK_COL) & newRow & ":" & ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS - 1) & newRow & ")"
 
-    ' Firm(1〜4週目)/Forecast(5〜13週目)の色分けは、直接の塗りつぶしではなく、シート設定時
-    ' (SetupPODraftLetterheadLayout/build_soh.py)に一度だけ設定済みの条件付き書式
-    ' (発注数量が0以外の時だけ発色)に任せる。十分広い行範囲に対して設定済みのため、
-    ' この行に対して個別に何か設定する必要はない。
+    ' The Firm (weeks 1-4)/Forecast (weeks 5-13) color-coding is left to
+    ' the conditional formatting set up once at sheet-setup time
+    ' (SetupPODraftLetterheadLayout/build_soh.py) (colored only when the
+    ' order quantity is non-zero) rather than a direct fill. Since that's
+    ' already set up over a generously wide row range, nothing needs to be
+    ' set individually for this row.
 End Sub
 
-' テーブル(ListObject)から、指定した材料コードに一致する行を削除する。
+' Deletes, from a Table (ListObject), the row matching the given material code.
 Private Sub DeleteMatchingTableRow(tbl As ListObject, rmCode As String)
     Dim n As Long: n = tbl.ListRows.Count
     Dim i As Long
@@ -950,8 +1056,9 @@ Private Sub DeleteMatchingTableRow(tbl As ListObject, rmCode As String)
     Next i
 End Sub
 
-' テーブル機能を使わない罫線グリッド(T_SelfStock/T_TTAFStock/Dashboard/PO_Draft_*)から、
-' 指定した材料コードに一致する行を削除する。nameCol=材料コードが入っている列番号。
+' Deletes, from a bordered grid that doesn't use the Table feature
+' (T_SelfStock/T_TTAFStock/Dashboard/PO_Draft_*), the row matching the
+' given material code. nameCol = the column number that holds the material code.
 Private Sub DeleteMatchingGridRow(sh As Worksheet, rmCode As String, nameCol As Long)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, nameCol).End(xlUp).Row
     Dim r As Long
@@ -963,8 +1070,10 @@ Private Sub DeleteMatchingGridRow(sh As Worksheet, rmCode As String, nameCol As 
     Next r
 End Sub
 
-' Material_Detailの、指定した材料のブロック(ヘッダー行から次の材料のヘッダー行の直前まで、
-' 空白の区切り行を含む)をまとめて削除する。BOM未登録等でブロックが無い場合は何もしない。
+' Deletes, on Material_Detail, the given material's whole block in one
+' shot (from its header row through right before the next material's
+' header row, including any blank separator row). Does nothing if there's
+' no block (e.g. because it was never registered in the BOM).
 Private Sub DeleteMaterialDetailBlock(sh As Worksheet, rmCode As String)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
     Dim startRow As Long: startRow = 0
@@ -987,8 +1096,10 @@ Private Sub DeleteMaterialDetailBlock(sh As Worksheet, rmCode As String)
     sh.Rows(startRow & ":" & endRow).Delete
 End Sub
 
-' テーブルの列1(RemoveIntermediateではPP_Grid/M_BOMの「Intermediate」列)に一致する行数を数える
-' (実際の削除前に、確認ダイアログでユーザーに件数を提示するためだけに使う)。
+' Counts the number of rows in a Table matching column 1 (for
+' RemoveIntermediate, the "Intermediate" column of PP_Grid/M_BOM) (used
+' only to show the count to the user in the confirmation dialog before the
+' actual deletion).
 Private Function CountMatchingTableRows(tbl As ListObject, keyVal As String) As Long
     Dim n As Long: n = tbl.ListRows.Count
     Dim i As Long, cnt As Long: cnt = 0
@@ -999,11 +1110,14 @@ Private Function CountMatchingTableRows(tbl As ListObject, keyVal As String) As 
     CountMatchingTableRows = cnt
 End Function
 
-' Material_Detailの全ブロックを走査し、指定した中間体名の内訳行ペア(No. of batches／使用量(kg))を
-' 見つけ次第削除する。1つの中間体が複数の材料ブロックで使われている場合、該当するすべての
-' ブロックから削除する(削除した組数を返す)。RefreshData_BOMのSyncMaterialDetailIntermediates
-' (追加側)と対になる削除側の処理で、同じブロック走査の考え方(ライブにセルを読みながら、
-' 削除で行がずれてもその場で辻褄が合うようにする)を使っている。
+' Scans every block on Material_Detail and deletes the breakdown row pair
+' (No. of batches / Usage (kg)) for the given intermediate name wherever
+' found. If one intermediate is used across multiple material blocks, it's
+' deleted from every matching block (returns the number of pairs
+' deleted). This is the deletion-side counterpart to RefreshData_BOM's
+' SyncMaterialDetailIntermediates (the addition side), and uses the same
+' block-scanning approach (reading cells live, staying consistent on the
+' fly even as deletion shifts row positions).
 Private Function DeleteIntermediateFromMaterialDetail(sh As Worksheet, interName As String) As Long
     Dim removedPairs As Long: removedPairs = 0
     Dim lastRowScan As Long: lastRowScan = sh.Cells(sh.Rows.Count, 2).End(xlUp).Row
@@ -1019,7 +1133,7 @@ Private Function DeleteIntermediateFromMaterialDetail(sh As Worksheet, interName
             Dim sumRow As Long: sumRow = 0
             Do While rr <= lastRowScan
                 Dim lbl As String: lbl = Trim(CStr(sh.Cells(rr, 2).Value))
-                If lbl = "合計使用量(kg)/週" Then
+                If lbl = "Total Usage (kg)/week" Then
                     sumRow = rr
                     Exit Do
                 End If
@@ -1027,7 +1141,7 @@ Private Function DeleteIntermediateFromMaterialDetail(sh As Worksheet, interName
                     sh.Rows(rr & ":" & (rr + 1)).Delete
                     removedPairs = removedPairs + 1
                     lastRowScan = lastRowScan - 2
-                    ' rrはそのまま(削除により、次の行がこの位置に繰り上がってくるため)
+                    ' rr stays as-is (deletion shifts the next row up into this position)
                 Else
                     rr = rr + 1
                 End If
