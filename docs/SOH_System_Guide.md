@@ -480,25 +480,27 @@ Revision番号・基準週(WeekIndex)入力欄・SafetyStock/CurrentStockの参�
 （`build_soh.py`も新規ブック生成時から最初からこの形式で生成します）。
 
 **レイアウトの行構成**（列は共通: B=Part Name, C=TTAF Code, D=CSA Code, E=UOM/Month/Year,
-F=SafetyStock, G=CurrentStock, H〜T=週1〜13, U=Total）:
+F〜R=週1〜13, S=Total。かつて存在したF=SafetyStock, G=CurrentStock列は、下記5.のとおり
+後日削除され、週データがF列から始まる形に前詰めされました）:
 
 | 行 | 内容 |
 |---|---|
-| 8〜9行目 | TO（宛先） |
-| 10行目 | N列=Firm Month: ／ P列=`=TEXT(H20,"mmmm")`（見出し1週目の月を表示） |
-| 11行目 | CC（必要であれば入力） ／ N列=Revision ／ P列=Revision番号（名前付き範囲`PORevision`） |
-| 13行目 | FROM（発行者） ／ N列=基準週(WeekIndex)ラベル ／ P列=基準週の値（名前付き範囲`BaseWeek`） |
+| 8行目 | TO（宛先） ／ L列=Order Date: ／ N列=`=TODAY()`（発行日、N〜P列を結合） |
+| 9行目 | TO（会社名） ／ L列=Issue Month: ／ N列=`=TEXT(N8,"mmmm")`（N〜P列を結合） |
+| 10行目 | L列=Firm Month: ／ N列=`=TEXT(F20,"mmmm")`（見出し1週目の月を表示。N〜P列を結合） |
+| 11行目 | CC（必要であれば入力） ／ L列=Revision ／ N列=Revision番号（名前付き範囲`PORevision`。N〜P列を結合） |
+| 13行目 | FROM（発行者） ／ L列=基準週(WeekIndex)ラベル ／ N列=基準週の値（名前付き範囲`BaseWeek`） |
 | 14行目 | FROM（自社名） |
 | 17〜18行目 | タイトル（結合セル） |
 | 20行目 | 見出し1段目（Part Name/TTAF Code/CSA Code/Month-Year。20〜26行を縦結合） |
 | 21〜24行目 | 非表示の補助行（WeekStart・WeekOfYear・空白スペーサー） |
-| 25行目 | 見出し2段目（Week/SafetyStock/CurrentStock/週ラベル/Total） |
+| 25行目 | 見出し2段目（Week／週番号ラベル／Total） |
 | 26行目 | 見出し3段目（UOM／Firm・Forecastの帯ラベル） |
 | 27行目〜 | データ行（材料ごとに1行） |
 
-**名前付き範囲`BaseWeek`・`PORevision`**: 基準週セル（P13）とRevisionセル（P11）は、
+**名前付き範囲`BaseWeek`・`PORevision`**: 基準週セル（N13）とRevisionセル（N11）は、
 すべての数式・マクロからシート固有（ローカルスコープ）の名前付き範囲`BaseWeek`・
-`PORevision`経由で参照します。実セルの位置がP13・P11から将来動いても、名前の参照先
+`PORevision`経由で参照します。実セルの位置が将来動いても、名前の参照先
 だけ直せば全ての数式（`AppendPODraftRow`が新規追加する行、月/週見出しの数式）が
 自動的に追従します。かつては`$P$7`をVBA側に直接埋め込んでいたため、基準週セルを
 手動でP7からP13へ移動した際、既に登録済みだった一部の材料（例: ND TAC/CHEM-1280）の
@@ -516,11 +518,24 @@ F=SafetyStock, G=CurrentStock, H〜T=週1〜13, U=Total）:
    名前付き範囲`BaseWeek`へ統一しました。
 3. **Firm/Forecastの色分け**: Firm(1〜4週目)は赤系（背景`FFC1C1`・文字`C00000`）、
    Forecast(5〜13週目)は緑系（背景`EBF1DE`・文字`006100`）で、発注数量セルを塗り分けます。
-4. **SafetyStock/CurrentStock(F/G列)の印刷対策**: 従来は列を非表示にすることで印刷対象
-   から外していましたが、非表示を解除すると印刷にも写ってしまうリスクがありました。
-   列の非表示は解除して常に参照できる状態に戻した上で、印刷範囲（`PageSetup.PrintArea`）
-   自体からF・G列を除外する方式に変更しました（Excelの印刷範囲は複数の矩形を指定できる
-   ため、`$A$1:$E$n,$H$1:$U$n`のように非表示に頼らず狙った列だけ除外できます）。
+4. **SafetyStock/CurrentStock(当時F/G列)の印刷対策【のちに5.で対応不要に】**: 従来は列を
+   非表示にすることで印刷対象から外していましたが、非表示を解除すると印刷にも写って
+   しまうリスクがありました。そこで列の非表示は解除して常に参照できる状態に戻した上で、
+   印刷範囲（`PageSetup.PrintArea`）自体からF・G列を除外する方式に変更しました
+   （Excelの印刷範囲は複数の矩形を指定できるため、`$A$1:$E$n,$H$1:$U$n`のように
+   非表示に頼らず狙った列だけ除外できます）。
+
+5. **SafetyStock/CurrentStock列そのものの削除【重要・上記4.を上書き】**: `PO_Draft_*`は
+   仕入先（TTAF）へ送付するシートであり、自社の在庫量（SafetyStock/CurrentStock）を
+   仕入先に開示する必要はありません。上記4.のように印刷範囲から除外するだけでは、
+   発行後のファイル自体には数式付きでF・G列がそのまま残ってしまい、列の再表示一つで
+   見えてしまうため不十分でした。そのため、F・G列（SafetyStock/CurrentStock）は
+   印刷範囲から除外するのではなく、**列ごと完全に削除**する方針に変更しています
+   （`build_soh.py`側は`PO_FIRST_WEEK_COL`を8(H)→6(F)、`PO_BASEWEEK_COL`を16(P)→14(N)に
+   変更して対応。既存の本番ファイルに対しては一度だけ実行する移行マクロ
+   `RemovePODraftStockColumns`で列を物理削除します）。レターヘッド右側の
+   Order Date/Issue Month/Firm Month/Revision/基準週(WeekIndex)のラベル列・値列も、
+   この前詰めに合わせてL列（ラベル）・N列（値、N〜P結合）に移動しました。
 
 **`SetupPODraftLetterheadLayout`の動作**: 一度だけ実行する移行用マクロです。
 ①`PO_Draft_Hazardous`自身の上記の不具合を修正し、②`PO_Draft_Chemical`・
@@ -655,8 +670,9 @@ Solutionが増えた場合だけ、`Control_Panel`シートの`T_SolutionNames`�
 - `Material_Detail`の各材料ブロックの「Order(発注予定,kg)」行（黄色の入力セル）に、発注したい
   週の列へkg数量を入力してください。
 - `PO_Draft_*`は、入力された値を材料コード・週で突き合わせてそのまま転記するだけです（自動計算は
-  一切しません）。基準在庫下限・現在庫（`SafetyStock`・`CurrentStock`列）はこれまで通り参考情報
-  として表示されます。
+  一切しません）。`PO_Draft_*`は仕入先（TTAF）へ送付するシートのため、自社の在庫量を開示しない
+  よう`SafetyStock`・`CurrentStock`列は削除済みです（在庫量を確認したい場合はDashboard／
+  Material_Detailを参照してください）。
 - 内部的には、Material_Detailの「Order」行にだけ材料コードを複製した見えない列（週データ列の
   2つ右）を使い、`PO_Draft_*`側がその列を`MATCH`で特定して`INDEX`で値を拾っています。ブロックの
   長さ（使用中間体の数）は材料ごとに違いますが、この仕組みにより行番号のズレを気にせず正しく

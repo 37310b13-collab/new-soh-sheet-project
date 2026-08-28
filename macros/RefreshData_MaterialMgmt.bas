@@ -991,25 +991,18 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     sh.Rows(lastRow).Copy
     sh.Rows(newRow).PasteSpecial xlPasteFormats
     Application.CutCopyMode = False
-    Const PO_FIRST_WEEK_COL_ As Long = 8
+    Const PO_FIRST_WEEK_COL_ As Long = 6
     Const PO_N_WEEKS_ As Long = 13
     If sh.Range(sh.Cells(newRow, PO_FIRST_WEEK_COL_), sh.Cells(newRow, PO_FIRST_WEEK_COL_ + PO_N_WEEKS_ - 1)).MergeCells Then
         sh.Range(sh.Cells(newRow, PO_FIRST_WEEK_COL_), sh.Cells(newRow, PO_FIRST_WEEK_COL_ + PO_N_WEEKS_ - 1)).UnMerge
     End If
 
-    ' The row position within Grid_Stock is dynamically looked up every
-    ' time via MATCH (so the formula automatically keeps following the
-    ' correct row even if adding/removing materials shifts row positions).
-    Dim growMatch As String: growMatch = "MATCH($D" & newRow & ",Grid_Stock[Part Name],0)"
-
     sh.Cells(newRow, 2).Value = "=IFERROR(INDEX(M_RawMaterials[Description],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),"""")"
     sh.Cells(newRow, 3).Value = ttafCodeVal
     sh.Cells(newRow, 4).Value = rmCode
     sh.Cells(newRow, 5).Value = "kg"
-    sh.Cells(newRow, 6).Value = "=IFERROR(INDEX(M_RawMaterials[SafetyStockMin],MATCH(""" & rmCode & """,M_RawMaterials[Part Name],0)),0)"
-    sh.Cells(newRow, 7).Value = "=INDEX(Grid_Stock[#Data]," & growMatch & "," & bwRefExpr & ")"
 
-    Const PO_FIRST_WEEK_COL As Long = 8
+    Const PO_FIRST_WEEK_COL As Long = 6
     Const PO_N_WEEKS As Long = 13
     Dim w As Long, col As Long
     ' The order quantity is not auto-calculated from Grid_Stock - it's

@@ -45,6 +45,11 @@ Option Explicit
 '       exclude them from the print area itself (Excel's print area can
 '       specify multiple rectangles, so specific columns can be excluded
 '       without relying on hiding).
+'       [Superseded] SafetyStock/CurrentStock were later deleted outright
+'       (not just hidden/excluded from print) since PO_Draft is sent to the
+'       supplier and our own stock levels shouldn't be disclosed to them -
+'       see RemovePODraftStockColumns. PO_FIRST_WEEK_COL/PO_BASEWEEK_ADDR/
+'       PO_REVISION_ADDR below reflect the current (post-deletion) layout.
 '
 '   When duplicating PO_Draft_Chemical/_Substrate_JPN_CHN/_Substrate_Poland
 '   in (2):
@@ -72,11 +77,11 @@ Private Const PO_HDR_ROW As Long = 26        ' last header row (data rows start 
 Private Const PO_DATA_START_ROW As Long = 27 ' Corresponds to build_soh.py's PO_DATA_START_ROW
 Private Const PO_TITLE_ROW As Long = 17      ' Corresponds to build_soh.py's PO_TITLE_ROW (rows 17-18 merged)
 Private Const PO_MONTHYEAR_ROW As Long = 20  ' Corresponds to build_soh.py's PO_HDR_MONTHYEAR_ROW
-Private Const PO_FIRST_WEEK_COL As Long = 8  ' column H
+Private Const PO_FIRST_WEEK_COL As Long = 6  ' column F (SafetyStock/CurrentStock columns F/G were deleted - see RemovePODraftStockColumns)
 Private Const PO_N_WEEKS As Long = 13
-Private Const PO_BASEWEEK_ADDR As String = "$P$13"
+Private Const PO_BASEWEEK_ADDR As String = "$N$13"
 Private Const PO_BASEWEEK_ROW As Long = 13   ' the row number of PO_BASEWEEK_ADDR (used to exclude it from the print area)
-Private Const PO_REVISION_ADDR As String = "$P$11"
+Private Const PO_REVISION_ADDR As String = "$N$11"
 
 Sub SetupPODraftLetterheadLayout()
     On Error GoTo ErrHandler
@@ -229,10 +234,6 @@ Private Function FixHazardousPODraftLayout(thisWb As Workbook) As Boolean
     ' number format is also set to hide 0.
     Call ApplyPODraftZeroHiddenFormatting(sh)
 
-    ' ---- Unhide SafetyStock/CurrentStock (columns F/G) and exclude them from the print area ----
-    sh.Columns("F:G").Hidden = False
-    sh.Columns("F").ColumnWidth = 12
-    sh.Columns("G").ColumnWidth = 12
     Dim printLastRow As Long
     printLastRow = IIf(lastRow >= PO_DATA_START_ROW, lastRow, PO_HDR_ROW)
     Call SetPODraftPrintArea(sh, printLastRow)
@@ -440,14 +441,16 @@ Private Sub ApplyPODraftZeroHiddenFormatting(sh As Worksheet)
     fc2.Font.Color = RGB(0, 97, 0)           ' dark green: 006100
 End Sub
 
-' Sets the print area for a PO_Draft_* sheet. In addition to
-' SafetyStock/CurrentStock (columns F/G), the base-week (WeekIndex) input
-' field (columns N/P of row PO_BASEWEEK_ROW) is also an internal-use cell
-' not needed when printing/issuing the order form, so the H:U column print
-' area is split around that row to exclude it.
+' Sets the print area for a PO_Draft_* sheet. The base-week (WeekIndex)
+' input field (row PO_BASEWEEK_ROW) is an internal-use cell not needed when
+' printing/issuing the order form, so the print area is split into two
+' blocks (above/below that row) to exclude just that one row. (SafetyStock/
+' CurrentStock no longer exist as separate columns - see
+' RemovePODraftStockColumns - so there is no column-range gap to exclude
+' any more; the print area now runs the full width from column A.)
 Private Sub SetPODraftPrintArea(sh As Worksheet, lastRow As Long)
+    Dim printColEnd As String: printColEnd = ColLetter(PO_FIRST_WEEK_COL + PO_N_WEEKS)  ' Total column
     sh.PageSetup.PrintArea = _
-        "$A$1:$E$" & lastRow & "," & _
-        "$H$1:$U$" & (PO_BASEWEEK_ROW - 1) & "," & _
-        "$H$" & (PO_BASEWEEK_ROW + 1) & ":$U$" & lastRow
+        "$A$1:$" & printColEnd & "$" & (PO_BASEWEEK_ROW - 1) & "," & _
+        "$A$" & (PO_BASEWEEK_ROW + 1) & ":$" & printColEnd & "$" & lastRow
 End Sub
