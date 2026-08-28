@@ -174,13 +174,13 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | Material_Detailで手入力したOrderの値を、材料コード・週で突き合わせてそのまま転記（自動計算はしない） |
 | T_Shipments | 入力（RefreshShipmentsでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
-| CSAstock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`CSAstock_Log`が更新されると自動反映。手入力不可 |
-| TTAFstock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`TTAFstock_Log`が更新されると自動反映。手入力不可 |
+| CSAstock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示（B列=Description、材料名をMATCHでその場表示。C列以降が週1〜）。RefreshSelfStockで裏の`CSAstock_Log`が更新されると自動反映。手入力不可 |
+| TTAFstock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示（B列=Description、C列以降が週1〜）。RefreshTTAFStockで裏の`TTAFstock_Log`が更新されると自動反映。手入力不可 |
 | M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code・FixedWeeklyConsumption(5.9章参照) |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
-| Production_Plan | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
+| Production_Plan | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新（B列以降が週1〜。中間体コードのみでDescription列は無し） |
 | (非表示) CSAstock_Log / TTAFstock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
-| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / WeeklyConsumption / Incoming / Stock / TheoreticalStock | 内部計算 | 通常は開く必要なし。TheoreticalStockはDashboardの「理論在庫」行の元になる、自社/TTAF実績を考慮しないロールフォワード専用シート。ただし月が変わる最初の週だけは前週の実在庫(Stock)を起点に再同期するため、誤差は最大でも1か月分しか蓄積しない |
+| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / WeeklyConsumption / Incoming / Stock / TheoreticalStock | 内部計算 | 通常は開く必要なし。WeeklyConsumption/Incoming/Stock/TheoreticalStockはB列=Description（材料名をその場表示）、C列以降が週1〜。TheoreticalStockはDashboardの「理論在庫」行の元になる、自社/TTAF実績を考慮しないロールフォワード専用シート。ただし月が変わる最初の週だけは前週の実在庫(Stock)を起点に再同期するため、誤差は最大でも1か月分しか蓄積しない |
 
 ## 4. 着荷予定(CSA Order)の入力方法
 
@@ -326,9 +326,10 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 
 **選択週へのウィンドウ自動スクロール（`JumpToSelectedWeek`、任意・要手動設定）**: 以前の
 「選択週の値を別列に複製して常時表示する」方式（ピン留め列）は廃止し、`Dashboard`の`実績週`列
-・`Material_Detail`の`項目`列・`CSAstock`/`TTAFstock`の`Part Name`列のすぐ右に、複製では
-ない本物の週データ列（週1・週2…）をそのまま並べる構成にしています。C1に週No(`W23`等)を入力
-したときにその該当週列が固定ペインの直後にくるよう自動でウィンドウを横スクロールしたい場合は、
+・`Material_Detail`の`項目`列・`CSAstock`/`TTAFstock`の`Description`列のすぐ右に、複製では
+ない本物の週データ列（週1・週2…）をそのまま並べる構成にしています。週No(`W23`等)の入力欄
+（`Dashboard`/`Material_Detail`はC1、`CSAstock`/`TTAFstock`はD1）に入力したときにその
+該当週列が固定ペインの直後にくるよう自動でウィンドウを横スクロールしたい場合は、
 以下を一度だけ設定してください（設定しない場合も、該当週の列は太枠でハイライトされるため、
 手動でスクロールして探すことは可能です）。
 
@@ -352,8 +353,8 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
    （2つとも同じ内容です）
    ```vba
    Private Sub Worksheet_Change(ByVal Target As Range)
-       If Intersect(Target, Me.Range("C1")) Is Nothing Then Exit Sub
-       Call JumpToSelectedWeek(Me, "F1", 2)   ' 2 = B列(週データ開始列)
+       If Intersect(Target, Me.Range("D1")) Is Nothing Then Exit Sub
+       Call JumpToSelectedWeek(Me, "G1", 3)   ' 3 = C列(週データ開始列。B列はDescription)
    End Sub
    ```
 

@@ -268,15 +268,15 @@ Sub FixTheoreticalStockMonthlyReset()
     Dim firstDataRow As Long: firstDataRow = dataRange.Row
     Dim firstDataCol As Long: firstDataCol = dataRange.Column
     Dim nRows As Long: nRows = dataRange.Rows.Count
-    Dim nCols As Long: nCols = dataRange.Columns.Count  ' column 1=Part Name, column 2=Week1, column 3=Week2...
+    Dim nCols As Long: nCols = dataRange.Columns.Count  ' column 1=Part Name, column 2=Description, column 3=Week1, column 4=Week2...
 
     Dim allFormulas As Variant: allFormulas = dataRange.Formula
 
     Dim r As Long, c As Long, fixedCells As Long: fixedCells = 0
     For r = 1 To nRows
         Dim actualRow As Long: actualRow = firstDataRow + r - 1
-        For c = 3 To nCols  ' column 2 (week 1) starts from T_OpeningStock and is excluded
-            Dim w As Long: w = c - 1
+        For c = 4 To nCols  ' column 3 (week 1) starts from T_OpeningStock and is excluded
+            Dim w As Long: w = c - 2
             Dim curCol As String: curCol = ColLetter(firstDataCol + c - 1)
             Dim prevCol As String: prevCol = ColLetter(firstDataCol + c - 2)
             Dim monthChanged As String

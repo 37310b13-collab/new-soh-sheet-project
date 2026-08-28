@@ -45,14 +45,16 @@ Option Explicit
 '
 ' [Caution] Back up first and test on a copy - not the live production
 ' file directly. VBA code itself is NOT rewritten by this rename (only
-' formulas/Table structured-references are) - the RefreshData_*.bas
-' modules in this repository already use the new names in their source,
-' so re-import all of them (VBAProject -> remove the old modules -> File
-' -> Import File for each updated .bas) only AFTER running this macro and
-' confirming the result looks correct; importing them first would make
-' AddMaterial/RefreshBOM/etc. look for sheets/tables that don't exist yet
-' under the new names. After running, spot-check a few Stock/
-' TheoreticalStock/Dashboard/PO_Draft_* values (the numbers should be
+' formulas/Table structured-references are). [Run order] After this macro,
+' run AddDescriptionColumns.bas next (it looks for the sheets under their
+' NEW names) - only THEN re-import the updated RefreshData_*.bas modules
+' (VBAProject -> remove the old modules -> File -> Import File for each
+' updated .bas); they already assume both this rename AND the Description
+' column migration are done (e.g. AddMaterial writes into the columns that
+' exist only after AddDescriptionColumns has run). Importing them too early
+' would make AddMaterial/RefreshBOM/etc. write into the wrong sheets/
+' columns or fail to find them. After running this macro, spot-check a few
+' Stock/TheoreticalStock/Dashboard/PO_Draft_* values (the numbers should be
 ' completely unchanged - only names changed) before saving. Delete this
 ' module once confirmed - it's one-time-use.
 '
@@ -84,7 +86,8 @@ Sub RenameProductionAndStockSheets()
 
     MsgBox "Sheet/Table rename complete." & vbCrLf & vbCrLf & renameLog & vbCrLf & _
            "Please spot-check a few Stock/TheoreticalStock/Dashboard/PO_Draft_* values (numbers " & _
-           "should be unchanged), then save the file BEFORE importing the updated VBA modules.", vbInformation
+           "should be unchanged), then save. Next, run AddDescriptionColumns, and only after that " & _
+           "import the updated VBA modules.", vbInformation
     Exit Sub
 
 ErrHandler:

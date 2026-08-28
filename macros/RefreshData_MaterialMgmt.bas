@@ -267,17 +267,23 @@ Sub AddMaterial()
 
     Dim grow As Long: grow = reqRow.Range.Row  ' the actual sheet row number for WeeklyConsumption/Incoming/Stock/TheoreticalStock (same across all 4 tables)
 
+    Dim descFormula As String
+    descFormula = "=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A" & grow & ",M_RawMaterials[Part Name],0)),"""")"
     reqRow.Range.Cells(1, 1).Value = rmCode
+    reqRow.Range.Cells(1, 2).Value = descFormula
     inRow.Range.Cells(1, 1).Value = rmCode
+    inRow.Range.Cells(1, 2).Value = descFormula
     stRow.Range.Cells(1, 1).Value = rmCode
+    stRow.Range.Cells(1, 2).Value = descFormula
     theoRow.Range.Cells(1, 1).Value = rmCode
+    theoRow.Range.Cells(1, 2).Value = descFormula
     osRow.Range.Cells(1, 1).Value = rmCode
     osRow.Range.Cells(1, 2).Value = 0
     osRow.Range.Cells(1, 3).Value = Date
 
     Dim w As Long, col As Long, cl As String
     For w = 1 To nWeeks
-        col = 1 + w
+        col = 2 + w
         ' In addition to BOM-based consumption, simply adds
         ' M_RawMaterials' FixedWeeklyConsumption (the same formula as
         ' build_soh.py's WeeklyConsumption generation logic).
@@ -306,7 +312,7 @@ Sub AddMaterial()
     Dim priorExpr As String, normalExpr As String
     Dim hasSelf As String, selfVal As String, hasTTAF As String, ttafVal As String
     For w = 1 To nWeeks
-        col = 1 + w
+        col = 2 + w
         cl = ColLetter(col)
         hasSelf = "('CSAstock'!" & cl & ssRow & "<>"""")"
         selfVal = "'CSAstock'!" & cl & ssRow
@@ -694,9 +700,11 @@ Private Function InsertOrAppendStockGridRow(sh As Worksheet, rmCode As String, n
     End If
 
     sh.Cells(targetRow, 1).Value = rmCode
+    sh.Cells(targetRow, 2).Value = _
+        "=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A" & targetRow & ",M_RawMaterials[Part Name],0)),"""")"
     Dim w As Long, col As Long
     For w = 1 To nWeeks
-        col = 1 + w
+        col = 2 + w
         sh.Cells(targetRow, col).Value = _
             "=IF(COUNTIFS(" & logTableName & "[Part Name],$A" & targetRow & "," & logTableName & "[WeekIndex]," & w & ")=0,"""",SUMIFS(" & _
             logTableName & "[" & qtyColName & "]," & logTableName & "[Part Name],$A" & targetRow & "," & logTableName & "[WeekIndex]," & w & "))"
@@ -743,11 +751,11 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
         formatSrcTheo = lastRow - 1
         formatSrcActual = lastRow
     End If
-    Dim lastWeekCol As String: lastWeekCol = ColLetter(1 + nWeeks)
+    Dim lastWeekCol As String: lastWeekCol = ColLetter(2 + nWeeks)
 
-    Dim ssSelfRng As String: ssSelfRng = "'CSAstock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
-    Dim ssTTAFRng As String: ssTTAFRng = "'TTAFstock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
-    Dim ssLabelRng As String: ssLabelRng = "'CSAstock'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
+    Dim ssSelfRng As String: ssSelfRng = "'CSAstock'!$C$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
+    Dim ssTTAFRng As String: ssTTAFRng = "'TTAFstock'!$C$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
+    Dim ssLabelRng As String: ssLabelRng = "'CSAstock'!$C$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
     ' Variance (kg) = Actual Stock (Stock) - Theoretical Stock
     ' (TheoreticalStock). Since theoretical stock resets at the start
     ' of each month, looking at the last week of the displayed period (2
@@ -755,7 +763,7 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     ' using the same reference as the Actual Week column (column 8 - the
     ' most recent week that has self-stock actuals entered) (the same
     ' formula as build_soh.py).
-    Dim gsLastCol As String: gsLastCol = ColLetter(1 + nWeeks)
+    Dim gsLastCol As String: gsLastCol = ColLetter(2 + nWeeks)
     Dim lastActualColIdx As String
     lastActualColIdx = "LOOKUP(2,1/(" & ssSelfRng & "<>""""),COLUMN(" & ssSelfRng & "))"
     Dim diffFormula As String
@@ -788,10 +796,10 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     Dim w As Long, col As Long
     For w = 1 To nWeeks
         col = 10 + w  ' Dashboard's week-data start column = 11 (column K)
-        sh.Cells(theoRow, col).Value = "='TheoreticalStock'!" & ColLetter(1 + w) & grow
+        sh.Cells(theoRow, col).Value = "='TheoreticalStock'!" & ColLetter(2 + w) & grow
         sh.Cells(theoRow, col).Font.Italic = True
         sh.Cells(theoRow, col).Font.Color = RGB(128, 128, 128)
-        sh.Cells(actualRow, col).Value = "='Stock'!" & ColLetter(1 + w) & grow
+        sh.Cells(actualRow, col).Value = "='Stock'!" & ColLetter(2 + w) & grow
     Next w
 
     ' Format copy: when adding at the end, duplicate from the immediately
@@ -869,21 +877,21 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Font.Bold = True
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='WeeklyConsumption'!" & ColLetter(1 + w) & grow
+        sh.Cells(r, col).Value = "='WeeklyConsumption'!" & ColLetter(2 + w) & grow
     Next w
 
     r = r + 1
     sh.Cells(r, 2).Value = "TTAF Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='TTAFstock'!" & ColLetter(1 + w) & ssRow
+        sh.Cells(r, col).Value = "='TTAFstock'!" & ColLetter(2 + w) & ssRow
     Next w
 
     r = r + 1
     sh.Cells(r, 2).Value = "Self Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='CSAstock'!" & ColLetter(1 + w) & ssRow
+        sh.Cells(r, col).Value = "='CSAstock'!" & ColLetter(2 + w) & ssRow
     Next w
 
     ' Order row: the field where the planned order quantity is entered
@@ -926,7 +934,7 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Font.Bold = True
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='Stock'!" & ColLetter(1 + w) & grow
+        sh.Cells(r, col).Value = "='Stock'!" & ColLetter(2 + w) & grow
     Next w
 
     ' Copy borders/formatting: when adding at the end, duplicate from the

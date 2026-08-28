@@ -141,8 +141,9 @@ End Sub
 ' between sheets, Stock, etc.
 ' Called from each sheet's own Worksheet_Change with the target sheet, the
 ' resolved week-number cell (F1), and the week-data start column (9 =
-' column I for Dashboard, 4 = column D for Material_Detail, 2 = column B
-' for CSAstock/TTAFstock).
+' column I for Dashboard, 4 = column D for Material_Detail, 3 = column C
+' for CSAstock/TTAFstock - column B on those two is now the Description
+' column, so week1 sits one column further right than before).
 Public Sub JumpToSelectedWeek(sh As Worksheet, weekIndexCell As String, weekStartCol As Long)
     Dim wIdx As Variant
     wIdx = sh.Range(weekIndexCell).Value

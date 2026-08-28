@@ -309,6 +309,12 @@ ss_row_map = {r["RM_Code"]: i + SS_DATA_START_ROW for i, r in enumerate(rm_maste
 def week_col(week_idx):
     return get_column_letter(1 + week_idx)  # col A = label, col B = week1
 
+def stock_week_col(week_idx):
+    # WeeklyConsumption/Incoming/Stock/TheoreticalStock/CSAstock/TTAFstockの6シート専用。
+    # col A = Part Name, col B = Description, col C = week1, ... (Production_Planは
+    # Description列を持たないためweek_col()のまま、B列=week1)。
+    return get_column_letter(2 + week_idx)
+
 # ============================================================ Production_Plan (production plan, INPUT)
 ws = wb.create_sheet("Production_Plan")
 header = ["Intermediate"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
@@ -514,14 +520,18 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     # ---- 目に見えるグリッド(材料×週。すべて数式で_Logシートから毎回計算、値は保存しない) ----
     ws_grid = wb.create_sheet(name)
 
-    # 選択週の入力欄(C1)。Dashboard/Material_Detailと全く同じ仕組み(SUMPRODUCTで
-    # 「現在年×入力した週No」に一致するWeekIndexを求める)。VBAのJumpToSelectedWeekを
-    # 導入していれば、入力するとその週列のすぐ右(B列側)に自動でスクロールする。
+    # 選択週の入力欄(D1)。Description列(B列)追加に伴い、この行1の検索パネル(元は
+    # C1入力欄/D1メッセージ/E1矢印ラベル/F1隠しWeekIndex式)も列挿入と同じ形で1列ずつ
+    # 右へ詰めてある(本番ファイルへの移行時、Description列を実際にExcelの列挿入操作で
+    # 追加する場合、この行1のセルも自動的に右へ押し出されるため、新規生成分もそれに
+    # 合わせてある)。Dashboard/Material_Detailと全く同じ仕組み(SUMPRODUCTで「現在年×
+    # 入力した週No」に一致するWeekIndexを求める)。VBAのJumpToSelectedWeekを導入して
+    # いれば、入力するとその週列のすぐ右(C列側)に自動でスクロールする。
     ws_grid["A1"] = "Enter week to jump to (e.g. W23; searched against the current year)"
     ws_grid["A1"].font = Font(bold=True)
-    ws_grid["C1"] = ""
-    ws_grid["C1"].fill = INPUT_FILL
-    ws_grid["C1"].font = Font(bold=True, size=12)
+    ws_grid["D1"] = ""
+    ws_grid["D1"].fill = INPUT_FILL
+    ws_grid["D1"].font = Font(bold=True, size=12)
     _ss_cal_first = CAL_HEADER_ROW + 1
     _ss_cal_last = CAL_HEADER_ROW + N_WEEKS
     _ss_cal_year_rng = f"Cal_Weeks!$C${_ss_cal_first}:$C${_ss_cal_last}"
@@ -529,22 +539,22 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     _ss_cal_weekindex_rng = f"Cal_Weeks!$A${_ss_cal_first}:$A${_ss_cal_last}"
     _ss_cal_label_rng = f"Cal_Weeks!$E${_ss_cal_first}:$E${_ss_cal_last}"
     _ss_wk_match = (f"({_ss_cal_year_rng}=Cal_Weeks!$B$1)*"
-                    f'({_ss_cal_weekofyear_rng}=VALUE(SUBSTITUTE(UPPER(TRIM($C$1)),"W","")))')
-    ws_grid["F1"] = (
+                    f'({_ss_cal_weekofyear_rng}=VALUE(SUBSTITUTE(UPPER(TRIM($D$1)),"W","")))')
+    ws_grid["G1"] = (
         f'=IFERROR(IF(SUMPRODUCT({_ss_wk_match})=0,"",SUMPRODUCT({_ss_wk_match}*({_ss_cal_weekindex_rng}))),"")'
     )
+    ws_grid["G1"].font = Font(size=8, color="808080")
+    ws_grid["F1"] = "→WeekIndex"
     ws_grid["F1"].font = Font(size=8, color="808080")
-    ws_grid["E1"] = "→WeekIndex"
-    ws_grid["E1"].font = Font(size=8, color="808080")
-    ws_grid["D1"] = (
-        f'=IF($C$1="","Please enter a week number (e.g. W23)",'
-        f'IF($F$1="","Week not found (check the week number against this year)",'
-        f'INDEX({_ss_cal_label_rng},$F$1)&" is the matching week (auto-scrolls if VBA is installed)"))'
+    ws_grid["E1"] = (
+        f'=IF($D$1="","Please enter a week number (e.g. W23)",'
+        f'IF($G$1="","Week not found (check the week number against this year)",'
+        f'INDEX({_ss_cal_label_rng},$G$1)&" is the matching week (auto-scrolls if VBA is installed)"))'
     )
-    ws_grid["D1"].font = Font(bold=True, color="0563C1")
+    ws_grid["E1"].font = Font(bold=True, color="0563C1")
 
     for w in range(1, N_WEEKS + 1):
-        col = 1 + w
+        col = 2 + w
         cal_row = CAL_HEADER_ROW + w
         if w == 1:
             my_formula = f"='Cal_Weeks'!G{cal_row}"
@@ -560,41 +570,46 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
         ws_grid.cell(row=SS_WEEKNO_ROW, column=col, value=f"='Cal_Weeks'!D{cal_row}")
         ws_grid.cell(row=SS_TABLE_ROW, column=col, value=week_labels[w])
     for r in (SS_MONTHYEAR_ROW, SS_DATE_ROW, SS_WEEKNO_ROW):
-        for c in range(1, N_WEEKS + 2):
+        for c in range(1, N_WEEKS + 3):
             ws_grid.cell(row=r, column=c).fill = PatternFill("solid", fgColor="D9E1F2")
             ws_grid.cell(row=r, column=c).font = Font(bold=(r == SS_MONTHYEAR_ROW))
     ws_grid.cell(row=SS_TABLE_ROW, column=1, value="Part Name")
+    ws_grid.cell(row=SS_TABLE_ROW, column=2, value="Description")
 
     for i, r in enumerate(rm_master):
         rr = SS_DATA_START_ROW + i
         rm = r["RM_Code"]
         ws_grid.cell(row=rr, column=1, value=rm)
+        ws_grid.cell(row=rr, column=2, value=(
+            f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")'
+        ))
         for w in range(1, N_WEEKS + 1):
             # 記録が無い週は(SUMIFSの0ではなく)空欄"" にする。0という実績が記録された週と
             # 「記録自体が無い」週を区別できるようにするため(Stockの手動棚卸>実績>
             # ロールフォワードという優先順位判定が、記録の有無を見て動いているため)。
             has_record = f"COUNTIFS({log_name}[Part Name],$A{rr},{log_name}[WeekIndex],{w})"
-            ws_grid.cell(row=rr, column=1 + w, value=(
+            ws_grid.cell(row=rr, column=2 + w, value=(
                 f'=IF({has_record}=0,"",SUMIFS({log_name}[{qty_col}],{log_name}[Part Name],$A{rr},'
                 f'{log_name}[WeekIndex],{w}))'
             ))
     n_last_row = SS_DATA_START_ROW + len(rm_master) - 1
-    style_header(ws_grid, N_WEEKS + 1, row=SS_TABLE_ROW)
+    style_header(ws_grid, N_WEEKS + 2, row=SS_TABLE_ROW)
     # ヘッダーが数式/複数行(月-年・日付・週No)のため、Dashboardと同様にExcelのテーブル機能は
     # 使わず、罫線・縞模様の手動書式で「テーブルらしい」見た目にする。
     thin_ss = Side(style="thin", color="BFBFBF")
     border_ss = Border(left=thin_ss, right=thin_ss, top=thin_ss, bottom=thin_ss)
     for rr2 in range(SS_TABLE_ROW, n_last_row + 1):
         stripe = (rr2 - SS_TABLE_ROW) % 2 == 1
-        for c in range(1, N_WEEKS + 2):
+        for c in range(1, N_WEEKS + 3):
             cell = ws_grid.cell(row=rr2, column=c)
             cell.border = border_ss
             if rr2 > SS_TABLE_ROW and stripe:
                 cell.fill = PatternFill("solid", fgColor="F2F2F2")
     ws_grid.column_dimensions["A"].width = 14
+    ws_grid.column_dimensions["B"].width = 32
     for w in range(1, N_WEEKS + 1):
-        ws_grid.column_dimensions[week_col(w)].width = 9
-    ws_grid.freeze_panes = f"B{SS_DATA_START_ROW}"
+        ws_grid.column_dimensions[stock_week_col(w)].width = 9
+    ws_grid.freeze_panes = f"C{SS_DATA_START_ROW}"
 
     # 選択中の週(F1のWeekIndex)に該当する列を太枠で強調。行数がDashboardと同程度(材料数のみ、
     # Material_Detailのような数千行にはならない)なので、条件付き書式を付けてもパフォーマンス
@@ -602,9 +617,9 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     ss_week_select_border = Border(left=Side(style="thick", color="BF8F00"),
                                     right=Side(style="thick", color="BF8F00"))
     ws_grid.conditional_formatting.add(
-        f"B{SS_TABLE_ROW}:{week_col(N_WEEKS)}{n_last_row}",
+        f"C{SS_TABLE_ROW}:{stock_week_col(N_WEEKS)}{n_last_row}",
         FormulaRule(
-            formula=['(COLUMN()-COLUMN($B$1)+1)=$F$1'],
+            formula=['(COLUMN()-COLUMN($C$1)+1)=$F$1'],
             border=ss_week_select_border,
         )
     )
@@ -629,23 +644,24 @@ ws_st = wb.create_sheet("Stock")
 # 表示し、実際の値(Stock=「実在庫」行)との乖離を確認できるようにするために追加した。
 ws_theo = wb.create_sheet("TheoreticalStock")
 
-header = ["Part Name"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
+header = ["Part Name", "Description"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
 for ws_ in (ws_req, ws_in, ws_st, ws_theo):
     ws_.append(header)
 
 for i, r in enumerate(rm_master):
     rr = i + 2
     rm = r["RM_Code"]
+    desc_formula = f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH($A{rr},M_RawMaterials[Part Name],0)),"")'
     for ws_ in (ws_req, ws_in, ws_st, ws_theo):
-        ws_.append([rm] + [None] * N_WEEKS)
+        ws_.append([rm, desc_formula] + [None] * N_WEEKS)
     for w in range(1, N_WEEKS + 1):
-        cl = week_col(w)
+        cl = stock_week_col(w)
         # M_BOMのうちRM_Code=このRMの行だけを対象に、原単位×その週のバッチ数(Production_PlanRow経由で
         # 週ごとのMATCHをせず直接INDEX)を合計する。Production_Plan内の列位置(w+1列目=Intermediate列の次)
         # は週ごとに固定できるため、MATCHは行位置(PPGridRow, M_BOM側で1回だけ計算済み)のみで済む。
         # BOMベースの消費量に加え、M_RawMaterialsのFixedWeeklyConsumption(Original Towel等、
         # 生産中間体の構成とは無関係に毎週一定量を消費する梱包資材向け)を単純加算する。
-        ws_req.cell(row=rr, column=1 + w).value = (
+        ws_req.cell(row=rr, column=2 + w).value = (
             f"=SUMPRODUCT((M_BOM[Part Name]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
             f"IFERROR(INDEX(Production_Plan[#Data],M_BOM[PPGridRow],{w + 1}),0))"
             f"+IFERROR(INDEX(M_RawMaterials[FixedWeeklyConsumption],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)"
@@ -666,7 +682,7 @@ for i, r in enumerate(rm_master):
         _md_po_val = f"INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{_md_order_match}+1,{w})"
         _md_received = f'ISNUMBER(SEARCH("[DONE]",{_md_po_val}))'
         _shipments_val = f"SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A{rr},T_Shipments[Effective_Week],{w})"
-        ws_in.cell(row=rr, column=1 + w).value = (
+        ws_in.cell(row=rr, column=2 + w).value = (
             f"=IF({_md_has_block},IF({_md_received},0,IFERROR({_md_order_val},0)),{_shipments_val})"
         )
         # CSAstock/TTAFstockは「材料×週」のグリッド形式(直接セル参照)になったため、
@@ -680,7 +696,7 @@ for i, r in enumerate(rm_master):
         if w == 1:
             prior = f'IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
-            prior = f"{week_col(w-1)}{rr}"
+            prior = f"{stock_week_col(w-1)}{rr}"
         # T_Shipments(Incoming)は、TTAF供給材料については「TTAFが外部の仕入先から新しく
         # 仕入れてTTAF倉庫に到着する」実績・予定を表す。これはTTAF倉庫内で場所を移しただけの
         # 動きではなく、純粋に合計在庫へ新規に入ってくる量なので、TTAF供給材料かどうかで
@@ -689,7 +705,7 @@ for i, r in enumerate(rm_master):
         # 優先順位: 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
         # (以前は手動棚卸T_StockCountを最優先する3段階の分岐だったが、自社倉庫のdaily check
         # がそのまま実地棚卸を兼ねているため手動棚卸シート自体を廃止し、2段階に簡略化した)
-        ws_st.cell(row=rr, column=1 + w).value = (
+        ws_st.cell(row=rr, column=2 + w).value = (
             f"=IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal})"
         )
 
@@ -703,19 +719,20 @@ for i, r in enumerate(rm_master):
             theo_prior = f'IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             month_changed = f"INDEX(Cal_Weeks[MonthYearLabel],{w})<>INDEX(Cal_Weeks[MonthYearLabel],{w-1})"
-            theo_prior = f"IF({month_changed},'Stock'!{week_col(w-1)}{rr},{week_col(w-1)}{rr})"
-        ws_theo.cell(row=rr, column=1 + w).value = (
+            theo_prior = f"IF({month_changed},'Stock'!{stock_week_col(w-1)}{rr},{stock_week_col(w-1)}{rr})"
+        ws_theo.cell(row=rr, column=2 + w).value = (
             f"={theo_prior}+'Incoming'!{cl}{rr}-'WeeklyConsumption'!{cl}{rr}"
         )
 
 n = len(rm_master) + 1
 for ws_ in (ws_req, ws_in, ws_st, ws_theo):
-    style_header(ws_, N_WEEKS + 1)
-    add_table(ws_, ws_.title, f"A1:{week_col(N_WEEKS)}{n}", style="TableStyleMedium2")
+    style_header(ws_, N_WEEKS + 2)
+    add_table(ws_, ws_.title, f"A1:{stock_week_col(N_WEEKS)}{n}", style="TableStyleMedium2")
     ws_.column_dimensions["A"].width = 14
+    ws_.column_dimensions["B"].width = 32
     for w in range(1, N_WEEKS + 1):
-        ws_.column_dimensions[week_col(w)].width = 9
-    ws_.freeze_panes = "B2"
+        ws_.column_dimensions[stock_week_col(w)].width = 9
+    ws_.freeze_panes = "C2"
 
 # ============================================================ Material_Detail
 # 「どの材料が何に使われているか」を、材料ごとにブロックで見せるトレーサビリティ表示。
@@ -861,7 +878,7 @@ for _r in rm_master:
     ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         wc = mdetail_week_col(w)
-        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='WeeklyConsumption'!{week_col(w)}{grow}")
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='WeeklyConsumption'!{stock_week_col(w)}{grow}")
 
     # TTAF在庫(実績)/自社在庫(実績)/合計在庫(週末時点) の3行を追加。
     # 合計在庫は「前週在庫-使用量+TTAF+自社+入庫」を再度ここで組み立てるのではなく、
@@ -872,13 +889,13 @@ for _r in rm_master:
     ws.cell(row=row_num, column=2, value="TTAF Stock (Actual, kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f"='TTAFstock'!{week_col(w)}{ss_row}")
+                value=f"='TTAFstock'!{stock_week_col(w)}{ss_row}")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="Self Stock (Actual, kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f"='CSAstock'!{week_col(w)}{ss_row}")
+                value=f"='CSAstock'!{stock_week_col(w)}{ss_row}")
 
     # Order行: 発注予定数量を材料×週で直接手入力する欄(黄色の入力セル)。以前はT_PlannedOrders
     # を参照する数式だったが、PO_Draft側の自動発注計算をやめ手入力に統一したのに合わせて、
@@ -911,7 +928,7 @@ for _r in rm_master:
     ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f"='Stock'!{week_col(w)}{grow}")
+                value=f"='Stock'!{stock_week_col(w)}{grow}")
 
     row_num += 1  # blank separator row
 
@@ -1042,8 +1059,8 @@ for i, r in enumerate(rm_master):
     grow = rm_row[r["RM_Code"]]
     rm = r["RM_Code"]
     ss_row = ss_row_map[r["RM_Code"]]
-    ss_first_col = week_col(1)
-    ss_last_col = week_col(N_WEEKS)
+    ss_first_col = stock_week_col(1)
+    ss_last_col = stock_week_col(N_WEEKS)
     ss_self_rng = f"'CSAstock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
     ss_ttaf_rng = f"'TTAFstock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
     ss_label_rng = f"'CSAstock'!${ss_first_col}${SS_TABLE_ROW}:${ss_last_col}${SS_TABLE_ROW}"
@@ -1052,9 +1069,9 @@ for i, r in enumerate(rm_master):
     # FixTheoreticalStockMonthlyReset参照)、表示期間の最終週(2年後)を見ても常にほぼ0にしか
     # ならず意味が無い。代わりに「実績週」列(H列)と同じ基準(自社在庫実績が入っている
     # 直近の週)の値どうしを比較することで、「今月に入ってからの計画と実績のズレ」を表示する。
-    # CSAstock・Stock・TheoreticalStockは同じweek_col()採番を共有しており
-    # (週1=B列, 週2=C列, ...で全シート共通)、列番号がそのまま使い回せる。
-    gs_last_col = week_col(N_WEEKS)
+    # CSAstock・Stock・TheoreticalStockは同じstock_week_col()採番を共有しており
+    # (週1=C列, 週2=D列, ...で全シート共通。B列はDescription)、列番号がそのまま使い回せる。
+    gs_last_col = stock_week_col(N_WEEKS)
     last_actual_col_idx = f'LOOKUP(2,1/({ss_self_rng}<>""),COLUMN({ss_self_rng}))'
     diff_formula = (
         f"=IFERROR(INDEX('Stock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx})"
@@ -1083,7 +1100,7 @@ for i, r in enumerate(rm_master):
     ws.cell(row=actual_rr, column=DASH_ROW_LABEL_COL).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
-        gs_col = week_col(w)
+        gs_col = stock_week_col(w)
         ws.cell(row=theo_rr, column=col, value=f"='TheoreticalStock'!{gs_col}{grow}")
         ws.cell(row=theo_rr, column=col).font = Font(italic=True, color="808080")
         ws.cell(row=actual_rr, column=col, value=f"='Stock'!{gs_col}{grow}")
