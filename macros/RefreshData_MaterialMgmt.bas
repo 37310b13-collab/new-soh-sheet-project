@@ -13,9 +13,9 @@ Option Explicit
 '                 system. Entering the Part Name (RM_Code), Description,
 '                 Supplier, Category, and TTAF_Code in sequence via
 '                 InputBox adds the necessary rows in bulk to the bottom
-'                 of M_RawMaterials, Grid_Requirement, Grid_Incoming,
-'                 Grid_Stock, Grid_TheoreticalStock, T_OpeningStock,
-'                 T_CSAstocks, T_TTAFStock, Dashboard, Material_Detail,
+'                 of M_RawMaterials, WeeklyConsumption, Incoming,
+'                 Stock, TheoreticalStock, T_OpeningStock,
+'                 CSAstock, TTAFstock, Dashboard, Material_Detail,
 '                 and the matching PO_Draft_* sheet. Right after adding,
 '                 since there's no usage history in M_BOM yet, its block
 '                 on Material_Detail is a mini block with no intermediate
@@ -28,13 +28,13 @@ Option Explicit
 '   RemoveMaterial : Removes a material no longer in use from the system.
 '                 Entering the Part Name (RM_Code) via InputBox deletes the
 '                 matching row from every sheet AddMaterial adds to. Data
-'                 in T_Shipments, T_CSAstocks_Log/
-'                 T_TTAFStock_Log, and M_BOM is not deleted (kept as
+'                 in T_Shipments, CSAstock_Log/
+'                 TTAFstock_Log, and M_BOM is not deleted (kept as
 '                 history - adding the same Part Name again with
 '                 AddMaterial automatically reconnects it).
 '   RemoveIntermediate : Removes a discontinued intermediate (a finished
 '                 product code) from the system. Entering the intermediate
-'                 name via InputBox deletes the matching rows from PP_Grid
+'                 name via InputBox deletes the matching rows from Production_Plan
 '                 and M_BOM, and the matching breakdown rows on
 '                 Material_Detail (No. of batches / Usage (kg), from every
 '                 material block that uses this intermediate). Raw
@@ -43,7 +43,7 @@ Option Explicit
 '                 deleted.
 '                 (Note) The "add" side for intermediates is already
 '                 automated. RefreshWeeklyBatches/RefreshBOM automatically
-'                 add rows to PP_Grid/M_BOM/Material_Detail every time they
+'                 add rows to Production_Plan/M_BOM/Material_Detail every time they
 '                 find a new intermediate in the production plan/usage
 '                 rate table, so a dedicated "AddIntermediate" macro isn't
 '                 needed.
@@ -53,10 +53,10 @@ Option Explicit
 ' inserting in the middle carries a much larger risk of shifting existing
 ' rows.
 '
-' [A note on safety (RemoveIntermediate)] Deleting rows from PP_Grid/M_BOM
+' [A note on safety (RemoveIntermediate)] Deleting rows from Production_Plan/M_BOM
 ' does not affect the calculations of other intermediates or other
-' materials. The reason: every formula on Grid_Requirement/Material_Detail
-' that references PP_Grid/M_BOM is built with MATCH/structured references
+' materials. The reason: every formula on WeeklyConsumption/Material_Detail
+' that references Production_Plan/M_BOM is built with MATCH/structured references
 ' (the TableName[ColumnName] form), never a hard-coded row number (MATCH
 ' recalculates the new row position every time after a deletion, and
 ' structured references automatically follow the table's row count after
@@ -247,14 +247,14 @@ Sub AddMaterial()
     newRmRow.Range.Cells(1, 10).Value = 0  ' FixedWeeklyConsumption. Edit it directly in Excel after adding if needed
     newRmRow.Range.Cells(1, 11).Value = originCountryVal
 
-    ' ---- Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock / T_OpeningStock ----
-    Dim reqTbl As ListObject: Set reqTbl = thisWb.Sheets("Grid_Requirement").ListObjects("Grid_Requirement")
-    Dim inTbl As ListObject: Set inTbl = thisWb.Sheets("Grid_Incoming").ListObjects("Grid_Incoming")
-    Dim stTbl As ListObject: Set stTbl = thisWb.Sheets("Grid_Stock").ListObjects("Grid_Stock")
-    Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
+    ' ---- WeeklyConsumption / Incoming / Stock / TheoreticalStock / T_OpeningStock ----
+    Dim reqTbl As ListObject: Set reqTbl = thisWb.Sheets("WeeklyConsumption").ListObjects("WeeklyConsumption")
+    Dim inTbl As ListObject: Set inTbl = thisWb.Sheets("Incoming").ListObjects("Incoming")
+    Dim stTbl As ListObject: Set stTbl = thisWb.Sheets("Stock").ListObjects("Stock")
+    Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("TheoreticalStock").ListObjects("TheoreticalStock")
     Dim osTbl As ListObject: Set osTbl = thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock")
 
-    ' Grid_Requirement/Incoming/Stock/TheoreticalStock must correspond
+    ' WeeklyConsumption/Incoming/Stock/TheoreticalStock must correspond
     ' exactly, row for row, with M_RawMaterials (since grow = the shared
     ' row number they reference directly). Insert with the same insertPos.
     ' T_OpeningStock uses MATCH lookups (order-independent), so it's fine
@@ -265,7 +265,7 @@ Sub AddMaterial()
     Dim theoRow As ListRow: Set theoRow = theoTbl.ListRows.Add(Position:=insertPos)
     Dim osRow As ListRow: Set osRow = osTbl.ListRows.Add
 
-    Dim grow As Long: grow = reqRow.Range.Row  ' the actual sheet row number for Grid_Requirement/Incoming/Stock/TheoreticalStock (same across all 4 tables)
+    Dim grow As Long: grow = reqRow.Range.Row  ' the actual sheet row number for WeeklyConsumption/Incoming/Stock/TheoreticalStock (same across all 4 tables)
 
     reqRow.Range.Cells(1, 1).Value = rmCode
     inRow.Range.Cells(1, 1).Value = rmCode
@@ -280,52 +280,52 @@ Sub AddMaterial()
         col = 1 + w
         ' In addition to BOM-based consumption, simply adds
         ' M_RawMaterials' FixedWeeklyConsumption (the same formula as
-        ' build_soh.py's Grid_Requirement generation logic).
+        ' build_soh.py's WeeklyConsumption generation logic).
         reqRow.Range.Cells(1, col).Value = _
             "=SUMPRODUCT((M_BOM[Part Name]=$A" & grow & ")*M_BOM[RM_Qty_Per_Batch]*" & _
-            "IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow]," & (w + 1) & "),0))" & _
+            "IFERROR(INDEX(Production_Plan[#Data],M_BOM[PPGridRow]," & (w + 1) & "),0))" & _
             "+IFERROR(INDEX(M_RawMaterials[FixedWeeklyConsumption],MATCH($A" & grow & ",M_RawMaterials[Part Name],0)),0)"
         inRow.Range.Cells(1, col).Value = _
             "=SUMIFS(T_Shipments[Confirmed_Qty],T_Shipments[Part Name],$A" & grow & _
             ",T_Shipments[Effective_Week]," & w & ")"
     Next w
 
-    ' ---- T_CSAstocks / T_TTAFStock (a bordered grid, not a Table. Insert
+    ' ---- CSAstock / TTAFstock (a bordered grid, not a Table. Insert
     ' right before anchorRmCode's row so the order matches M_RawMaterials) ----
     Dim ssRowSelf As Long, ssRowTTAF As Long
-    ssRowSelf = InsertOrAppendStockGridRow(thisWb.Sheets("T_CSAstocks"), rmCode, nWeeks, "T_CSAstocks_Log", "Self_Qty", anchorRmCode)
-    ssRowTTAF = InsertOrAppendStockGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, nWeeks, "T_TTAFStock_Log", "TTAF_Qty", anchorRmCode)
+    ssRowSelf = InsertOrAppendStockGridRow(thisWb.Sheets("CSAstock"), rmCode, nWeeks, "CSAstock_Log", "Self_Qty", anchorRmCode)
+    ssRowTTAF = InsertOrAppendStockGridRow(thisWb.Sheets("TTAFstock"), rmCode, nWeeks, "TTAFstock_Log", "TTAF_Qty", anchorRmCode)
     If ssRowSelf <> ssRowTTAF Then
-        MsgBox "Warning: T_CSAstocks and T_TTAFStock's row numbers ended up different (" & ssRowSelf & " / " & ssRowTTAF & ")." & vbCrLf & _
+        MsgBox "Warning: CSAstock and TTAFstock's row numbers ended up different (" & ssRowSelf & " / " & ssRowTTAF & ")." & vbCrLf & _
                "Please check manually. Processing will continue.", vbExclamation
     End If
     Dim ssRow As Long: ssRow = ssRowSelf
 
-    ' Grid_Stock's formula (priority order: sum of self+TTAF actuals >
+    ' Stock's formula (priority order: sum of self+TTAF actuals >
     ' normal roll-forward)
     Dim priorExpr As String, normalExpr As String
     Dim hasSelf As String, selfVal As String, hasTTAF As String, ttafVal As String
     For w = 1 To nWeeks
         col = 1 + w
         cl = ColLetter(col)
-        hasSelf = "('T_CSAstocks'!" & cl & ssRow & "<>"""")"
-        selfVal = "'T_CSAstocks'!" & cl & ssRow
-        hasTTAF = "('T_TTAFStock'!" & cl & ssRow & "<>"""")"
-        ttafVal = "'T_TTAFStock'!" & cl & ssRow
+        hasSelf = "('CSAstock'!" & cl & ssRow & "<>"""")"
+        selfVal = "'CSAstock'!" & cl & ssRow
+        hasTTAF = "('TTAFstock'!" & cl & ssRow & "<>"""")"
+        ttafVal = "'TTAFstock'!" & cl & ssRow
         If w = 1 Then
             priorExpr = "IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A" & grow & ",T_OpeningStock[Part Name],0)),0)"
         Else
             priorExpr = ColLetter(col - 1) & grow
         End If
-        normalExpr = priorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
+        normalExpr = priorExpr & "+'Incoming'!" & cl & grow & "-'WeeklyConsumption'!" & cl & grow
         stRow.Range.Cells(1, col).Value = _
             "=IF((" & hasSelf & ")*(" & hasTTAF & ")>0," & selfVal & "+" & ttafVal & "," & normalExpr & ")"
 
-        ' Grid_TheoreticalStock: never looks at
+        ' TheoreticalStock: never looks at
         ' self/TTAF actuals - a pure "previous week + incoming -
         ' consumption" roll-forward, except that only in the first week a
         ' new month begins does it re-sync from the previous week's actual
-        ' stock (Grid_Stock) (the same formula as
+        ' stock (Stock) (the same formula as
         ' FixTheoreticalStockMonthlyReset/build_soh.py - if this were left
         ' as the old "never reset" formula, a material added via
         ' AddMaterial would behave inconsistently with every other
@@ -336,10 +336,10 @@ Sub AddMaterial()
         Else
             Dim monthChangedExpr As String
             monthChangedExpr = "INDEX(Cal_Weeks[MonthYearLabel]," & w & ")<>INDEX(Cal_Weeks[MonthYearLabel]," & (w - 1) & ")"
-            theoPriorExpr = "IF(" & monthChangedExpr & ",'Grid_Stock'!" & ColLetter(col - 1) & grow & "," & ColLetter(col - 1) & grow & ")"
+            theoPriorExpr = "IF(" & monthChangedExpr & ",'Stock'!" & ColLetter(col - 1) & grow & "," & ColLetter(col - 1) & grow & ")"
         End If
         theoRow.Range.Cells(1, col).Value = _
-            "=" & theoPriorExpr & "+'Grid_Incoming'!" & cl & grow & "-'Grid_Requirement'!" & cl & grow
+            "=" & theoPriorExpr & "+'Incoming'!" & cl & grow & "-'WeeklyConsumption'!" & cl & grow
     Next w
 
     ' ---- Dashboard (a bordered grid, not a Table. Insert right before anchorRmCode's row) ----
@@ -403,8 +403,8 @@ Sub RemoveMaterial()
 
     If MsgBox("This will remove material """ & rmCode & """." & vbCrLf & _
               "The matching row will be deleted from every related sheet (M_RawMaterials," & vbCrLf & _
-              "Grid_Requirement, Grid_Incoming, Grid_Stock, Grid_TheoreticalStock," & vbCrLf & _
-              "T_OpeningStock, T_CSAstocks, T_TTAFStock, Dashboard, Material_Detail," & vbCrLf & _
+              "WeeklyConsumption, Incoming, Stock, TheoreticalStock," & vbCrLf & _
+              "T_OpeningStock, CSAstock, TTAFstock, Dashboard, Material_Detail," & vbCrLf & _
               "and the matching PO_Draft). This cannot be undone." & vbCrLf & vbCrLf & _
               "(Past data for this material remaining in T_Shipments," & vbCrLf & _
               "the actuals logs, and M_BOM will not be deleted)" & vbCrLf & vbCrLf & "Are you sure?", _
@@ -413,14 +413,14 @@ Sub RemoveMaterial()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
-    Call DeleteMatchingTableRow(thisWb.Sheets("Grid_Requirement").ListObjects("Grid_Requirement"), rmCode)
-    Call DeleteMatchingTableRow(thisWb.Sheets("Grid_Incoming").ListObjects("Grid_Incoming"), rmCode)
-    Call DeleteMatchingTableRow(thisWb.Sheets("Grid_Stock").ListObjects("Grid_Stock"), rmCode)
-    Call DeleteMatchingTableRow(thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock"), rmCode)
+    Call DeleteMatchingTableRow(thisWb.Sheets("WeeklyConsumption").ListObjects("WeeklyConsumption"), rmCode)
+    Call DeleteMatchingTableRow(thisWb.Sheets("Incoming").ListObjects("Incoming"), rmCode)
+    Call DeleteMatchingTableRow(thisWb.Sheets("Stock").ListObjects("Stock"), rmCode)
+    Call DeleteMatchingTableRow(thisWb.Sheets("TheoreticalStock").ListObjects("TheoreticalStock"), rmCode)
     Call DeleteMatchingTableRow(thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock"), rmCode)
 
-    Call DeleteMatchingGridRow(thisWb.Sheets("T_CSAstocks"), rmCode, 1)
-    Call DeleteMatchingGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, 1)
+    Call DeleteMatchingGridRow(thisWb.Sheets("CSAstock"), rmCode, 1)
+    Call DeleteMatchingGridRow(thisWb.Sheets("TTAFstock"), rmCode, 1)
     Call DeleteMatchingGridRow(thisWb.Sheets("Dashboard"), rmCode, 1)
 
     Dim poSheetName As String: poSheetName = POSheetNameForMaterial(categoryVal, originCountryVal)
@@ -454,19 +454,19 @@ End Sub
 Sub RemoveIntermediate()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
+    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("Production_Plan").ListObjects("Production_Plan")
     Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
 
     Dim interName As String
     interName = Trim(InputBox("Please enter the intermediate name to remove." & vbCrLf & _
-        "It should match the name shown in the ""Intermediate"" column on the PP_Grid sheet" & vbCrLf & _
+        "It should match the name shown in the ""Intermediate"" column on the Production_Plan sheet" & vbCrLf & _
         "(case-insensitive).", "Remove Intermediate"))
     If Len(interName) = 0 Then Exit Sub
 
     Dim ppFoundRow As Long: ppFoundRow = FindMaterialRow(ppGrid, interName)
     If ppFoundRow = 0 Then
-        MsgBox "No intermediate named """ & interName & """ was found in PP_Grid." & vbCrLf & _
-               "Please check the exact name on the PP_Grid sheet.", vbExclamation
+        MsgBox "No intermediate named """ & interName & """ was found in Production_Plan." & vbCrLf & _
+               "Please check the exact name on the Production_Plan sheet.", vbExclamation
         Exit Sub
     End If
     ' Align to the actual registered spelling (case) (to absorb variation
@@ -480,7 +480,7 @@ Sub RemoveIntermediate()
 
     If MsgBox("This will remove intermediate """ & canonicalName & """." & vbCrLf & vbCrLf & _
               "What will be deleted:" & vbCrLf & _
-              "- PP_Grid: the matching row (weekly batch counts), 1 row" & vbCrLf & _
+              "- Production_Plan: the matching row (weekly batch counts), 1 row" & vbCrLf & _
               "- M_BOM: usage-rate rows for this intermediate, " & bomCount & " row(s)" & vbCrLf & _
               "- Material_Detail: this intermediate's breakdown rows (No. of batches / Usage (kg))," & vbCrLf & _
               "  from every material block that uses it" & vbCrLf & vbCrLf & _
@@ -495,7 +495,7 @@ Sub RemoveIntermediate()
     Dim removedDetailPairs As Long
     removedDetailPairs = DeleteIntermediateFromMaterialDetail(thisWb.Sheets("Material_Detail"), canonicalName)
     Call DeleteMatchingTableRow(bomTbl, canonicalName)
-    ' PP_Grid itself is deleted last, only after it's done being used as the search key for FindMaterialRow above
+    ' Production_Plan itself is deleted last, only after it's done being used as the search key for FindMaterialRow above
     Call DeleteMatchingTableRow(ppGrid, canonicalName)
 
     Application.Calculation = xlCalculationAutomatic
@@ -666,7 +666,7 @@ ErrHandler:
     MsgBox "An error occurred during processing: (" & errNum5 & ") " & errMsg5, vbCritical
 End Sub
 
-' Adds a row for a new material to T_CSAstocks/T_TTAFStock. Since these
+' Adds a row for a new material to CSAstock/TTAFstock. Since these
 ' are a bordered grid rather than a Table, row addition is handled
 ' manually. If anchorRmCode (the code of the material that was at the same
 ' insert position on the M_RawMaterials side) is given, an Excel row
@@ -711,8 +711,8 @@ End Function
 
 ' Adds 2 rows for a new material to Dashboard (Theoretical Stock, then
 ' Actual Stock, in that order) (ssRow = the row number on the
-' T_CSAstocks/T_TTAFStock side, grow = the row number on the
-' Grid_Requirement/Incoming/Stock side). If anchorRmCode is given, an
+' CSAstock/TTAFstock side, grow = the row number on the
+' WeeklyConsumption/Incoming/Stock side). If anchorRmCode is given, an
 ' Excel row insertion is used to insert right before that material's row,
 ' preserving the same order as M_RawMaterials (an empty string means
 ' added at the very bottom as before).
@@ -745,11 +745,11 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     End If
     Dim lastWeekCol As String: lastWeekCol = ColLetter(1 + nWeeks)
 
-    Dim ssSelfRng As String: ssSelfRng = "'T_CSAstocks'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
-    Dim ssTTAFRng As String: ssTTAFRng = "'T_TTAFStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
-    Dim ssLabelRng As String: ssLabelRng = "'T_CSAstocks'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
-    ' Variance (kg) = Actual Stock (Grid_Stock) - Theoretical Stock
-    ' (Grid_TheoreticalStock). Since theoretical stock resets at the start
+    Dim ssSelfRng As String: ssSelfRng = "'CSAstock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
+    Dim ssTTAFRng As String: ssTTAFRng = "'TTAFstock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
+    Dim ssLabelRng As String: ssLabelRng = "'CSAstock'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
+    ' Variance (kg) = Actual Stock (Stock) - Theoretical Stock
+    ' (TheoreticalStock). Since theoretical stock resets at the start
     ' of each month, looking at the last week of the displayed period (2
     ' years out) would almost always show close to 0. So this compares
     ' using the same reference as the Actual Week column (column 8 - the
@@ -759,8 +759,8 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     Dim lastActualColIdx As String
     lastActualColIdx = "LOOKUP(2,1/(" & ssSelfRng & "<>""""),COLUMN(" & ssSelfRng & "))"
     Dim diffFormula As String
-    diffFormula = "=IFERROR(INDEX('Grid_Stock'!$A" & grow & ":$" & gsLastCol & grow & ",1," & lastActualColIdx & ")" & _
-        "-INDEX('Grid_TheoreticalStock'!$A" & grow & ":$" & gsLastCol & grow & ",1," & lastActualColIdx & "),0)"
+    diffFormula = "=IFERROR(INDEX('Stock'!$A" & grow & ":$" & gsLastCol & grow & ",1," & lastActualColIdx & ")" & _
+        "-INDEX('TheoreticalStock'!$A" & grow & ":$" & gsLastCol & grow & ",1," & lastActualColIdx & "),0)"
 
     Dim rowsArr(1 To 2) As Long
     rowsArr(1) = theoRow
@@ -788,10 +788,10 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     Dim w As Long, col As Long
     For w = 1 To nWeeks
         col = 10 + w  ' Dashboard's week-data start column = 11 (column K)
-        sh.Cells(theoRow, col).Value = "='Grid_TheoreticalStock'!" & ColLetter(1 + w) & grow
+        sh.Cells(theoRow, col).Value = "='TheoreticalStock'!" & ColLetter(1 + w) & grow
         sh.Cells(theoRow, col).Font.Italic = True
         sh.Cells(theoRow, col).Font.Color = RGB(128, 128, 128)
-        sh.Cells(actualRow, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
+        sh.Cells(actualRow, col).Value = "='Stock'!" & ColLetter(1 + w) & grow
     Next w
 
     ' Format copy: when adding at the end, duplicate from the immediately
@@ -869,21 +869,21 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Font.Bold = True
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='Grid_Requirement'!" & ColLetter(1 + w) & grow
+        sh.Cells(r, col).Value = "='WeeklyConsumption'!" & ColLetter(1 + w) & grow
     Next w
 
     r = r + 1
     sh.Cells(r, 2).Value = "TTAF Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='T_TTAFStock'!" & ColLetter(1 + w) & ssRow
+        sh.Cells(r, col).Value = "='TTAFstock'!" & ColLetter(1 + w) & ssRow
     Next w
 
     r = r + 1
     sh.Cells(r, 2).Value = "Self Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='T_CSAstocks'!" & ColLetter(1 + w) & ssRow
+        sh.Cells(r, col).Value = "='CSAstock'!" & ColLetter(1 + w) & ssRow
     Next w
 
     ' Order row: the field where the planned order quantity is entered
@@ -926,7 +926,7 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Font.Bold = True
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='Grid_Stock'!" & ColLetter(1 + w) & grow
+        sh.Cells(r, col).Value = "='Stock'!" & ColLetter(1 + w) & grow
     Next w
 
     ' Copy borders/formatting: when adding at the end, duplicate from the
@@ -1005,7 +1005,7 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
     Const PO_FIRST_WEEK_COL As Long = 6
     Const PO_N_WEEKS As Long = 13
     Dim w As Long, col As Long
-    ' The order quantity is not auto-calculated from Grid_Stock - it's
+    ' The order quantity is not auto-calculated from Stock - it's
     ' transcribed as-is from whatever value was manually entered into
     ' Material_Detail's Order (Planned, kg) row (the same formula as
     ' build_soh.py's build_po_draft()).
@@ -1048,7 +1048,7 @@ Private Sub DeleteMatchingTableRow(tbl As ListObject, rmCode As String)
 End Sub
 
 ' Deletes, from a bordered grid that doesn't use the Table feature
-' (T_CSAstocks/T_TTAFStock/Dashboard/PO_Draft_*), the row matching the
+' (CSAstock/TTAFstock/Dashboard/PO_Draft_*), the row matching the
 ' given material code. nameCol = the column number that holds the material code.
 Private Sub DeleteMatchingGridRow(sh As Worksheet, rmCode As String, nameCol As Long)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, nameCol).End(xlUp).Row
@@ -1088,7 +1088,7 @@ Private Sub DeleteMaterialDetailBlock(sh As Worksheet, rmCode As String)
 End Sub
 
 ' Counts the number of rows in a Table matching column 1 (for
-' RemoveIntermediate, the "Intermediate" column of PP_Grid/M_BOM) (used
+' RemoveIntermediate, the "Intermediate" column of Production_Plan/M_BOM) (used
 ' only to show the count to the user in the confirmation dialog before the
 ' actual deletion).
 Private Function CountMatchingTableRows(tbl As ListObject, keyVal As String) As Long

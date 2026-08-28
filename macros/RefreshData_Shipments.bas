@@ -43,8 +43,8 @@ Option Explicit
 ' macros have been removed from this module since they were already run).
 '
 ' Since T_Shipments is a heavyweight table referenced extensively by
-' Grid_Incoming (a material x week SUMIFS), for the same reason as
-' RefreshBOM (M_BOM)/RefreshWeeklyBatches (PP_Grid), new rows are first
+' Incoming (a material x week SUMIFS), for the same reason as
+' RefreshBOM (M_BOM)/RefreshWeeklyBatches (Production_Plan), new rows are first
 ' all counted and then added with a single Resize, and updates to existing
 ' rows are also read/written a whole row at a time (calling ListRows.Add
 ' one row at a time risks making Excel stop responding).
@@ -61,7 +61,7 @@ Option Explicit
 '     of T_Shipments[Effective_Week] (which already reflects column Q's
 '     date). Follows along every time the ETA is updated.
 '   - Status="TTAF Stock": fixed at the last known week, the PO_No cell
-'     has "[DONE]" appended, and it's excluded from Grid_Incoming's
+'     has "[DONE]" appended, and it's excluded from Incoming's
 '     calculation target (the number itself is kept as history).
 '   - When the same PO number's shipment is split across multiple rows
 '     (split shipment), the Order/PO_No cells are also automatically split
@@ -70,7 +70,7 @@ Option Explicit
 '     a cell comment.
 ' Materials with no block on Material_Detail (e.g. packaging materials not
 ' used in the BOM) and shipments whose PO_No doesn't appear anywhere on
-' Material_Detail are excluded (Grid_Incoming's fallback that reads
+' Material_Detail are excluded (Incoming's fallback that reads
 ' T_Shipments directly still covers these).
 '
 ' For the overall design rationale (performance, DataBodyRange,
@@ -137,11 +137,11 @@ Sub RefreshShipments()
     data = sh.Range(sh.Cells(2, 1), sh.Cells(MAX_ROWS, 20)).Value
 
     ' [Important] T_Shipments is a table referenced extensively by
-    ' Grid_Incoming (a material x week SUMIFS, 90 materials x 104 weeks).
+    ' Incoming (a material x week SUMIFS, 90 materials x 104 weeks).
     ' This is the same structure (heavyweight table x adding many rows one
     ' at a time) that previously caused Excel to stop responding when new
     ' rows were added one at a time via ListRows.Add to M_BOM
-    ' (RefreshBOM)/PP_Grid (RefreshWeeklyBatches), so here too, new rows
+    ' (RefreshBOM)/Production_Plan (RefreshWeeklyBatches), so here too, new rows
     ' are first counted and then added all at once with a single Resize.
     ' Updates to existing rows are also read/written a whole row at a
     ' time, rather than writing to individual cells one at a time per row.
@@ -621,7 +621,7 @@ NextShipRow:
                     ' only becomes true once every row summed into that
                     ' week has become TTAF Stock (if even one is still in
                     ' transit, that week is not yet excluded from
-                    ' Grid_Incoming's calculation).
+                    ' Incoming's calculation).
                     If newWeeks.Exists(targetWeek) Then
                         Dim existingNW As Variant: existingNW = newWeeks(targetWeek)
                         newWeeks(targetWeek) = Array(CDbl(existingNW(0)) + qty, CBool(existingNW(1)) And frozenFlag)

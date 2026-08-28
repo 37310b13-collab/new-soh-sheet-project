@@ -18,7 +18,7 @@ ANCHOR_YEAR = int(sys.argv[3]) if len(sys.argv) > 3 else 2026
 # 一致する原材料だけに絞り込み、それを1つでも使う中間体だけを連動して残す。
 SUPPLIER_FILTER = sys.argv[4] if len(sys.argv) > 4 else None
 
-# Material_Detailの列レイアウト(このシート自体はもっと後で作るが、Grid_Incomingが
+# Material_Detailの列レイアウト(このシート自体はもっと後で作るが、Incomingが
 # Material_DetailのOrder行を直接参照する数式を組むため、列位置の定数だけ先に確定させておく)。
 MD_WEEK_START_COL_ = 4  # column D
 MD_HELPER_COL_ = MD_WEEK_START_COL_ + N_WEEKS
@@ -102,7 +102,7 @@ for r in inter_master:
 inter_master = inter_dedup
 
 # サプライヤー別ファイル用のフィルタ。M_RawMaterials・M_BOM・M_Intermediates・M_ProductMap・
-# PP_Grid・T_Shipments(rm_rowで自動的に絞られる)・Dashboard・Material_Detail・Grid_*・
+# Production_Plan・T_Shipments(rm_rowで自動的に絞られる)・Dashboard・Material_Detail・Grid_*・
 # PO_Draft_*まで、すべてこの3つのリストを起点に生成されるため、ここで絞り込むだけで
 # 以降のシート生成コードは一切変更せずに連動して絞り込まれる。
 if SUPPLIER_FILTER:
@@ -112,7 +112,7 @@ if SUPPLIER_FILTER:
     # bom.csvのRM_Codeは、購入する原材料(rm_master由来)だけでなく、他の中間体を経由専用で
     # 消費する行(例: TSP-618がTSZ-616を使う)も含む。後者はTSZ-616自身が購入品ではなく
     # rm_masterに載らないため、rm_masterのコード集合だけでフィルタすると誤って除外され、
-    # PP_Gridの経由専用中間体(数式によるパススルー)の元になる行が消えてしまう。
+    # Production_Planの経由専用中間体(数式によるパススルー)の元になる行が消えてしまう。
     # そのためRM_Codeが「他の中間体名」である行はサプライヤーに関係なく常に残す。
     bom = [r for r in bom
            if r["RM_Code"].upper() in _filt_codes or r["RM_Code"] in _all_inter_names_pre_filter]
@@ -122,7 +122,7 @@ if SUPPLIER_FILTER:
     print(f"[SUPPLIER_FILTER={SUPPLIER_FILTER}] RM: {len(rm_master)}, "
           f"Intermediates: {len(inter_master)}, BOM rows: {len(bom)}")
 
-# rm_masterの並び順は、Dashboard・Material_Detail・M_RawMaterials・T_CSAstocks・T_TTAFStock・
+# rm_masterの並び順は、Dashboard・Material_Detail・M_RawMaterials・CSAstock・TTAFstock・
 # PO_Draft_*等、この行順を起点に生成される全シートに反映される。要望に基づき
 # 「Substrate → その他Chemical → Ester Film・PP Film → TPZ系」の順に並べる
 # (Python標準のsorted()は安定ソートなので、各グループ内は元の順序を保ったまま並び替わる)。
@@ -220,9 +220,9 @@ ws.freeze_panes = f"A{CAL_HEADER_ROW+1}"
 # ============================================================ M_RawMaterials
 # 基準在庫は下限・上限の2つを持つ(Dashboardの週次の赤/緑/青のハイライトに使用)。
 # 以前の単一しきい値のSafetyStock_Qty_要入力を、下限・上限の2列に置き換えた。
-# FixedWeeklyConsumption: BOM(M_BOM/PP_Grid)経由の消費量計算とは別に、材料によっては
+# FixedWeeklyConsumption: BOM(M_BOM/Production_Plan)経由の消費量計算とは別に、材料によっては
 # 毎週固定量を消費する(例: Original Towelは梱包資材で、生産中間体の構成とは無関係に
-# 週200枚など一定量を消費する)。Grid_Requirementはこの列の値をBOMベースの計算結果に
+# 週200枚など一定量を消費する)。WeeklyConsumptionはこの列の値をBOMベースの計算結果に
 # 単純に加算する。0の材料には影響しない。ここはExcel上のセルなので、消費量が変わった際も
 # 再生成なしにそのまま書き換えるだけで反映される。
 ws = wb.create_sheet("M_RawMaterials")
@@ -259,15 +259,15 @@ for col, w in zip("ABCD", [14, 10, 8, 12]):
 ws.freeze_panes = "A2"
 
 # ============================================================ M_BOM
-# D列(PPGridRow)は、Grid_Requirementが毎週×毎材料でPP_Grid内をMATCHし直す(重い)代わりに
-# 「このIntermediateがPP_Grid内の何行目か」を1回だけ計算しておく内部ヘルパー列。
+# D列(PPGridRow)は、WeeklyConsumptionが毎週×毎材料でProduction_Plan内をMATCHし直す(重い)代わりに
+# 「このIntermediateがProduction_Plan内の何行目か」を1回だけ計算しておく内部ヘルパー列。
 # VBAでM_BOMに行を追加しても、Excelのテーブル機能が数式列を自動で複製するため引き続き機能する。
 ws = wb.create_sheet("M_BOM")
 ws.append(["Intermediate", "Part Name", "RM_Qty_Per_Batch", "PPGridRow"])
 for i, r in enumerate(bom):
     rr = i + 2
     ws.append([r["Intermediate"], r["RM_Code"], r["RM_Total_Per_Batch"],
-               f'=IFERROR(MATCH($A{rr},PP_Grid[Intermediate],0),99999)'])
+               f'=IFERROR(MATCH($A{rr},Production_Plan[Intermediate],0),99999)'])
 n = len(bom) + 1
 style_header(ws, 4)
 add_table(ws, "M_BOM", f"A1:D{n}")
@@ -297,20 +297,20 @@ def normalize_rm_code(code):
     if not code:
         return None
     return rm_code_canonical.get(code.upper())
-inter_row = {r["Intermediate"]: i + 2 for i, r in enumerate(inter_master)}  # PP_Grid row for Intermediate
+inter_row = {r["Intermediate"]: i + 2 for i, r in enumerate(inter_master)}  # Production_Plan row for Intermediate
 
-# T_CSAstocks/T_TTAFStock(材料×週のグリッド)の行位置。1行目はDashboard/Material_Detailと
+# CSAstock/TTAFstock(材料×週のグリッド)の行位置。1行目はDashboard/Material_Detailと
 # 同様に選択週の入力欄(C1)用に空けておき、4段見出し(月-年/日付/週No/週ラベル)はその下から、
 # 材料はさらにその下から並ぶ。
 SS_MONTHYEAR_ROW, SS_DATE_ROW, SS_WEEKNO_ROW, SS_TABLE_ROW = 2, 3, 4, 5
 SS_DATA_START_ROW = SS_TABLE_ROW + 1
-ss_row_map = {r["RM_Code"]: i + SS_DATA_START_ROW for i, r in enumerate(rm_master)}  # T_CSAstocks/T_TTAFStock row
+ss_row_map = {r["RM_Code"]: i + SS_DATA_START_ROW for i, r in enumerate(rm_master)}  # CSAstock/TTAFstock row
 
 def week_col(week_idx):
     return get_column_letter(1 + week_idx)  # col A = label, col B = week1
 
-# ============================================================ PP_Grid (production plan, INPUT)
-ws = wb.create_sheet("PP_Grid")
+# ============================================================ Production_Plan (production plan, INPUT)
+ws = wb.create_sheet("Production_Plan")
 header = ["Intermediate"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
 ws.append(header)
 for i, r in enumerate(inter_master):
@@ -326,7 +326,7 @@ for i, r in enumerate(inter_master):
         ws.cell(row=row_num, column=1 + w).fill = INPUT_FILL
 n = len(inter_master) + 1
 style_header(ws, N_WEEKS + 1)
-add_table(ws, "PP_Grid", f"A1:{week_col(N_WEEKS)}{n}")
+add_table(ws, "Production_Plan", f"A1:{week_col(N_WEEKS)}{n}")
 ws.column_dimensions["A"].width = 14
 for w in range(1, N_WEEKS + 1):
     ws.column_dimensions[week_col(w)].width = 7
@@ -334,9 +334,9 @@ ws.freeze_panes = "B2"
 
 # ---- 中間体が別の中間体の原料になっているケース(例: TSZ-616はTSP-618等のスラリーの
 # 原料になっているが、TSZ-616自身は購入品ではなく、「Powder & Slurry & Pgm Plan」にも
-# 独自の週次バッチ計画を持たない)への対応。このような「経由専用」の中間体は、PP_Grid上の
+# 独自の週次バッチ計画を持たない)への対応。このような「経由専用」の中間体は、Production_Plan上の
 # セルを固定値ではなく、それを使う側(TSP-618等、実バッチ数を持つ中間体)からの需要を
-# Grid_Requirementと全く同じSUMPRODUCTパターンで逆算する数式にする。これによりCHEM-1600等の
+# WeeklyConsumptionと全く同じSUMPRODUCTパターンで逆算する数式にする。これによりCHEM-1600等の
 # 週次所要量が正しく計算される一方、TSZ-616自身はrm_masterに載らないためDashboard等には
 # 一切表示されない。Python側で一度だけ数式を書き込むだけで、以降はExcelの数式として
 # 完結する(TSZ-616のレシピや、それを使うスラリーの増減があっても再生成不要で自動追従する)。
@@ -344,7 +344,7 @@ plan_lookup_names = set(plan_lookup.keys())
 bom_rm_code_names = {b["RM_Code"] for b in bom}
 inter_master_names = {r["Intermediate"] for r in inter_master}
 # Ester Film/PP Filmのような自己参照BOM行(Intermediate==RM_Code。1バッチ=1個消費という
-# 簡易表現のためのもの)は、そのままパススルー扱いにすると「自分自身のPP_Grid行を参照する
+# 簡易表現のためのもの)は、そのままパススルー扱いにすると「自分自身のProduction_Plan行を参照する
 # 数式」になり循環参照になってしまうため、対象から除外する(独自の週次データが無ければ
 # 素直に0のままにする。RefreshWeeklyBatches等で実データが入れば通常通り使われる)。
 self_referencing_names = {b["Intermediate"] for b in bom if b["Intermediate"] == b["RM_Code"]}
@@ -352,13 +352,13 @@ passthrough_intermediates = sorted(
     (bom_rm_code_names & inter_master_names) - plan_lookup_names - self_referencing_names
 )
 if passthrough_intermediates:
-    print("PP_Grid: pass-through(数式)中間体:", passthrough_intermediates)
+    print("Production_Plan: pass-through(数式)中間体:", passthrough_intermediates)
 inter_batch_size = {r["Intermediate"]: to_float(r["Batch_Size"], 1.0) for r in inter_master}
 for name in passthrough_intermediates:
     trow = inter_row[name]
     batch_size = inter_batch_size.get(name, 1.0) or 1.0
     for w in range(1, N_WEEKS + 1):
-        # M_BOM[PPGridRow]は「その行のIntermediateがPP_Gridの何行目か」を表す列なので、
+        # M_BOM[PPGridRow]は「その行のIntermediateがProduction_Planの何行目か」を表す列なので、
         # このtrow自身のレシピ行(Intermediate=$A{trow}自身の原料行)についてもPPGridRow=trowに
         # なる。SUMPRODUCTは配列全体を評価してから($A{trow}に一致する行だけを残すために)
         # 0倍するため、最終結果には影響しなくても「このセル自身を参照するINDEX」が実際に
@@ -368,7 +368,7 @@ for name in passthrough_intermediates:
         # ため計算結果は変わらない)。
         ws.cell(row=trow, column=1 + w).value = (
             f"=SUMPRODUCT((M_BOM[Part Name]=$A{trow})*M_BOM[RM_Qty_Per_Batch]*"
-            f"IFERROR(INDEX(PP_Grid[#Data],IF(M_BOM[PPGridRow]={trow},NA(),M_BOM[PPGridRow]),{w + 1}),0))/{batch_size}"
+            f"IFERROR(INDEX(Production_Plan[#Data],IF(M_BOM[PPGridRow]={trow},NA(),M_BOM[PPGridRow]),{w + 1}),0))/{batch_size}"
         )
         ws.cell(row=trow, column=1 + w).fill = PatternFill(fill_type=None)  # INPUT_FILLを解除(数式セルのため)
 
@@ -388,7 +388,7 @@ for col, w in zip("ABC", [14, 16, 12]):
 
 # WeekIndexを「日付から毎回ライブ計算する式」にするための共通部品。
 # Cal_Weeks!$B$1(AnchorYear)が変わっても、記録した日付から正しい週番号を再計算できるため、
-# AnchorYearを進めても過去の実績データ(T_Shipments/T_CSAstocks/T_TTAFStock)が
+# AnchorYearを進めても過去の実績データ(T_Shipments/CSAstock/TTAFstock)が
 # 別の週のものとして誤表示されることがなくなる。
 #
 # 2種類の式を使い分ける:
@@ -396,7 +396,7 @@ for col, w in zip("ABC", [14, 16, 12]):
 #     T_Shipments(まだ着荷していない発注)用。古い発注でも「本来もう届いているはず」として
 #     week1に表示され続けてほしいため。
 #   week_index_formula_strict : 表示ウィンドウの外側の日付はどの週にも一致させず空欄にする。
-#     T_CSAstocks/T_TTAFStock(実績の記録)用。クランプしてしまうと、AnchorYearを
+#     CSAstock/TTAFstock(実績の記録)用。クランプしてしまうと、AnchorYearを
 #     進めた後にウィンドウ外へ出た古い実績データがweek1の集計に紛れ込み、直近の実績値が
 #     狂ってしまうため。
 ANCHOR_MONDAY_EXPR = "(DATE(Cal_Weeks!$B$1,1,1)-WEEKDAY(DATE(Cal_Weeks!$B$1,1,1),3))"
@@ -470,14 +470,14 @@ print("Shipment rows seeded:", len(ship_rows))
 ws.freeze_panes = "A2"
 
 # T_StockCount(手動棚卸による在庫修正シート)は廃止しました。自社倉庫のdaily checkが
-# そのまま実地棚卸を兼ねているため、Grid_Stockで別途「手動棚卸」を最優先する分岐を
+# そのまま実地棚卸を兼ねているため、Stockで別途「手動棚卸」を最優先する分岐を
 # 持つ必要が無くなったための整理です。詳細はdocs/SOH_System_Guide.mdを参照してください。
 
-# ============================================================ T_CSAstocks / T_TTAFStock (自社/TTAF倉庫の実績)
+# ============================================================ CSAstock / TTAFstock (自社/TTAF倉庫の実績)
 # 設計: VBAが書き込む生データは「実施日」をキーにした安全な形(_Logシート、非表示)に保存する。
 # WeekIndexは各行のDateから毎回ライブ計算されるため、AnchorYearを何度・どんな頻度で進めても
 # 実績データが「別の週のもの」として誤表示されることはない。
-# 目に見える方のT_CSAstocks/T_TTAFStockシートは、Dashboardと同じ「材料×週」のグリッド形式にし、
+# 目に見える方のCSAstock/TTAFstockシートは、Dashboardと同じ「材料×週」のグリッド形式にし、
 # 値は一切保存せず_Logシートを参照するSUMIFSだけで組み立てる(常に最新計算)。こうすることで、
 # グリッドの列(週)が現在のAnchorYearに紐づいていても、実データ自体は_Logシート側で安全に
 # 保たれたままなので、AnchorYearを何度動かしても実績の生データが壊れることはない。
@@ -571,7 +571,7 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
         ws_grid.cell(row=rr, column=1, value=rm)
         for w in range(1, N_WEEKS + 1):
             # 記録が無い週は(SUMIFSの0ではなく)空欄"" にする。0という実績が記録された週と
-            # 「記録自体が無い」週を区別できるようにするため(Grid_Stockの手動棚卸>実績>
+            # 「記録自体が無い」週を区別できるようにするため(Stockの手動棚卸>実績>
             # ロールフォワードという優先順位判定が、記録の有無を見て動いているため)。
             has_record = f"COUNTIFS({log_name}[Part Name],$A{rr},{log_name}[WeekIndex],{w})"
             ws_grid.cell(row=rr, column=1 + w, value=(
@@ -611,23 +611,23 @@ def build_actual_stock_sheets(name, qty_col, sample_rows):
     print(f"{name} grid built:", len(rm_master), "materials x", N_WEEKS, "weeks")
     return n_last_row
 
-build_actual_stock_sheets("T_CSAstocks", "Self_Qty", [])
-build_actual_stock_sheets("T_TTAFStock", "TTAF_Qty", [])
+build_actual_stock_sheets("CSAstock", "Self_Qty", [])
+build_actual_stock_sheets("TTAFstock", "TTAF_Qty", [])
 
-# ============================================================ Grid_Requirement / Grid_Incoming / Grid_Stock
-# Grid_Requirementは、以前は「BOM行×週」を1行ずつ展開した中間表(Calc_Demand, 73,944行)を
+# ============================================================ WeeklyConsumption / Incoming / Stock
+# WeeklyConsumptionは、以前は「BOM行×週」を1行ずつ展開した中間表(Calc_Demand, 73,944行)を
 # SUMIFSで週次集計していたが、これが実Excelで開く・編集する・スクロールするたびに
 # 極めて重い処理となり、フリーズ・強制終了の主因になっていた（10,504セル×74,000行SUMIFS
-# ≈ 15億回超の比較）。M_BOM(711行)とPP_Grid(週次バッチ数)からSUMPRODUCTで直接集計する
+# ≈ 15億回超の比較）。M_BOM(711行)とProduction_Plan(週次バッチ数)からSUMPRODUCTで直接集計する
 # 方式に変更し、中間表を廃止（同じ計算結果を約200分の1の計算量で得られる）。
-ws_req = wb.create_sheet("Grid_Requirement")
-ws_in = wb.create_sheet("Grid_Incoming")
-ws_st = wb.create_sheet("Grid_Stock")
-# Grid_TheoreticalStock: Grid_Stockと行位置(rr)を完全にそろえた、常に「前週+入庫-消費」だけで
+ws_req = wb.create_sheet("WeeklyConsumption")
+ws_in = wb.create_sheet("Incoming")
+ws_st = wb.create_sheet("Stock")
+# TheoreticalStock: Stockと行位置(rr)を完全にそろえた、常に「前週+入庫-消費」だけで
 # 計算する純粋なロールフォワード専用シート。自社/TTAF実績には一切
-# 反応しない(Grid_Stockのような優先順位の切り替えが無い)。Dashboardで「理論在庫」行として
-# 表示し、実際の値(Grid_Stock=「実在庫」行)との乖離を確認できるようにするために追加した。
-ws_theo = wb.create_sheet("Grid_TheoreticalStock")
+# 反応しない(Stockのような優先順位の切り替えが無い)。Dashboardで「理論在庫」行として
+# 表示し、実際の値(Stock=「実在庫」行)との乖離を確認できるようにするために追加した。
+ws_theo = wb.create_sheet("TheoreticalStock")
 
 header = ["Part Name"] + [week_labels[w] for w in range(1, N_WEEKS + 1)]
 for ws_ in (ws_req, ws_in, ws_st, ws_theo):
@@ -640,17 +640,17 @@ for i, r in enumerate(rm_master):
         ws_.append([rm] + [None] * N_WEEKS)
     for w in range(1, N_WEEKS + 1):
         cl = week_col(w)
-        # M_BOMのうちRM_Code=このRMの行だけを対象に、原単位×その週のバッチ数(PP_GridRow経由で
-        # 週ごとのMATCHをせず直接INDEX)を合計する。PP_Grid内の列位置(w+1列目=Intermediate列の次)
+        # M_BOMのうちRM_Code=このRMの行だけを対象に、原単位×その週のバッチ数(Production_PlanRow経由で
+        # 週ごとのMATCHをせず直接INDEX)を合計する。Production_Plan内の列位置(w+1列目=Intermediate列の次)
         # は週ごとに固定できるため、MATCHは行位置(PPGridRow, M_BOM側で1回だけ計算済み)のみで済む。
         # BOMベースの消費量に加え、M_RawMaterialsのFixedWeeklyConsumption(Original Towel等、
         # 生産中間体の構成とは無関係に毎週一定量を消費する梱包資材向け)を単純加算する。
         ws_req.cell(row=rr, column=1 + w).value = (
             f"=SUMPRODUCT((M_BOM[Part Name]=$A{rr})*M_BOM[RM_Qty_Per_Batch]*"
-            f"IFERROR(INDEX(PP_Grid[#Data],M_BOM[PPGridRow],{w + 1}),0))"
+            f"IFERROR(INDEX(Production_Plan[#Data],M_BOM[PPGridRow],{w + 1}),0))"
             f"+IFERROR(INDEX(M_RawMaterials[FixedWeeklyConsumption],MATCH($A{rr},M_RawMaterials[Part Name],0)),0)"
         )
-        # Grid_Incomingは、その材料がMaterial_Detailにブロックを持っていれば(=BOMで
+        # Incomingは、その材料がMaterial_Detailにブロックを持っていれば(=BOMで
         # 何らかの中間体に使われていれば)、Material_DetailのOrder行(発注予定,kg)の値を
         # そのまま使う。Order行はRefreshShipments実行のたびに、CSA Reportの出荷状況
         # (未確定→輸送中→TTAF在庫)に合わせて自動的に位置が更新される「仮/確定の入荷予定」の
@@ -659,7 +659,7 @@ for i, r in enumerate(rm_master):
         # Order行という窓口が無いため、従来通りT_Shipmentsを直接見る。
         # PO_No row (one below Order row) has "[DONE]" appended, treat as confirmed arrived TTAF stock
         # (RefreshShipmentsが付与)なので、数字自体はMaterial_Detailに残したまま
-        # Grid_Incomingの計算からだけ除外する(以降は自社/TTAF実績側が担うため)。
+        # Incomingの計算からだけ除外する(以降は自社/TTAF実績側が担うため)。
         _md_order_match = f"MATCH($A{rr},Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},0)"
         _md_has_block = f"COUNTIF(Material_Detail!${md_order_helper_col_letter}:${md_order_helper_col_letter},$A{rr})>0"
         _md_order_val = f"INDEX(Material_Detail!${md_week_first_col_letter}:${md_week_last_col_letter},{_md_order_match},{w})"
@@ -669,23 +669,23 @@ for i, r in enumerate(rm_master):
         ws_in.cell(row=rr, column=1 + w).value = (
             f"=IF({_md_has_block},IF({_md_received},0,IFERROR({_md_order_val},0)),{_shipments_val})"
         )
-        # T_CSAstocks/T_TTAFStockは「材料×週」のグリッド形式(直接セル参照)になったため、
-        # SUMIFS不要でGrid_Requirement/Incomingと同じ直接参照で済む(高速・行数増加の心配もない)。
+        # CSAstock/TTAFstockは「材料×週」のグリッド形式(直接セル参照)になったため、
+        # SUMIFS不要でWeeklyConsumption/Incomingと同じ直接参照で済む(高速・行数増加の心配もない)。
         ss_row = ss_row_map[rm]
-        has_self = f"('T_CSAstocks'!{cl}{ss_row}<>\"\")"
-        self_val = f"'T_CSAstocks'!{cl}{ss_row}"
-        has_ttaf = f"('T_TTAFStock'!{cl}{ss_row}<>\"\")"
-        ttaf_val = f"'T_TTAFStock'!{cl}{ss_row}"
+        has_self = f"('CSAstock'!{cl}{ss_row}<>\"\")"
+        self_val = f"'CSAstock'!{cl}{ss_row}"
+        has_ttaf = f"('TTAFstock'!{cl}{ss_row}<>\"\")"
+        ttaf_val = f"'TTAFstock'!{cl}{ss_row}"
 
         if w == 1:
             prior = f'IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             prior = f"{week_col(w-1)}{rr}"
-        # T_Shipments(Grid_Incoming)は、TTAF供給材料については「TTAFが外部の仕入先から新しく
+        # T_Shipments(Incoming)は、TTAF供給材料については「TTAFが外部の仕入先から新しく
         # 仕入れてTTAF倉庫に到着する」実績・予定を表す。これはTTAF倉庫内で場所を移しただけの
         # 動きではなく、純粋に合計在庫へ新規に入ってくる量なので、TTAF供給材料かどうかで
         # 特別扱いする必要はなく、他の材料と同じ「前週+入庫-消費」で計算してよい。
-        normal = f"{prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
+        normal = f"{prior}+'Incoming'!{cl}{rr}-'WeeklyConsumption'!{cl}{rr}"
         # 優先順位: 自社+TTAF実績の合計(両方揃っている週のみ) > 通常のロールフォワード
         # (以前は手動棚卸T_StockCountを最優先する3段階の分岐だったが、自社倉庫のdaily check
         # がそのまま実地棚卸を兼ねているため手動棚卸シート自体を廃止し、2段階に簡略化した)
@@ -693,19 +693,19 @@ for i, r in enumerate(rm_master):
             f"=IF(({has_self})*({has_ttaf})>0,{self_val}+{ttaf_val},{normal})"
         )
 
-        # Grid_TheoreticalStock: 自社/TTAF実績を一切見ない、純粋な
+        # TheoreticalStock: 自社/TTAF実績を一切見ない、純粋な
         # 「前週+入庫-消費」のロールフォワードだが、月が変わる最初の週だけは前週の
-        # 実在庫(Grid_Stock)を起点に再同期する(月をまたいで誤差が無限に積み上がるのを防ぎ、
+        # 実在庫(Stock)を起点に再同期する(月をまたいで誤差が無限に積み上がるのを防ぎ、
         # 「今月の計画と実績がどれだけずれているか」を毎月リセットして確認できるようにする
-        # ため)。Dashboardの「理論在庫」行として、実際の値(Grid_Stock=「実在庫」行)との
+        # ため)。Dashboardの「理論在庫」行として、実際の値(Stock=「実在庫」行)との
         # 乖離を確認するために参照する。
         if w == 1:
             theo_prior = f'IFERROR(INDEX(T_OpeningStock[OpeningQty],MATCH($A{rr},T_OpeningStock[Part Name],0)),0)'
         else:
             month_changed = f"INDEX(Cal_Weeks[MonthYearLabel],{w})<>INDEX(Cal_Weeks[MonthYearLabel],{w-1})"
-            theo_prior = f"IF({month_changed},'Grid_Stock'!{week_col(w-1)}{rr},{week_col(w-1)}{rr})"
+            theo_prior = f"IF({month_changed},'Stock'!{week_col(w-1)}{rr},{week_col(w-1)}{rr})"
         ws_theo.cell(row=rr, column=1 + w).value = (
-            f"={theo_prior}+'Grid_Incoming'!{cl}{rr}-'Grid_Requirement'!{cl}{rr}"
+            f"={theo_prior}+'Incoming'!{cl}{rr}-'WeeklyConsumption'!{cl}{rr}"
         )
 
 n = len(rm_master) + 1
@@ -730,18 +730,18 @@ ws = wb.create_sheet("Material_Detail")
 # VBAのWorksheet_Change(macros/RefreshData_Display.basのJumpToSelectedWeekを呼び出す。導入は
 # 任意・手動設定)がウィンドウを横スクロールし、本物の該当週列を固定ペインのすぐ右に
 # 表示する（複製データではないため、Dashboard等との数値の食い違いが原理的に起こらない）。
-# 列レイアウトの定数(MD_WEEK_START_COL_等)はファイル冒頭で確定済み(Grid_IncomingがOrder行を
+# 列レイアウトの定数(MD_WEEK_START_COL_等)はファイル冒頭で確定済み(IncomingがOrder行を
 # 直接参照する数式を組むのに必要なため)。ここではそのローカル名だけを揃える。
 WEEK_START_COL = MD_WEEK_START_COL_
 def mdetail_week_col(w):
     return get_column_letter(WEEK_START_COL + w - 1)
-# 週データ列の1つ右: 「No. of batches」行がPP_Grid内の何行目に対応するかを1回だけMATCHして
+# 週データ列の1つ右: 「No. of batches」行がProduction_Plan内の何行目に対応するかを1回だけMATCHして
 # キャッシュしておく内部ヘルパー列(M_BOMのPPGridRowと同じ考え方)。週ごとに毎回MATCHし直すと
 # 711(BOMペア数)×104週分のMATCHが発生し重くなるため、行位置は1回だけ求めてINDEXで使い回す
-# （列位置はPP_Gridの列並びが固定のため、週番号からそのままw+1として直接指定できる）。
+# （列位置はProduction_Planの列並びが固定のため、週番号からそのままw+1として直接指定できる）。
 HELPER_COL_MD = MD_HELPER_COL_
 # HELPER_COL_MDのもう1つ右: 「Order(発注予定,kg)」行にだけPart Nameを複製しておく見えない
-# 列。PO_Draft_*シートとGrid_IncomingがMATCHでこの行を直接特定し、手入力された発注数量を
+# 列。PO_Draft_*シートとIncomingがMATCHでこの行を直接特定し、手入力された発注数量を
 # 拾うために使う(ブロックの長さが材料ごとに違うため、ヘッダー行から固定オフセットでは
 # Order行を特定できない)。
 MD_ORDER_HELPER_COL = MD_ORDER_HELPER_COL_
@@ -839,12 +839,12 @@ for _r in rm_master:
         ws.cell(row=row_num, column=3, value="No. of batches")
         helper_col_letter = get_column_letter(HELPER_COL_MD)
         ws.cell(row=row_num, column=HELPER_COL_MD,
-                value=f'=IFERROR(MATCH($B{row_num},PP_Grid[Intermediate],0),99999)')
+                value=f'=IFERROR(MATCH($B{row_num},Production_Plan[Intermediate],0),99999)')
         ws.cell(row=row_num, column=HELPER_COL_MD).font = Font(size=8, color="808080")
         for w in range(1, N_WEEKS + 1):
             cell = ws.cell(row=row_num, column=WEEK_START_COL + w - 1)
             cell.value = (
-                f'=IFERROR(INDEX(PP_Grid[#Data],${helper_col_letter}{row_num},{w + 1}),0)'
+                f'=IFERROR(INDEX(Production_Plan[#Data],${helper_col_letter}{row_num},{w + 1}),0)'
             )
 
         row_num += 1
@@ -861,24 +861,24 @@ for _r in rm_master:
     ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         wc = mdetail_week_col(w)
-        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='Grid_Requirement'!{week_col(w)}{grow}")
+        ws.cell(row=row_num, column=WEEK_START_COL + w - 1, value=f"='WeeklyConsumption'!{week_col(w)}{grow}")
 
     # TTAF在庫(実績)/自社在庫(実績)/合計在庫(週末時点) の3行を追加。
     # 合計在庫は「前週在庫-使用量+TTAF+自社+入庫」を再度ここで組み立てるのではなく、
     # 既にDashboardで検証済みの優先順位ロジック(手動棚卸 > 自社+TTAF実績 > ロールフォワード)
-    # を持つGrid_Stockをそのまま参照する(Dashboardと数字が食い違うのを防ぐため)。
+    # を持つStockをそのまま参照する(Dashboardと数字が食い違うのを防ぐため)。
     ss_row = ss_row_map[rm_code]
     row_num += 1
     ws.cell(row=row_num, column=2, value="TTAF Stock (Actual, kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f"='T_TTAFStock'!{week_col(w)}{ss_row}")
+                value=f"='TTAFstock'!{week_col(w)}{ss_row}")
 
     row_num += 1
     ws.cell(row=row_num, column=2, value="Self Stock (Actual, kg)")
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f"='T_CSAstocks'!{week_col(w)}{ss_row}")
+                value=f"='CSAstock'!{week_col(w)}{ss_row}")
 
     # Order行: 発注予定数量を材料×週で直接手入力する欄(黄色の入力セル)。以前はT_PlannedOrders
     # を参照する数式だったが、PO_Draft側の自動発注計算をやめ手入力に統一したのに合わせて、
@@ -911,7 +911,7 @@ for _r in rm_master:
     ws.cell(row=row_num, column=2).font = Font(bold=True)
     for w in range(1, N_WEEKS + 1):
         ws.cell(row=row_num, column=WEEK_START_COL + w - 1,
-                value=f"='Grid_Stock'!{week_col(w)}{grow}")
+                value=f"='Stock'!{week_col(w)}{grow}")
 
     row_num += 1  # blank separator row
 
@@ -942,13 +942,13 @@ print("Material_Detail: blocks for", len(bom_by_rm), "materials,", last_row, "ro
 # Statusのテキスト列は廃止し、各週のセル自体を基準在庫の下限/上限に対して
 # 赤(下限未満)/緑(範囲内)/青(上限超)に色分けする方式にした。
 #
-# T_CSAstocks/T_TTAFStockが「材料×週」のグリッド形式になったため、直近実績の検索は
+# CSAstock/TTAFstockが「材料×週」のグリッド形式になったため、直近実績の検索は
 # 「その材料の行(週1〜週104)の中で一番右にある空欄でないセル」をLOOKUPの最終一致トリックで
 # 探すだけで済む(以前のような、行数が育つ長い列を毎回$12000行スキャンする必要がなくなった)。
 #
 # 【理論在庫／実在庫の2段表示について】材料ごとに2行(上段=理論在庫、下段=実在庫)を並べる。
-# 「実在庫」行は従来どおりGrid_Stock(手動棚卸 > 自社+TTAF実績 > ロールフォワード、の優先順位)を
-# 参照する。「理論在庫」行は新設のGrid_TheoreticalStock(棚卸・実績を一切見ない、常に純粋な
+# 「実在庫」行は従来どおりStock(手動棚卸 > 自社+TTAF実績 > ロールフォワード、の優先順位)を
+# 参照する。「理論在庫」行は新設のTheoreticalStock(棚卸・実績を一切見ない、常に純粋な
 # ロールフォワードのみ)を参照する。両者の差(乖離)が大きいほど、システム上の計算(原単位・
 # 生産計画等)と実際の現場がズレていることを意味する。基準在庫の赤/緑/青の色分けは「実在庫」
 # 行のみに適用する(発注判断に使うのは実際の在庫のため。理論在庫行は参考表示)。
@@ -1044,21 +1044,21 @@ for i, r in enumerate(rm_master):
     ss_row = ss_row_map[r["RM_Code"]]
     ss_first_col = week_col(1)
     ss_last_col = week_col(N_WEEKS)
-    ss_self_rng = f"'T_CSAstocks'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
-    ss_ttaf_rng = f"'T_TTAFStock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
-    ss_label_rng = f"'T_CSAstocks'!${ss_first_col}${SS_TABLE_ROW}:${ss_last_col}${SS_TABLE_ROW}"
-    # 乖離(kg) = 実在庫(Grid_Stock) - 理論在庫(Grid_TheoreticalStock)。
+    ss_self_rng = f"'CSAstock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
+    ss_ttaf_rng = f"'TTAFstock'!${ss_first_col}${ss_row}:${ss_last_col}${ss_row}"
+    ss_label_rng = f"'CSAstock'!${ss_first_col}${SS_TABLE_ROW}:${ss_last_col}${SS_TABLE_ROW}"
+    # 乖離(kg) = 実在庫(Stock) - 理論在庫(TheoreticalStock)。
     # 【重要】理論在庫が月初にリセットされるようになったため(RefreshData_BOM.bas
     # FixTheoreticalStockMonthlyReset参照)、表示期間の最終週(2年後)を見ても常にほぼ0にしか
     # ならず意味が無い。代わりに「実績週」列(H列)と同じ基準(自社在庫実績が入っている
     # 直近の週)の値どうしを比較することで、「今月に入ってからの計画と実績のズレ」を表示する。
-    # T_CSAstocks・Grid_Stock・Grid_TheoreticalStockは同じweek_col()採番を共有しており
+    # CSAstock・Stock・TheoreticalStockは同じweek_col()採番を共有しており
     # (週1=B列, 週2=C列, ...で全シート共通)、列番号がそのまま使い回せる。
     gs_last_col = week_col(N_WEEKS)
     last_actual_col_idx = f'LOOKUP(2,1/({ss_self_rng}<>""),COLUMN({ss_self_rng}))'
     diff_formula = (
-        f"=IFERROR(INDEX('Grid_Stock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx})"
-        f"-INDEX('Grid_TheoreticalStock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx}),0)"
+        f"=IFERROR(INDEX('Stock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx})"
+        f"-INDEX('TheoreticalStock'!$A{grow}:${gs_last_col}{grow},1,{last_actual_col_idx}),0)"
     )
     for rr in (theo_rr, actual_rr):
         ws.cell(row=rr, column=1, value=rm)
@@ -1084,9 +1084,9 @@ for i, r in enumerate(rm_master):
     for w in range(1, N_WEEKS + 1):
         col = WEEK_START_COL_DASH + w - 1
         gs_col = week_col(w)
-        ws.cell(row=theo_rr, column=col, value=f"='Grid_TheoreticalStock'!{gs_col}{grow}")
+        ws.cell(row=theo_rr, column=col, value=f"='TheoreticalStock'!{gs_col}{grow}")
         ws.cell(row=theo_rr, column=col).font = Font(italic=True, color="808080")
-        ws.cell(row=actual_rr, column=col, value=f"='Grid_Stock'!{gs_col}{grow}")
+        ws.cell(row=actual_rr, column=col, value=f"='Stock'!{gs_col}{grow}")
 
 n_last_row = DATA_START_ROW + len(rm_master) * 2 - 1
 # ヘッダー行が数式(Cal_Weeks参照)のため、Excelのテーブル機能(ListObject)ではなく
@@ -1322,8 +1322,8 @@ def build_po_draft(sheet_name, category, title, origin_country=None):
     for r in items:
         data_row += 1
         rm = r["RM_Code"]
-        # Grid_Stock内の行位置は、固定の数値(grow_rel)ではなくMATCHで毎回動的に求める。
-        # 材料の追加・削除でGrid_Stockの行位置がずれても(AddMaterial/RemoveMaterialマクロ参照)、
+        # Stock内の行位置は、固定の数値(grow_rel)ではなくMATCHで毎回動的に求める。
+        # 材料の追加・削除でStockの行位置がずれても(AddMaterial/RemoveMaterialマクロ参照)、
         # 数式側が自動的に正しい行を追従できるようにするため。
         ws.cell(row=data_row, column=2, value=f'=IFERROR(INDEX(M_RawMaterials[Description],MATCH("{rm}",M_RawMaterials[Part Name],0)),"")')
         ws.cell(row=data_row, column=3, value=r.get("TTAF_Code", ""))
@@ -1437,11 +1437,11 @@ readme_lines = [
     "                        as before, the arrival record at our own company. Can be bulk-updated from the CSA Report's",
     "                        Shipping Schedule via RefreshShipments (manual entry also works).",
     "  T_OpeningStock      : for data entry",
-    "  T_CSAstocks/T_TTAFStock : Shows self/TTAF actual stock as a material x week grid (output/viewing only).",
+    "  CSAstock/TTAFstock : Shows self/TTAF actual stock as a material x week grid (output/viewing only).",
     "                        Updated by RefreshSelfStock/RefreshTTAFStock. Please do not enter data manually",
-    "                        (the raw data is safely stored in the hidden T_CSAstocks_Log/T_TTAFStock_Log).",
+    "                        (the raw data is safely stored in the hidden CSAstock_Log/TTAFstock_Log).",
     "",
-    "  M_RawMaterials, M_BOM, PP_Grid, Grid_Stock, and other hidden sheets are for internal calculations. You normally don't need to open them.",
+    "  M_RawMaterials, M_BOM, Production_Plan, Stock, and other hidden sheets are for internal calculations. You normally don't need to open them.",
     "",
     "[Important] Usage rates, batch counts, self/TTAF stock, and order records can all be updated using only Excel (VBA) macros, without Python.",
     "  Import the RefreshData_*.bas files (8 files) from the macros/ folder, then run RefreshWeeklyBatches / RefreshBOM / RefreshSelfStock /",
@@ -1589,8 +1589,8 @@ nav_targets = [
     ("PO_Draft_Substrate_Poland", "Order form draft (Substrate, Poland)"),
     ("T_Shipments", "Order/arrival entry (for TTAF-supplied materials, represents arrival at the TTAF warehouse)"),
     ("T_OpeningStock", "Opening stock entry"),
-    ("T_CSAstocks", "Self warehouse actual stock (material x week; auto-updated by RefreshSelfStock)"),
-    ("T_TTAFStock", "TTAF warehouse actual stock (material x week; auto-updated by RefreshTTAFStock)"),
+    ("CSAstock", "Self warehouse actual stock (material x week; auto-updated by RefreshSelfStock)"),
+    ("TTAFstock", "TTAF warehouse actual stock (material x week; auto-updated by RefreshTTAFStock)"),
 ]
 ws.insert_rows(2, amount=len(nav_targets) + 2)
 ws["A2"] = "[Jump] Click to go to each sheet"
@@ -1600,11 +1600,11 @@ for i, (target, label) in enumerate(nav_targets, start=3):
     cell.hyperlink = f"#'{target}'!A1"
     cell.font = Font(color="0563C1", underline="single")
 
-# ---- 内部処理用シートは非表示にして視認性を上げる（Dashboardが週次在庫の表示を兼ねるためGrid_Stockも非表示。
-#      T_CSAstocks_Log/T_TTAFStock_LogはVBAが書き込む生ログで、目に見えるT_CSAstocks/T_TTAFStock
+# ---- 内部処理用シートは非表示にして視認性を上げる（Dashboardが週次在庫の表示を兼ねるためStockも非表示。
+#      CSAstock_Log/TTAFstock_LogはVBAが書き込む生ログで、目に見えるCSAstock/TTAFstock
 #      （材料×週のグリッド）はそこから数式で計算するだけなので、生ログ自体は非表示にする） ----
-for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement", "Grid_Incoming",
-                    "Grid_Stock", "Grid_TheoreticalStock", "T_CSAstocks_Log", "T_TTAFStock_Log"]:
+for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "WeeklyConsumption", "Incoming",
+                    "Stock", "TheoreticalStock", "CSAstock_Log", "TTAFstock_Log"]:
     if sheet_name in wb.sheetnames:
         wb[sheet_name].sheet_state = "hidden"
 
@@ -1612,10 +1612,10 @@ for sheet_name in ["Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Require
 order = ["README", "Control_Panel", "Dashboard", "Material_Detail", "PO_Draft_Chemical", "PO_Draft_Hazardous",
          "PO_Draft_Substrate_JPN_CHN", "PO_Draft_Substrate_Poland",
          "T_Shipments", "T_OpeningStock",
-         "T_CSAstocks", "T_TTAFStock",
-         "M_RawMaterials", "M_BOM", "PP_Grid",
-         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "Grid_Requirement",
-         "Grid_Incoming", "Grid_Stock", "Grid_TheoreticalStock", "T_CSAstocks_Log", "T_TTAFStock_Log"]
+         "CSAstock", "TTAFstock",
+         "M_RawMaterials", "M_BOM", "Production_Plan",
+         "Cal_Weeks", "M_Intermediates", "M_ProductMap", "WeeklyConsumption",
+         "Incoming", "Stock", "TheoreticalStock", "CSAstock_Log", "TTAFstock_Log"]
 wb._sheets.sort(key=lambda s: order.index(s.title) if s.title in order else len(order))
 
 # ---- 保存前チェック: テーブルがヘッダー行のみ(データ0行)になっていないか ----

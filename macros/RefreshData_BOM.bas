@@ -15,7 +15,7 @@ Option Explicit
 '                    Powder uses a Solution or another Powder as an
 '                    ingredient) - these are written into M_BOM as-is
 '                    regardless (they're simply ignored on the
-'                    Grid_Requirement side, with no ill effect).
+'                    WeeklyConsumption side, with no ill effect).
 '                  - Catalyst Data Base ... only uses Substrate rows (rows
 '                    where column H "Substrate SC" is filled in) (chemical/
 '                    slurry reference rows already have their usage rate
@@ -27,7 +27,7 @@ Option Explicit
 '                    (e.g. "18461-0Q110-1st COAT" -> "0Q110"), RM_Code is
 '                    column H, and the quantity is column F (usage per one
 '                    catalyst unit, since catalysts are tracked by unit
-'                    count on the PP_Grid side).
+'                    count on the Production_Plan side).
 '                When a new material x intermediate combination is found,
 '                the corresponding intermediate breakdown rows (No. of
 '                batches / Usage (kg)) are also automatically added to that
@@ -40,30 +40,30 @@ Option Explicit
 '                automatic sync happens when an existing material starts
 '                being used in a new intermediate.
 '
-' [Bug already fixed in the past] PP_Grid's pass-through formulas (the
+' [Bug already fixed in the past] Production_Plan's pass-through formulas (the
 ' SUMPRODUCT+M_BOM[PPGridRow] back-calculation formula placed in the row
 ' of an intermediate that has no production plan of its own and is only
 ' ever used as an ingredient of other intermediates) used to have a
 ' structural flaw where, for that intermediate's own recipe row,
-' INDEX(PP_Grid[#Data],M_BOM[PPGridRow],...) would also get evaluated,
+' INDEX(Production_Plan[#Data],M_BOM[PPGridRow],...) would also get evaluated,
 ' creating an actual "path that references the cell itself," even though
 ' it was ultimately multiplied by 0 and had no effect on the result
 ' (testing in LibreOffice silently treated it as 0 so this went unnoticed,
 ' but real Excel detects it as a circular reference). A one-time migration
 ' macro (FixPassthroughCircularRefs) that rewrote the existing pass-through
-' formulas in PP_Grid into a safe form guarded with IF(...,NA(),...) has
+' formulas in Production_Plan into a safe form guarded with IF(...,NA(),...) has
 ' already been run, so it has been removed from the VBA code. Newly
 ' generated pass-through formulas (from build_soh.py / when RefreshBOM
 ' runs) are built with this guard from the start.
 '
-'   FixTheoreticalStockMonthlyReset : Grid_TheoreticalStock (theoretical
+'   FixTheoreticalStockMonthlyReset : TheoreticalStock (theoretical
 '                stock) used to never reset from the moment operations
 '                began (T_OpeningStock), rolling forward forever without
 '                ever looking at actuals, so error would accumulate
 '                without bound over a long enough period. This macro
 '                rewrites the formulas so that, only in the first week a
 '                new month begins, it re-syncs from the previous week's
-'                actual stock (Grid_Stock), addressing the request to
+'                actual stock (Stock), addressing the request to
 '                "reset every month and only see this month's plan-vs-
 '                actual gap." Week 1 (which starts from T_OpeningStock) is
 '                excluded. Running it any number of times produces the
@@ -96,7 +96,7 @@ Sub RefreshBOM()
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
     Dim bomTbl As ListObject: Set bomTbl = thisWb.Sheets("M_BOM").ListObjects("M_BOM")
     Dim rmTbl As ListObject: Set rmTbl = thisWb.Sheets("M_RawMaterials").ListObjects("M_RawMaterials")
-    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
+    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("Production_Plan").ListObjects("Production_Plan")
 
     ' Build each name set once: one to check whether an RM_Code (Part Name)
     ' exists, and one to determine "is this a known intermediate name"
@@ -126,7 +126,7 @@ Sub RefreshBOM()
     ' information, M_BOM is ultimately replaced in full with this content
     ' (adding rows one at a time via ListRows.Add triggers a dependency
     ' recheck on every add across the large number of formulas that
-    ' reference M_BOM - Grid_Requirement, Material_Detail, PP_Grid's
+    ' reference M_BOM - WeeklyConsumption, Material_Detail, Production_Plan's
     ' pass-through formulas - which was the cause of a "freeze" bug once
     ' the row count passed roughly a thousand; so the write is done as a
     ' single block write at the end instead).
@@ -180,7 +180,7 @@ Sub RefreshBOM()
             outArr(idx, 1) = rec(0)
             outArr(idx, 2) = rec(1)
             outArr(idx, 3) = rec(2)
-            outArr(idx, 4) = "=IFERROR(MATCH($A" & (idx + 1) & ",PP_Grid[Intermediate],0),99999)"
+            outArr(idx, 4) = "=IFERROR(MATCH($A" & (idx + 1) & ",Production_Plan[Intermediate],0),99999)"
         Next k
         bomTbl.Resize bomTbl.Range.Resize(n + 1, 4)
         bomTbl.DataBodyRange.Formula = outArr
@@ -189,8 +189,8 @@ Sub RefreshBOM()
     ' Syncs Material_Detail's intermediate breakdown rows (No. of batches /
     ' Usage (kg)) to match the now-updated M_BOM content. Since the M_BOM
     ' update itself is already committed above, an error in this sync step
-    ' does not lose the changes already applied to M_BOM/PP_Grid/
-    ' Grid_Requirement (caught individually with On Error Resume Next; on
+    ' does not lose the changes already applied to M_BOM/Production_Plan/
+    ' WeeklyConsumption (caught individually with On Error Resume Next; on
     ' failure it's just reported in the message).
     Dim addedDetailRows As Long: addedDetailRows = 0
     Dim syncErrMsg As String: syncErrMsg = ""
@@ -217,10 +217,10 @@ Sub RefreshBOM()
               "Material_Detail's breakdown rows: " & syncErrMsg & vbCrLf & "The M_BOM update itself completed successfully."
     End If
     If Len(unresolved) > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "Codes found in neither M_RawMaterials nor PP_Grid" & vbCrLf & _
+        msg = msg & vbCrLf & vbCrLf & "Codes found in neither M_RawMaterials nor Production_Plan" & vbCrLf & _
               "(possibly an unregistered new material - please check whether it was missed in AddMaterial):" & vbCrLf & unresolved
     End If
-    msg = msg & vbCrLf & vbCrLf & "Since Grid_Requirement references M_BOM directly, newly added combinations" & vbCrLf & "are also reflected automatically right away."
+    msg = msg & vbCrLf & vbCrLf & "Since WeeklyConsumption references M_BOM directly, newly added combinations" & vbCrLf & "are also reflected automatically right away."
     MsgBox msg, vbInformation
     Exit Sub
 
@@ -241,9 +241,9 @@ ErrHandler:
     MsgBox "An error occurred during the refresh: (" & errNum & ") " & errMsg, vbCritical
 End Sub
 
-' Rewrites Grid_TheoreticalStock's (theoretical stock) formulas so that,
+' Rewrites TheoreticalStock's (theoretical stock) formulas so that,
 ' only in the first week a new month begins, they re-sync from
-' Grid_Stock (actual stock). Every other week still rolls forward as
+' Stock (actual stock). Every other week still rolls forward as
 ' before ("previous week's theoretical stock + incoming - consumption"),
 ' unchanged (week 1, which starts from T_OpeningStock, is unaffected and
 ' excluded). It used to never reset from the moment operations began,
@@ -255,10 +255,10 @@ End Sub
 Sub FixTheoreticalStockMonthlyReset()
     On Error GoTo ErrHandler
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock")
+    Dim theoTbl As ListObject: Set theoTbl = thisWb.Sheets("TheoreticalStock").ListObjects("TheoreticalStock")
     Dim dataRange As Range: Set dataRange = theoTbl.DataBodyRange
     If dataRange Is Nothing Then
-        MsgBox "Grid_TheoreticalStock has no data rows.", vbExclamation
+        MsgBox "TheoreticalStock has no data rows.", vbExclamation
         Exit Sub
     End If
 
@@ -282,8 +282,8 @@ Sub FixTheoreticalStockMonthlyReset()
             Dim monthChanged As String
             monthChanged = "INDEX(Cal_Weeks[MonthYearLabel]," & w & ")<>INDEX(Cal_Weeks[MonthYearLabel]," & (w - 1) & ")"
             Dim theoPrior As String
-            theoPrior = "IF(" & monthChanged & ",'Grid_Stock'!" & prevCol & actualRow & "," & prevCol & actualRow & ")"
-            allFormulas(r, c) = "=" & theoPrior & "+'Grid_Incoming'!" & curCol & actualRow & "-'Grid_Requirement'!" & curCol & actualRow
+            theoPrior = "IF(" & monthChanged & ",'Stock'!" & prevCol & actualRow & "," & prevCol & actualRow & ")"
+            allFormulas(r, c) = "=" & theoPrior & "+'Incoming'!" & curCol & actualRow & "-'WeeklyConsumption'!" & curCol & actualRow
             fixedCells = fixedCells + 1
         Next c
     Next r
@@ -293,7 +293,7 @@ Sub FixTheoreticalStockMonthlyReset()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox "Grid_TheoreticalStock has been switched to the monthly-reset formula." & vbCrLf & _
+    MsgBox "TheoreticalStock has been switched to the monthly-reset formula." & vbCrLf & _
            "Cells rewritten: " & fixedCells, vbInformation
     Exit Sub
 
@@ -309,7 +309,7 @@ End Sub
 ' sheets. Rows are imported as-is: column A = Intermediate, column D = RM
 ' Code, column M = usage per batch. RM Code may be an M_RawMaterials Part
 ' Name directly, or another intermediate code (SOL-SCH, etc.) - either way
-' it's written into M_BOM without distinction (the Grid_Requirement side
+' it's written into M_BOM without distinction (the WeeklyConsumption side
 ' only looks at Part Names that actually exist in M_RawMaterials, so
 ' intermediate-code rows are ignored with no ill effect).
 Private Sub ProcessLookupFlatSheet(sh As Worksheet, newRows As Object, _
@@ -516,7 +516,7 @@ Private Sub InsertIntermediateRowPair(sh As Worksheet, insertAtRow As Long, head
 
     sh.Cells(batchesRow, 2).Value = interName
     sh.Cells(batchesRow, 3).Value = "No. of batches"
-    sh.Cells(batchesRow, helperCol).Value = "=IFERROR(MATCH($B" & batchesRow & ",PP_Grid[Intermediate],0),99999)"
+    sh.Cells(batchesRow, helperCol).Value = "=IFERROR(MATCH($B" & batchesRow & ",Production_Plan[Intermediate],0),99999)"
     sh.Cells(batchesRow, helperCol).Font.Size = 8
     sh.Cells(batchesRow, helperCol).Font.Color = RGB(128, 128, 128)
 
@@ -529,7 +529,7 @@ Private Sub InsertIntermediateRowPair(sh As Worksheet, insertAtRow As Long, head
         col = MD_WEEK_START_COL + w - 1
         wc = ColLetter(col)
         sh.Cells(batchesRow, col).Value = _
-            "=IFERROR(INDEX(PP_Grid[#Data],$" & helperColLetter & batchesRow & "," & (w + 1) & "),0)"
+            "=IFERROR(INDEX(Production_Plan[#Data],$" & helperColLetter & batchesRow & "," & (w + 1) & "),0)"
         sh.Cells(usageRow, col).Value = "=$C" & usageRow & "*" & wc & batchesRow
     Next w
 

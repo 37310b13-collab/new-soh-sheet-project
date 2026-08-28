@@ -5,7 +5,7 @@ Option Explicit
 ' RefreshData_ProductionPlan module
 '
 '   RefreshWeeklyBatches : When you select "Powder & Slurry & Pgm Plan"
-'                          (revised monthly), updates PP_Grid (production
+'                          (revised monthly), updates Production_Plan (production
 '                          plan batch counts). The file is a single sheet;
 '                          column B = the intermediate/finished product
 '                          (Catalyst)/Solution name, and the week-start-date
@@ -55,10 +55,10 @@ Sub RefreshWeeklyBatches()
     Set srcWb = Workbooks.Open(CStr(srcPath), ReadOnly:=True, UpdateLinks:=False)
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("PP_Grid").ListObjects("PP_Grid")
+    Dim ppGrid As ListObject: Set ppGrid = thisWb.Sheets("Production_Plan").ListObjects("Production_Plan")
     Dim calWeeks As ListObject: Set calWeeks = thisWb.Sheets("Cal_Weeks").ListObjects("Cal_Weeks")
 
-    ' WeekStart (date serial value) -> column number within PP_Grid (within the data range, 1=Intermediate,2=Week1,...)
+    ' WeekStart (date serial value) -> column number within Production_Plan (within the data range, 1=Intermediate,2=Week1,...)
     Dim weekColByDate As Object: Set weekColByDate = CreateObject("Scripting.Dictionary")
     Dim calN As Long: calN = calWeeks.ListRows.Count
     If calN > 0 Then
@@ -133,7 +133,7 @@ Sub RefreshWeeklyBatches()
     updatedCells = 0
     newInterRows = 0
 
-    ' [Important] PP_Grid rows come in two kinds: (1) intermediates/finished
+    ' [Important] Production_Plan rows come in two kinds: (1) intermediates/finished
     ' products/Solutions that appear directly in this file (normal rows;
     ' weekly batch counts are written as values), and (2) "pass-through
     ' intermediates" that are derived from other intermediates via M_BOM
@@ -147,7 +147,7 @@ Sub RefreshWeeklyBatches()
     '
     ' Also, calling ListRows.Add in a loop, one new intermediate row at a
     ' time, triggers a dependency recheck on every single call for a
-    ' heavyweight table like PP_Grid that's referenced by a large number of
+    ' heavyweight table like Production_Plan that's referenced by a large number of
     ' formulas, and when there are many new rows (including a case where a
     ' name-matching gap causes rows that should have matched to all be
     ' judged "new"), this makes Excel stop responding (the same bug as
@@ -232,7 +232,7 @@ NextRow:
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
 
-    MsgBox "PP_Grid has been updated." & vbCrLf & _
+    MsgBox "Production_Plan has been updated." & vbCrLf & _
            "Cells updated: " & updatedCells & vbCrLf & _
            "New intermediate/finished product (Cat)/Solution codes added: " & newInterRows & vbCrLf & vbCrLf & _
            "(Note) The per-batch usage rate (M_BOM) is not handled by this macro. If there is" & vbCrLf & _

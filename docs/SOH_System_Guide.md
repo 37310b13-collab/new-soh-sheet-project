@@ -4,7 +4,7 @@
 
 `Dashboard`が最終的にすべての原材料の在庫を確認するメイン画面、`Material_Detail`がその内訳
 （どの材料が何に使われているか）を見る画面、`PO_Draft_*`が発注書の発行画面です。それ以外の
-シート（`M_RawMaterials`、`M_BOM`、`PP_Grid`、`Grid_Stock`等）は計算のための土台で、通常は開く
+シート（`M_RawMaterials`、`M_BOM`、`Production_Plan`、`Stock`等）は計算のための土台で、通常は開く
 必要はありません（タブは非表示にしてあります）。
 
 **`Dashboard`は、原材料×週の在庫を2年分・横軸で見渡せる設計にしています。** 生産計画から
@@ -51,26 +51,26 @@
 
 | マクロ | 対象ファイル | 更新するシート |
 |---|---|---|
-| `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | PP_Grid |
+| `RefreshWeeklyBatches` | Powder & Slurry & Pgm Plan（毎月） | Production_Plan |
 | `RefreshBOM` | Raw Material - Look Up（改版時） | M_BOM |
-| `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | T_CSAstocks_Log（非表示。目に見えるT_CSAstocksは数式で自動反映） |
-| `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | T_TTAFStock_Log（非表示。目に見えるT_TTAFStockは数式で自動反映） |
+| `RefreshSelfStock` | Raw materials daily check（自社在庫、毎週月曜の朝） | CSAstock_Log（非表示。目に見えるCSAstockは数式で自動反映） |
+| `RefreshTTAFStock` | CSA Report（TTAF在庫、毎週月曜） | TTAFstock_Log（非表示。目に見えるTTAFstockは数式で自動反映） |
 | `RefreshShipments` | CSA Report（Shipping Schedule、毎週月曜） | T_Shipments（Shipping Scheduleの全件を材料＋PO番号＋コンテナ＋Original ETDの複合キーで一括反映、分割出荷も欠落なく反映）。あわせてMaterial_DetailのOrder/PO_No行もCSA ReportのStatusに合わせて自動更新（詳細は5.10.1章） |
 | `HideInactiveIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの行の表示/非表示のみ（数値は変更しない） |
 | `ShowAllIntermediates` | （ファイル選択なし・実行するだけ） | Material_Detailの非表示行をすべて再表示 |
-| `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/T_CSAstocks/T_TTAFStockのウィンドウ表示位置のみ（数値は変更しない） |
+| `JumpToSelectedWeek` | （ファイル選択なし・C1変更時に自動呼び出し） | Dashboard/Material_Detail/CSAstock/TTAFstockのウィンドウ表示位置のみ（数値は変更しない） |
 | `AddMaterial` | （ファイル選択なし・InputBoxで入力） | 新しい材料を全関連シートの一番下に追加（詳細は5.7章） |
 | `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory・Origin_Country列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す（詳細は5.7.2〜5.7.3章。いつでも安全に実行可） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
-| `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をPP_Grid・M_BOM・Material_Detailから削除（詳細は5.7章） |
+| `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をProduction_Plan・M_BOM・Material_Detailから削除（詳細は5.7章） |
 | `SetupPODraftLetterheadLayout` | （ファイル選択なし・実行するだけ） | PO_Draft_Hazardousに手動で作り込んだレターヘッド形式レイアウト（月/週見出しの不具合修正・基準週参照の名前付き範囲化・Firm/Forecast色分け・SafetyStock/CurrentStockの印刷範囲除外）を修正した上で、PO_Draft_Chemical・PO_Draft_Substrate_JPN_CHN・PO_Draft_Substrate_Polandの3シートにも複製する、一度だけ実行する移行用マクロ（詳細は5.7.4章。何度実行しても安全） |
 
 **TTAF供給材料の在庫予測の考え方（重要）**: TTAFは仕入先であると同時に、原材料を預けている
 倉庫でもあります。`T_Shipments`（Status=TTAF Stock）は「TTAFが外部の仕入先から新しく仕入れて
 TTAF倉庫に到着する」実績・予定を表します。これはTTAF倉庫内で場所が移っただけの動きではなく、
-純粋に合計在庫へ新規に入ってくる量なので、`Grid_Stock`はTTAF供給材料も含めて全材料共通で
+純粋に合計在庫へ新規に入ってくる量なので、`Stock`はTTAF供給材料も含めて全材料共通で
 「前週＋入庫－消費」のロールフォワード式です（TTAF供給材料だけの特別扱いはありません）。
-実績（CSA Reportが毎週月曜に届くたびの`T_TTAFStock`）がある週は、そちらが優先して使われます。
+実績（CSA Reportが毎週月曜に届くたびの`TTAFstock`）がある週は、そちらが優先して使われます。
 
 `HideInactiveIntermediates`/`ShowAllIntermediates`/`JumpToSelectedWeek`はいずれもデータを
 更新するマクロではなく、見た目（行の表示/非表示、ウィンドウのスクロール位置）だけを
@@ -123,8 +123,8 @@ TTAF倉庫に到着する」実績・予定を表します。これはTTAF倉庫
 対して動作確認をお願いします。エラーが出た場合は、エラーメッセージの内容を教えてください。
 
 実行結果はメッセージボックスで「更新セル数」「新規追加した中間体/組み合わせ数」「未解決の材料名」
-が表示されます。全く新しい中間体×原材料の組み合わせが増えた場合も、`M_BOM`・`PP_Grid`に行が
-追加されるだけで`Grid_Requirement`はその場で自動的に反映されます（`M_BOM`・`PP_Grid`を直接
+が表示されます。全く新しい中間体×原材料の組み合わせが増えた場合も、`M_BOM`・`Production_Plan`に行が
+追加されるだけで`WeeklyConsumption`はその場で自動的に反映されます（`M_BOM`・`Production_Plan`を直接
 参照する設計のため、以前のような中間表の再生成は不要です）。
 
 ### なぜExcel外部参照やPower Queryではないのか
@@ -174,13 +174,13 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 | PO_Draft_Chemical / _Hazardous / _Substrate | 出力（発注書） | Material_Detailで手入力したOrderの値を、材料コード・週で突き合わせてそのまま転記（自動計算はしない） |
 | T_Shipments | 入力（RefreshShipmentsでも更新可） | 発注〜輸送〜着荷（PO番号・発注日・ETA・着荷日・発注月）。TTAF供給材料についてはTTAF倉庫への到着実績を表す |
 | T_OpeningStock | 入力 | 起点となる期首在庫 |
-| T_CSAstocks | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`T_CSAstocks_Log`が更新されると自動反映。手入力不可 |
-| T_TTAFStock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`T_TTAFStock_Log`が更新されると自動反映。手入力不可 |
+| CSAstock | 出力（閲覧用、数式のみ） | 自社倉庫の在庫実績を材料×週のグリッドで表示。RefreshSelfStockで裏の`CSAstock_Log`が更新されると自動反映。手入力不可 |
+| TTAFstock | 出力（閲覧用、数式のみ） | TTAF倉庫の在庫実績を材料×週のグリッドで表示。RefreshTTAFStockで裏の`TTAFstock_Log`が更新されると自動反映。手入力不可 |
 | M_RawMaterials | マスタ | 原材料マスタ・安全在庫設定・TTAF_Code・FixedWeeklyConsumption(5.9章参照) |
 | M_BOM | マスタ（マクロ更新） | 原単位。RefreshBOMで更新 |
-| PP_Grid | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
-| (非表示) T_CSAstocks_Log / T_TTAFStock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
-| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / Grid_Requirement / Grid_Incoming / Grid_Stock / Grid_TheoreticalStock | 内部計算 | 通常は開く必要なし。Grid_TheoreticalStockはDashboardの「理論在庫」行の元になる、自社/TTAF実績を考慮しないロールフォワード専用シート。ただし月が変わる最初の週だけは前週の実在庫(Grid_Stock)を起点に再同期するため、誤差は最大でも1か月分しか蓄積しない |
+| Production_Plan | マスタ（マクロ更新） | 週次バッチ数。RefreshWeeklyBatchesで更新 |
+| (非表示) CSAstock_Log / TTAFstock_Log | 入力（マクロ更新） | 自社/TTAF在庫実績の生ログ（実施日ベース）。RefreshSelfStock/RefreshTTAFStockが書き込む実体。AnchorYearを何度進めても壊れない安全な保存先 |
+| (非表示) Cal_Weeks / M_Intermediates / M_ProductMap / WeeklyConsumption / Incoming / Stock / TheoreticalStock | 内部計算 | 通常は開く必要なし。TheoreticalStockはDashboardの「理論在庫」行の元になる、自社/TTAF実績を考慮しないロールフォワード専用シート。ただし月が変わる最初の週だけは前週の実在庫(Stock)を起点に再同期するため、誤差は最大でも1か月分しか蓄積しない |
 
 ## 4. 着荷予定(CSA Order)の入力方法
 
@@ -191,7 +191,7 @@ VBA未導入の場合はスクロールが自動では起きませんが、太�
 ## 4.5 注文書(PO)の発行 — マクロ不要
 
 `PO_Draft_Chemical`/`_Hazardous`/`_Substrate`は、発注する数量を自動計算するシートでは
-**ありません**（以前は基準在庫下限とGrid_Stockの在庫予測から自動計算していましたが、その方式は
+**ありません**（以前は基準在庫下限とStockの在庫予測から自動計算していましたが、その方式は
 廃止しました）。発注数量は`Material_Detail`の各材料ブロックにある**「Order(発注予定,kg)」行に
 週ごとに直接手入力**してください。`PO_Draft_*`はその手入力値を、材料コード・週を突き合わせて
 そのまま転記するだけの「発注書レイアウト」です。TTAF R-Model等の既存の`Chemical Release`シートと
@@ -231,27 +231,27 @@ B1セル(AnchorYear)=2026を起点に、2026年〜2027年末あたりまでを�
 
 1. `Cal_Weeks`シートのB1セル(AnchorYear)を、次に基準としたい年（例: `2027`）に書き換える
 2. これだけで、`Cal_Weeks`のWeekStart/Year/WeekOfYear/Label等が全てExcelの数式で再計算され、
-   `Dashboard`・`Material_Detail`・`PO_Draft_*`・`Grid_Requirement`等、日付を扱う全シートの
+   `Dashboard`・`Material_Detail`・`PO_Draft_*`・`WeeklyConsumption`等、日付を扱う全シートの
    週の並びが新しい2年分（2027年〜2028年末あたり）にスライドします
-3. `PP_Grid`（生産計画バッチ数）は毎月`RefreshWeeklyBatches`で最新のPlanファイルの内容に
+3. `Production_Plan`（生産計画バッチ数）は毎月`RefreshWeeklyBatches`で最新のPlanファイルの内容に
    上書きされるため、AnchorYear切り替え後に最初の`RefreshWeeklyBatches`を実行すれば、新しい
    週番号の並びに合わせて自然に上書きされます（切り替え直後は空欄/0が見えることがありますが、
    次のRefresh実行で解消します）
 
-**過去の実績データの生ログ(非表示の`T_CSAstocks_Log`/`T_TTAFStock_Log`)は安全です**:
+**過去の実績データの生ログ(非表示の`CSAstock_Log`/`TTAFstock_Log`)は安全です**:
 これらのシートの`WeekIndex`列は、記録した`Date`(実際の暦日)から**毎回ライブ計算する数式**に
 なっており、`AnchorYear`が変わっても記録済みのデータが「別の週のデータ」として誤表示される
 ことはありません。**AnchorYearを変更する前に事前バックアップを取る必要はなく**、必要なタイミング
 でいつでも、どんな頻度でも切り替えて構いません。生ログのセル自体は削除されずに残っているため、
 後から見返したい場合はシートの表示を解除して直接開けば確認できます。
 
-一方、**目に見える方の`T_CSAstocks`/`T_TTAFStock`（材料×週のグリッド表示）は、`Dashboard`・
-`Grid_Stock`と同じく「現在の2年間ウィンドウ」に紐づいています**。これは生ログから毎回数式で
+一方、**目に見える方の`CSAstock`/`TTAFstock`（材料×週のグリッド表示）は、`Dashboard`・
+`Stock`と同じく「現在の2年間ウィンドウ」に紐づいています**。これは生ログから毎回数式で
 計算し直す「見るための表」なので、AnchorYearを進めるとウィンドウの外に出た週の列がグリッド上
 からは見えなくなります（生ログ自体は上記の通り安全に残っているので、データが失われるわけでは
 ありません。あくまで「一覧表示の対象期間」が今の2年間に絞られる、というイメージです）。
 
-（本項目は、`T_Shipments`のEffective_Week計算式および`T_CSAstocks_Log`/`T_TTAFStock_Log`の
+（本項目は、`T_Shipments`のEffective_Week計算式および`CSAstock_Log`/`TTAFstock_Log`の
 WeekIndex計算式が、いずれもビルド時点のAnchorYearを固定値として埋め込んでいた不具合を修正した
 上で有効です。）
 
@@ -274,10 +274,10 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 
 - **理論在庫**: 自社/TTAF在庫実績を一切考慮しない、
   「前週在庫＋入庫－消費」だけで計算するロールフォワード値（非表示の
-  `Grid_TheoreticalStock`シートを参照）。ただし月が変わる最初の週だけは、前週の実在庫
-  (`Grid_Stock`)を起点に再同期します（毎月リセットされるため、誤差が無期限に積み上がる
+  `TheoreticalStock`シートを参照）。ただし月が変わる最初の週だけは、前週の実在庫
+  (`Stock`)を起点に再同期します（毎月リセットされるため、誤差が無期限に積み上がる
   ことはなく、月内の乖離だけを見られます）。
-- **実在庫**: 従来どおりの`Grid_Stock`（自社+TTAF実績の合計 > 通常のロールフォワード、
+- **実在庫**: 従来どおりの`Stock`（自社+TTAF実績の合計 > 通常のロールフォワード、
   の優先順位）を参照した値。実際の発注判断にはこちらを使います。
 - **乖離(kg)列**: 「実績週」列(H列)と同じ基準週（自社在庫実績が入っている直近の週）時点での
   「実在庫－理論在庫」。理論在庫が月初にリセットされる仕様のため、この値は「今月に入って
@@ -290,9 +290,9 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 **Material_Detailの週次在庫行**: 各材料ブロックの「合計使用量(kg)/週」行の下に、以下の3行を
 追加しました。
 
-- `TTAF在庫(実績,kg)`: `T_TTAFStock`（材料×週のグリッド）の該当セルをそのまま参照
-- `自社在庫(実績,kg)`: `T_CSAstocks`（同上）の該当セルをそのまま参照
-- `合計在庫(週末時点,kg)`: `Grid_Stock`をそのまま参照（自社+TTAF実績の
+- `TTAF在庫(実績,kg)`: `TTAFstock`（材料×週のグリッド）の該当セルをそのまま参照
+- `自社在庫(実績,kg)`: `CSAstock`（同上）の該当セルをそのまま参照
+- `合計在庫(週末時点,kg)`: `Stock`をそのまま参照（自社+TTAF実績の
   合計（両方揃っている週のみ） > 通常のロールフォワード、という優先順位で計算される値。
   Dashboardの在庫グリッドと同じ値のため、両シートの数字は必ず一致します）
 
@@ -326,7 +326,7 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
 
 **選択週へのウィンドウ自動スクロール（`JumpToSelectedWeek`、任意・要手動設定）**: 以前の
 「選択週の値を別列に複製して常時表示する」方式（ピン留め列）は廃止し、`Dashboard`の`実績週`列
-・`Material_Detail`の`項目`列・`T_CSAstocks`/`T_TTAFStock`の`Part Name`列のすぐ右に、複製では
+・`Material_Detail`の`項目`列・`CSAstock`/`TTAFstock`の`Part Name`列のすぐ右に、複製では
 ない本物の週データ列（週1・週2…）をそのまま並べる構成にしています。C1に週No(`W23`等)を入力
 したときにその該当週列が固定ペインの直後にくるよう自動でウィンドウを横スクロールしたい場合は、
 以下を一度だけ設定してください（設定しない場合も、該当週の列は太枠でハイライトされるため、
@@ -348,7 +348,7 @@ C1に選択週（`W23`形式）を入力したときの列ハイライトは、�
        Call JumpToSelectedWeek(Me, "F1", 4)   ' 4 = D列(週データ開始列)
    End Sub
    ```
-4. 「T_CSAstocks」「T_TTAFStock」シートにも、それぞれのコードモジュールに以下を貼り付ける
+4. 「CSAstock」「TTAFstock」シートにも、それぞれのコードモジュールに以下を貼り付ける
    （2つとも同じ内容です）
    ```vba
    Private Sub Worksheet_Change(ByVal Target As Range)
@@ -378,8 +378,8 @@ Excel(VBA)だけで完結できるようにしています。ブックの再生�
 最後に入力内容の確認ダイアログが出るので、内容を確認して「はい」を選ぶと、以下のシートの
 一番下に必要な行がまとめて追加されます。
 
-`M_RawMaterials` → `Grid_Requirement` → `Grid_Incoming` → `Grid_Stock` → `Grid_TheoreticalStock` →
-`T_OpeningStock` → `T_CSAstocks` → `T_TTAFStock` → `Dashboard`（理論在庫・実在庫の2行） →
+`M_RawMaterials` → `WeeklyConsumption` → `Incoming` → `Stock` → `TheoreticalStock` →
+`T_OpeningStock` → `CSAstock` → `TTAFstock` → `Dashboard`（理論在庫・実在庫の2行） →
 `Material_Detail` → 該当カテゴリの`PO_Draft_*`
 
 追加直後はこの材料をまだどの中間体も使っていない（`M_BOM`に実績が無い）ため、
@@ -391,15 +391,15 @@ Order・PO_No・合計在庫の6行のみ）になります。その後**通常�
 同様に、`RefreshBOM`を実行するだけで内訳行が自動的に追加されます。
 
 **`RemoveMaterial`マクロ**: Part Name（RM_Code）を入力すると、`AddMaterial`が追加する全シートから
-該当行を削除します。**`T_Shipments`・`T_CSAstocks_Log`/
-`T_TTAFStock_Log`・`M_BOM`のデータは削除しません**（履歴として残しておき、万一同じPart Nameを
+該当行を削除します。**`T_Shipments`・`CSAstock_Log`/
+`TTAFstock_Log`・`M_BOM`のデータは削除しません**（履歴として残しておき、万一同じPart Nameを
 `AddMaterial`で再登録した場合は自動的に再びつながる設計です）。
 
 ### 5.7.1 T_OpeningStock列名参照の誤りの修正
 
 `AddMaterial`実行時に「実行時エラー(1004) アプリケーション定義またはオブジェクト定義のエラーです」
-というエラーで途中停止することがある不具合が見つかりました。原因は、Grid_Stock・
-Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が、`T_OpeningStock`テーブルの
+というエラーで途中停止することがある不具合が見つかりました。原因は、Stock・
+TheoreticalStockの週1列（ブック内で一番古い週）の数式が、`T_OpeningStock`テーブルの
 列名を`Opening_Qty`と誤って参照していたこと（正しい列名は`Opening_Qty_要入力`）です。
 この誤りは`build_soh.py`側にも同じ形であったため、既存の全材料の週1列の数式にも
 同じ誤りが書き込まれていました。
@@ -410,8 +410,8 @@ Grid_TheoreticalStockの週1列（ブック内で一番古い週）の数式が�
 実績データがまだ無いため、この壊れた分岐に実際に到達し、エラーになっていました。
 
 `AddMaterial`自体は既に修正済みです。修正前の状態で既に書き込まれてしまっていた
-**既存材料**の週1列の数式は、`FixOpeningStockColumnReference`マクロ（Grid_Stock・
-Grid_TheoreticalStockの全材料の週1列の数式を一括で修正。他の週の列には影響しない）で
+**既存材料**の週1列の数式は、`FixOpeningStockColumnReference`マクロ（Stock・
+TheoreticalStockの全材料の週1列の数式を一括で修正。他の週の列には影響しない）で
 既に修正を適用済みです。このマクロは移行完了のためVBAコードからは削除済みです。
 
 ### 5.7.2 M_RawMaterialsのCategory変更をPO_Draft_*に反映する（`SyncPODraftCategories`）
@@ -558,15 +558,15 @@ Category・Origin_Countryを基準に作り直します（`SyncPODraftCategories
 でした。`SetupPODraftLetterheadLayout`実行後は、この心配なく`ExportChemical`等を
 実行できます。
 
-**中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`PP_Grid`の
+**中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`Production_Plan`の
 行、生産計画上の製品コード）の増減にも対応しています。
 
 - **追加**: 何もしなくても自動対応済みです。`RefreshWeeklyBatches`が「Powder & Slurry & Pgm
-  Plan」に新しい中間体を見つければ`PP_Grid`に自動で行を追加し、`RefreshBOM`が「Raw Material -
+  Plan」に新しい中間体を見つければ`Production_Plan`に自動で行を追加し、`RefreshBOM`が「Raw Material -
   Look Up」に新しい中間体×材料の組み合わせを見つければ`M_BOM`に追加した上で
   `Material_Detail`の該当材料ブロックにも内訳行を自動追加します（上記参照）。専用マクロを
   実行する必要はありません。
-- **削除（`RemoveIntermediate`マクロ）**: 生産中止になった中間体名を入力すると、`PP_Grid`の
+- **削除（`RemoveIntermediate`マクロ）**: 生産中止になった中間体名を入力すると、`Production_Plan`の
   該当行、`M_BOM`のその中間体を使う原単位の行（複数の材料で使われていれば全件）、
   `Material_Detail`側のその中間体の内訳行（この中間体を使っているすべての材料ブロックから）
   を削除します。原材料側のデータ（`T_Shipments`・`T_OpeningStock`・
@@ -581,10 +581,10 @@ Category・Origin_Countryを基準に作り直します（`SyncPODraftCategories
   強く推奨します。
 - `AddMaterial`で追加する行は常に各シートの一番下に追加され、既存の行の途中に挿入することは
   ありません（既存行の数式・参照がずれるのを避けるため）。
-- `PO_Draft_*`の週次予測式はGrid_Stock内の行位置を`MATCH`で毎回動的に検索する方式のため、
-  材料の追加・削除でGrid_Stockの行位置がずれても数式側が自動的に追従します。
-- `PP_Grid`・`M_BOM`から中間体の行を削除しても、他の中間体・他の材料の計算には影響しません。
-  `Grid_Requirement`・`Material_Detail`側の数式がすべて`MATCH`／構造化参照（テーブル名[列名]）で
+- `PO_Draft_*`の週次予測式はStock内の行位置を`MATCH`で毎回動的に検索する方式のため、
+  材料の追加・削除でStockの行位置がずれても数式側が自動的に追従します。
+- `Production_Plan`・`M_BOM`から中間体の行を削除しても、他の中間体・他の材料の計算には影響しません。
+  `WeeklyConsumption`・`Material_Detail`側の数式がすべて`MATCH`／構造化参照（テーブル名[列名]）で
   組まれており、固定の行番号を直接使っていないためです。
 
 ## 5.8 Control_Panel（マクロボタンを月次手順の順に並べる）
@@ -626,7 +626,7 @@ BOMも以下の対応関係で作成しています。
 
 - `Powder Data Base`・`Slurry Data Base`・`Solution`: それぞれのシートの1バッチあたり使用量列
   （Powder/Slurry/SolutionいずれもM列）をそのまま採用
-- `Catalyst Data Base`: **Substrateの行だけ**をF列（catalyst1個あたりの使用量。PP_Grid側で
+- `Catalyst Data Base`: **Substrateの行だけ**をF列（catalyst1個あたりの使用量。Production_Plan側で
   catalystは個数管理のためF列を使う。他の材料はSlurry/Powder/Solution側で既にバッチベースの
   計算式が存在するため、Catalyst Data Base側の直接行(化学品・スラリー参照行)は二重計上を
   避けるため使用しない）
@@ -634,14 +634,14 @@ BOMも以下の対応関係で作成しています。
 **中間体が別の中間体の原料になっているケース**（例: TSZ-616・TSZ-938はSlurryだが、それ自体が
 外部購入品ではなく、TSP-618等の別のSlurryの原料としてのみ使われ、「Powder & Slurry & Pgm Plan」
 にも独自の週次バッチ計画を持たない）は、`M_RawMaterials`には一切登録しません（Dashboard等には
-表示されません）。代わりに、`PP_Grid`のその中間体の週次セルに、`Grid_Requirement`と全く同じ
+表示されません）。代わりに、`Production_Plan`のその中間体の週次セルに、`WeeklyConsumption`と全く同じ
 `SUMPRODUCT`パターンの数式（それを使う側の実バッチ数から逆算）を自動生成して埋め込みます。
 これはビルド時にPythonが数式を1回書き込むだけで、以降はExcelの数式として完結するため、
 中間体の増減やレシピの変更があっても再生成なしに追従します。
 
 **固定週次消費量(`M_RawMaterials`の`固定週次消費量_要入力`列)**: Original Towel（梱包資材の
 養生紙）のように、生産中間体の構成(BOM)とは無関係に毎週ほぼ一定量を消費する材料向けの入力欄
-です。`Grid_Requirement`はBOM経由の計算結果にこの値を単純加算します。通常は0で、値を変える
+です。`WeeklyConsumption`はBOM経由の計算結果にこの値を単純加算します。通常は0で、値を変える
 場合はこのセルを直接書き換えるだけで反映されます(再生成不要)。
 
 **生産計画(`RefreshWeeklyBatches`)の元データ**: 以前は「Powder & Slurry & Pgm Plan」が材料
@@ -662,7 +662,7 @@ Solutionが増えた場合だけ、`Control_Panel`シートの`T_SolutionNames`�
 
 ## 5.10 発注数量の入力方法（PO_Draftの自動計算を廃止）
 
-以前は`PO_Draft_Chemical`/`_Hazardous`/`_Substrate`が、基準在庫下限と`Grid_Stock`の在庫予測から
+以前は`PO_Draft_Chemical`/`_Hazardous`/`_Substrate`が、基準在庫下限と`Stock`の在庫予測から
 「いつ・いくつ発注すべきか」を自動計算していました（`MAX(0, 基準在庫下限 - その週の予測在庫)`）。
 この自動計算は廃止し、**発注数量は`Material_Detail`の「Order(発注予定,kg)」行に、材料ごと・週ごと
 直接手入力**する方式に変更しました。
@@ -684,7 +684,7 @@ Solutionが増えた場合だけ、`Control_Panel`シートの`T_SolutionNames`�
 
 `Material_Detail`の「Order(発注予定,kg)」行のすぐ下に「PO_No」行があります。運用の流れは:
 
-1. 欲しいタイミングの週セルに、Orderの数量を入力する（この時点でGrid_Incoming・Grid_Stock・
+1. 欲しいタイミングの週セルに、Orderの数量を入力する（この時点でIncoming・Stock・
    Dashboard・PO_Draft_*にすぐ反映されます。PO番号はまだ分からなくてOKです）。
 2. PO番号が発行されたら、PO_No行の同じ週のセルに追記する（後からでOK）。
 3. `RefreshShipments`を実行するたびに、そのPO番号の出荷状況(CSA Reportの`Status`列)に
@@ -695,7 +695,7 @@ Solutionが増えた場合だけ、`Control_Panel`シートの`T_SolutionNames`�
      (Latest ETA+14日＝CSA Reportの「2 week transit to TTAF」列を反映済み)の週に移動する。
      ETAが更新されるたびに追従する。
    - `TTAF Stock`(着荷確定): 最後に分かっている週で数量を確定し、PO_No行に「[DONE]」を付けて
-     Grid_Incomingの計算対象から除外する。**数字自体は削除せず残る**ので、過去の発注履歴・
+     Incomingの計算対象から除外する。**数字自体は削除せず残る**ので、過去の発注履歴・
      発注頻度はいつでもMaterial_Detailを見返せば分かる。
 4. 同じPO番号の出荷が複数行に分かれている場合（分割納品）、Order/PO_Noのセルもその週数分に
    自動的に分割される。
@@ -708,10 +708,10 @@ Solutionが増えた場合だけ、`Control_Panel`シートの`T_SolutionNames`�
 早着・延着どちらでも正確に対応できます。
 
 Material_Detailにブロックが無い材料（BOMで使われない梱包資材等）や、PO_Noがどこにも
-入力されていない出荷は、この自動追従の対象外です（Grid_Incomingは、そのようなケースでは
+入力されていない出荷は、この自動追従の対象外です（Incomingは、そのようなケースでは
 従来通り`T_Shipments`を直接参照します）。
 
-**既存ブックへの導入**は完了済みです（Material_DetailへのPO_No行追加と、Grid_Incomingの
+**既存ブックへの導入**は完了済みです（Material_DetailへのPO_No行追加と、Incomingの
 数式書き換えをまとめて行う`SetupOrderManagementMigration`移行用マクロを一度だけ実行し、
 移行完了のためVBAコードからは削除済みです）。
 
@@ -727,7 +727,7 @@ Material_Detailにブロックが無い材料（BOMで使われない梱包資�
 この不具合を修正するため、`T_Shipments`にVessel・Container・Original_ETD列（10〜12列目）を
 追加し、一意キーを「材料名＋PO番号＋コンテナ番号＋Original ETD」の複合キーに変更しました。
 それでも完全に同じ組み合わせが複数行ある場合（同じコンテナに複数バッチが混載されている等、
-ごく稀なケース）は、ファイル内の出現順の連番で最終的に区別します。これによりGrid_Incomingの
+ごく稀なケース）は、ファイル内の出現順の連番で最終的に区別します。これによりIncomingの
 計算（Material_Detailにブロックが無い材料のフォールバック時）や`SyncMaterialDetailOrders`の
 週別集計も、分割出荷分をすべて正しく合算するようになりました。
 
@@ -804,10 +804,10 @@ Original ETDが両方空欄になることは無いため、「両方空欄」�
 
 ## 6. 自動反映の仕組み
 
-- **生産計画が変わったとき**: `RefreshWeeklyBatches`実行後、`Grid_Requirement` → `Grid_Stock` →
+- **生産計画が変わったとき**: `RefreshWeeklyBatches`実行後、`WeeklyConsumption` → `Stock` →
   `Dashboard` → `PO_Draft_*` → `Material_Detail`まで自動的に再計算されます。
-- **原単位が変わったとき**: `RefreshBOM`実行後、同様に自動反映されます。`M_BOM`・`PP_Grid`は
-  `Grid_Requirement`から直接参照されているため、全く新しい中間体×原材料の組み合わせが増えた
+- **原単位が変わったとき**: `RefreshBOM`実行後、同様に自動反映されます。`M_BOM`・`Production_Plan`は
+  `WeeklyConsumption`から直接参照されているため、全く新しい中間体×原材料の組み合わせが増えた
   場合でも、ブックの再生成は不要です。さらに`RefreshBOM`は、`Material_Detail`の該当材料ブロックに
   その中間体の内訳行（No. of batches／使用量(kg)）が無ければ自動的に追加します
   （`SyncMaterialDetailIntermediates`）。
@@ -820,22 +820,22 @@ LibreOffice（Excel互換の検証環境）で実際に数式を再計算させ�
 Power Query部分を除く。両者はこの環境で実行できないため未検証です）。
 
 - 全シートを通じて数式エラー（#REF!等）は0件
-- `Grid_Requirement`の値が、実際の「Powder & Slurry & Pgm Plan」の元シートに記載された週次使用量
+- `WeeklyConsumption`の値が、実際の「Powder & Slurry & Pgm Plan」の元シートに記載された週次使用量
   と完全一致することを確認済み
 - 生産計画変更・ETA変更（早着遅着）・安全在庫割れ検知の自動連鎖を実データで確認済み
-- `M_BOM`・`PP_Grid`にVBAで行を追加しても、`Grid_Requirement`のSUMPRODUCT参照が正しい値を
+- `M_BOM`・`Production_Plan`にVBAで行を追加しても、`WeeklyConsumption`のSUMPRODUCT参照が正しい値を
   拾えるよう設計（数式ロジックはExcelの標準的な参照方式のため動作は確実ですが、VBA自体の実行は
   未検証です）
 
 **重量パフォーマンスに関する経緯（重要）**: 初期設計では「BOM行×週」を1行ずつ展開した中間表
-（`Calc_Demand`, 73,944行）を`Grid_Requirement`がSUMIFSで週次集計する方式でした。LibreOffice上の
+（`Calc_Demand`, 73,944行）を`WeeklyConsumption`がSUMIFSで週次集計する方式でした。LibreOffice上の
 計測では「開いて再計算するまで約25〜70秒」という結果だったため問題ないと判断していましたが、
 実際のExcelでは非常に重くなり、開く・編集する・スクロールするたびにフリーズ・強制終了が
 頻発する不具合が発生しました。LibreOfficeの計算エンジンはExcelと完全には同じではなく、
 今回のように大規模な数式（10,504セル×74,000行のSUMIFS＝15億回超の比較）の実負荷を
 正しく再現できていなかったことが原因です。**そのため、このシステムの重さに関する最終的な
 判断は、LibreOfficeでの検証結果だけでなく実際のExcelでの動作確認を必ず優先してください。**
-この教訓を踏まえ、`Calc_Demand`を廃止し`M_BOM`・`PP_Grid`から直接SUMPRODUCTで集計する方式に
+この教訓を踏まえ、`Calc_Demand`を廃止し`M_BOM`・`Production_Plan`から直接SUMPRODUCTで集計する方式に
 再設計しました（計算量を約200分の1に削減）。
 
 **`RefreshWeeklyBatches`実行時に必ず強制終了する不具合について**: この修正後も「Alt+F8 →
@@ -851,7 +851,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 
 **`RefreshSelfStock`実行時にも強制終了する不具合について**: 同じ理由（1セルずつの読み書き）が
 `RefreshSelfStock`にもありました。対象シート「Stock」の読み取りを同様に1回の配列読み込みに
-変更し、さらに`T_CSAstocks`/`T_TTAFStock`への書き込み(`UpsertStockRow`)も、呼び出すたびに
+変更し、さらに`CSAstock`/`TTAFstock`への書き込み(`UpsertStockRow`)も、呼び出すたびに
 テーブル全行をセル単位でスキャンしていたのを、(Part Name, WeekIndex)→行番号のDictionaryを
 1回だけ作って参照する方式に変更しました（`RefreshTTAFStock`も同様）。これらのテーブルは
 運用を重ねるほど行数が増えるため、この修正は将来的な速度低下の予防にもなります。
@@ -860,21 +860,21 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 （表が育つほど遅くなる／週ごとに同じ検索を繰り返す）が他に残っていないか確認し、以下も
 あわせて修正しました。いずれも計算結果は変更前後で完全一致することをLibreOfficeで確認済みです。
 
-- `Grid_Stock`の在庫ロールフォワード式: `T_CSAstocks`/`T_TTAFStock`の該当有無・
+- `Stock`の在庫ロールフォワード式: `CSAstock`/`TTAFstock`の該当有無・
   値の取得に`SUMPRODUCT`のブール配列積を使っていましたが、これは対象表が育つほど遅くなる
-  上記と同じ性質を持っていました。`T_CSAstocks`/`T_TTAFStock`は(Part Name,WeekIndex)ごとに
+  上記と同じ性質を持っていました。`CSAstock`/`TTAFstock`は(Part Name,WeekIndex)ごとに
   上書き更新される設計のため、定常状態では行数が「原材料数×週数(101×104≈10,504)」程度で
   頭打ちになる見込みですが、それでも将来的な速度低下を避けるため、ネイティブ関数の
   `COUNTIFS`/`SUMIFS`（この環境で構造化参照との組み合わせが正しく動作することを確認済み）に
   置き換えました。
 - `Dashboard`の自社在庫/TTAF在庫実績表示（`LOOKUP`の「最後に一致した行」トリック）: 参照範囲を
   `$A$2:$A$2000`に固定していましたが、上記の理論上限（約10,504行）を下回るため、
-  `T_CSAstocks`/`T_TTAFStock`が育つと数ヶ月程度でこの上限を超え、最新実績が表示されなくなる
+  `CSAstock`/`TTAFstock`が育つと数ヶ月程度でこの上限を超え、最新実績が表示されなくなる
   （静かに古いデータのまま止まる）不具合になり得ました。`12,000`行に引き上げて修正しています。
-- `Material_Detail`の「No. of batches」行: `PP_Grid`内の該当行を`MATCH`で探す処理を、週ごと
+- `Material_Detail`の「No. of batches」行: `Production_Plan`内の該当行を`MATCH`で探す処理を、週ごと
   （104回）に毎回やり直していました（711組×104週＝約7万4千回のMATCH）。`M_BOM`の`PPGridRow`と
   同じ考え方で、行位置を1回だけMATCHしてヘルパー列(最終週列の右隣)にキャッシュし、以降は
-  そのキャッシュ値をINDEXで使い回す方式に変更しました（列位置はPP_Gridの列並びが固定のため
+  そのキャッシュ値をINDEXで使い回す方式に変更しました（列位置はProduction_Planの列並びが固定のため
   MATCH不要、週番号からそのまま計算できます）。
 
 **それでも`RefreshWeeklyBatches`実行時に強制終了する不具合について（VBA側の直し忘れ）**:
@@ -882,7 +882,7 @@ COM通信の呼び出し回数が数十万〜数百万回に達し、Excelが長
 M_BOMへの書き込みのたびに全711行以上をセル単位でスキャンする、`FindOrAddIntermediateRow`が
 中間体ごとに毎回`.Find()`を呼ぶ）が残っていると気づいていながら、そちらの修正を実装し忘れて
 いました。結果として`RefreshWeeklyBatches`実行時の強制終了が再発しました。`RefreshWeeklyBatches`
-の実行開始時に、PP_Grid(中間体名→行番号)とM_BOM(Intermediate|Part Name→行番号)のDictionaryを
+の実行開始時に、Production_Plan(中間体名→行番号)とM_BOM(Intermediate|Part Name→行番号)のDictionaryを
 1回だけ作っておき（`BuildNameIndex`/`BuildPairIndex`）、以降はそれを参照する方式に修正しました。
 あわせて`RefreshBOM`のインデックス構築、`WeekIndexForDate`の週特定処理も同じ考え方で1回の
 配列読み込みにまとめています。
@@ -894,7 +894,7 @@ M_BOMへの書き込みのたびに全711行以上をセル単位でスキャン
 
 実際のExcelでの動作確認をお願いします。
 
-**`T_CSAstocks`/`T_TTAFStock`が縦に積み上がり続ける不具合について**: 上記のAnchorYear対応
+**`CSAstock`/`TTAFstock`が縦に積み上がり続ける不具合について**: 上記のAnchorYear対応
 （WeekIndexをDateからのライブ計算にした修正）の副作用として、日次で`RefreshSelfStock`を
 実行するたびに全材料分の行が新規追加され、Part Nameが何行も重複して積み上がっていく
 不具合がありました（以前はWeekIndexをキーにしていたため同じ週内なら自動的に上書きされて
@@ -902,13 +902,13 @@ M_BOMへの書き込みのたびに全711行以上をセル単位でスキャン
 対策として、生データの保存先を「その週の月曜日（実際の暦日から計算。AnchorYearには依存
 しない）」をキーにする方式に変更し、同じ週内の複数回の取り込みが1行にまとまるようにしました。
 
-あわせて、目に見える`T_CSAstocks`/`T_TTAFStock`シート自体も再設計しました。生データは
-非表示の`T_CSAstocks_Log`/`T_TTAFStock_Log`（実施日ベース、AnchorYearを何度・どんな頻度で
+あわせて、目に見える`CSAstock`/`TTAFstock`シート自体も再設計しました。生データは
+非表示の`CSAstock_Log`/`TTAFstock_Log`（実施日ベース、AnchorYearを何度・どんな頻度で
 進めても壊れない）に保存し、目に見える方は`Dashboard`と同じ「材料×週」のグリッド形式に
 変更、値はすべて生データからのSUMIFS数式で毎回計算し直す設計にしています。これにより、
-`Grid_Stock`・`Dashboard`・`Material_Detail`側の参照も、行数が育ち続ける表へのSUMIFS/COUNTIFS
+`Stock`・`Dashboard`・`Material_Detail`側の参照も、行数が育ち続ける表へのSUMIFS/COUNTIFS
 から、固定104列への直接セル参照に変更でき、以前の「表の成長に伴う速度低下」の懸念自体も
-なくなりました（`Grid_Stock`側の該当有無判定も、以前は「記録が無い週」と「0と記録された週」
+なくなりました（`Stock`側の該当有無判定も、以前は「記録が無い週」と「0と記録された週」
 を区別するために別途COUNTIFSが必要でしたが、グリッド側で「記録が無い週は空欄」にする設計に
 したことで、単純な空欄判定だけで済むようになっています）。
 
@@ -923,9 +923,9 @@ M_BOMへの書き込みのたびに全711行以上をセル単位でスキャン
 確認ダイアログが処理を妨げ、結果的に`srcWb`が正しく取得できなくなることがあるというもので、
 各Refresh系マクロの`Workbooks.Open`前後に`DisplayAlerts`の抑制・復元を追加しています。
 
-**T_CSAstocks_Log/T_TTAFStock_LogのWeekIndex列が空欄になる不具合について**: 上記の再設計後、
+**CSAstock_Log/TTAFstock_LogのWeekIndex列が空欄になる不具合について**: 上記の再設計後、
 VBAで新規追加した行のWeekIndex(数式列)が数式ごと空欄のままになり、目に見える
-T_CSAstocks/T_TTAFStockのグリッドに何も表示されない不具合が実際に報告されました。原因は、
+CSAstock/TTAFstockのグリッドに何も表示されない不具合が実際に報告されました。原因は、
 「新しい行を追加すればExcelのテーブル機能が既存行と同じ数式を自動的に複製する」という前提が、
 UI上で手動追加した場合の挙動であり、VBAの`ListRows.Add`経由では複製が保証されないためでした。
 新規行では直前行のWeekIndexの数式を`FormulaR1C1`で明示的にコピーするよう修正しています
@@ -970,7 +970,7 @@ TTAF倉庫に到着する」実績・予定であり、TTAF倉庫内で場所を
 同じ発注月（`Order_Month`）の実データが`T_Shipments`に現れたら、`T_PlannedOrders`側の
 `IsReconciled`/`EffectiveQty`列が自動的に0になり、Material_Detailの表示からも自動的に消えます。
 
-**消込み条件について（設計の見直し）**: 当初は「TTAFの実在庫（T_TTAFStock）が納品予定週に
+**消込み条件について（設計の見直し）**: 当初は「TTAFの実在庫（TTAFstock）が納品予定週に
 追いついたら消込む」という条件も併用していましたが、これは誤りでした。CSA Reportは毎週、
 その注文とは無関係に材料ごとの在庫実績を更新し続けるため、「納品予定週以降に実績データが
 存在する」は実質「予定週を過ぎて次のCSA Reportが届いたか」という時間経過の判定にしかならず、
@@ -1010,10 +1010,10 @@ week3・week10分もまとめて消えてしまいます。これを避けるた
   登録）。`PO_Draft_Substrate_JPN_CHN`/`_Poland`にも、`Origin_Country`が入力済みの
 品目については実データが反映されています（5.7.3章参照）。
 - **`T_OpeningStock`（期首在庫）**: 現状すべて0です。運用開始週の実在庫を入力してください
-  （`T_CSAstocks`・`T_TTAFStock`に実績があれば、その週以降は自動でリセットされます）。
+  （`CSAstock`・`TTAFstock`に実績があれば、その週以降は自動でリセットされます）。
 - **`RefreshData_*.bas`・`Q_Shipments.pq`**: 未検証です。動作確認の結果を教えてください。
-- **`T_CSAstocks`/`T_TTAFStock`シートへの手入力はしないでください**: これらは数式のみのグリッド
-  表示です。値は非表示の`T_CSAstocks_Log`/`T_TTAFStock_Log`から自動計算されるため、直接
+- **`CSAstock`/`TTAFstock`シートへの手入力はしないでください**: これらは数式のみのグリッド
+  表示です。値は非表示の`CSAstock_Log`/`TTAFstock_Log`から自動計算されるため、直接
   上書きしても`RefreshSelfStock`/`RefreshTTAFStock`を再実行すると数式に戻ります。
 
 ## 9. 今後の拡張候補

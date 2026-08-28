@@ -3,7 +3,7 @@ Option Explicit
 
 Public Const MD_HEADER_ROW As Long = 6       ' Material_Detail: header row. Corresponds to build_soh.py's MD_TABLE_ROW
 Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: week-data start column (column D). Corresponds to build_soh.py's WEEK_START_COL
-Public Const SS_TABLE_ROW As Long = 5        ' T_CSAstocks/T_TTAFStock: header row (week labels). Corresponds to build_soh.py's SS_TABLE_ROW
+Public Const SS_TABLE_ROW As Long = 5        ' CSAstock/TTAFstock: header row (week labels). Corresponds to build_soh.py's SS_TABLE_ROW
 Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material data. Corresponds to build_soh.py's DATA_START_ROW
 
 ' ============================================================================
@@ -21,7 +21,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 '                                 WeekIndexForDate/ColLetter). All other modules
 '                                 depend on this one.
 '   RefreshData_ProductionPlan : RefreshWeeklyBatches (imports "Powder & Slurry & Pgm Plan"
-'                                 and updates PP_Grid)
+'                                 and updates Production_Plan)
 '   RefreshData_BOM             : RefreshBOM (imports "Raw Material - Look Up"
 '                                 and updates M_BOM / Material_Detail's breakdown rows)
 '   RefreshData_StockActuals    : RefreshSelfStock / RefreshTTAFStock (import self/TTAF actual stock)
@@ -41,7 +41,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' [Caution] JumpToSelectedWeek does not do anything on its own once
 ' imported - it must additionally be wired up via a Worksheet_Change
 ' event pasted directly into the code module of each of the "Dashboard",
-' "Material_Detail", "T_CSAstocks", and "T_TTAFStock" sheets (a standard
+' "Material_Detail", "CSAstock", and "TTAFstock" sheets (a standard
 ' module's code never fires from a cell edit). The routine itself lives
 ' in the RefreshData_Display module; see docs/SOH_System_Guide.md for the
 ' exact Worksheet_Change code to paste into each sheet.
@@ -49,8 +49,8 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' [About performance] Every Refresh* macro reads its target range as a single
 ' array (Range.Value) once, instead of reading an external file's cells one
 ' at a time via .Cells(r,c).Value, and afterward only touches the in-memory
-' array. Likewise, writes to PP_Grid (intermediate name -> row number) and
-' T_CSAstocks_Log/T_TTAFStock_Log ((RM_Code, week's Monday) -> row number)
+' array. Likewise, writes to Production_Plan (intermediate name -> row number) and
+' CSAstock_Log/TTAFstock_Log ((RM_Code, week's Monday) -> row number)
 ' build a Dictionary once at the start of the run and look values up in it,
 ' instead of calling .Find() or scanning every row on each write (see
 ' BuildNameIndex in this module and BuildStockRowIndex in
@@ -63,7 +63,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' read from Look Up into an in-memory Dictionary, then replaces the whole of
 ' M_BOM in a single block write (Range.Formula = a 2D array). It used to add
 ' rows one at a time via ListRows.Add, but because M_BOM is referenced by a
-' very large number of formulas (Grid_Requirement, Material_Detail, PP_Grid's
+' very large number of formulas (WeeklyConsumption, Material_Detail, Production_Plan's
 ' pass-through formulas, etc.), adding a single row triggered a dependency
 ' recheck across all of them, and this was reported to slow to a near-freeze
 ' once the row count passed roughly a thousand - hence this design.
@@ -93,10 +93,10 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' dialogs, and restored to True during cleanup. As a precaution, the
 ' srcWb.Close call itself is still guarded with If Not srcWb Is Nothing Then.
 '
-' [About the two-layer structure of T_CSAstocks/T_TTAFStock]
+' [About the two-layer structure of CSAstock/TTAFstock]
 ' RefreshSelfStock/RefreshTTAFStock never write to the visible
-' T_CSAstocks/T_TTAFStock sheets at all. They write to the hidden
-' T_CSAstocks_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
+' CSAstock/TTAFstock sheets at all. They write to the hidden
+' CSAstock_Log/TTAFstock_Log (a raw log keyed by count date), and the
 ' visible sheet is built entirely from formulas (a material x week grid)
 ' that recompute from that log every time. The WeekIndex column on the
 ' _Log sheet side is a formula column calculated automatically from the
@@ -106,7 +106,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' data." See the top of the RefreshData_StockActuals module for details.
 '
 ' [Note: when an entirely new substrate/Cat code is added]
-'   RefreshWeeklyBatches automatically adds rows to PP_Grid and M_BOM, but
+'   RefreshWeeklyBatches automatically adds rows to Production_Plan and M_BOM, but
 '   it does not add new substrate codes to M_RawMaterials (the raw material
 '   master) via VBA.
 '   If you notice a new substrate code (one that doesn't appear on the TTAF
@@ -153,7 +153,7 @@ End Function
 ' spelling variants (case, symbols, spacing differences) in material/
 ' intermediate names. Used in common across multiple modules -
 ' RefreshData_BOM, RefreshData_StockActuals, RefreshData_Shipments - when
-' matching an external file's names against the M_RawMaterials/PP_Grid side.
+' matching an external file's names against the M_RawMaterials/Production_Plan side.
 Public Function NormalizeText(s As String) As String
     Dim i As Long, ch As String, result As String
     s = UCase(s)
