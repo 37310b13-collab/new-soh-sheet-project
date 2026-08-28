@@ -15,7 +15,7 @@ Option Explicit
 '                 InputBox adds the necessary rows in bulk to the bottom
 '                 of M_RawMaterials, Grid_Requirement, Grid_Incoming,
 '                 Grid_Stock, Grid_TheoreticalStock, T_OpeningStock,
-'                 T_SelfStock, T_TTAFStock, Dashboard, Material_Detail,
+'                 T_CSAstocks, T_TTAFStock, Dashboard, Material_Detail,
 '                 and the matching PO_Draft_* sheet. Right after adding,
 '                 since there's no usage history in M_BOM yet, its block
 '                 on Material_Detail is a mini block with no intermediate
@@ -28,7 +28,7 @@ Option Explicit
 '   RemoveMaterial : Removes a material no longer in use from the system.
 '                 Entering the Part Name (RM_Code) via InputBox deletes the
 '                 matching row from every sheet AddMaterial adds to. Data
-'                 in T_Shipments, T_SelfStock_Log/
+'                 in T_Shipments, T_CSAstocks_Log/
 '                 T_TTAFStock_Log, and M_BOM is not deleted (kept as
 '                 history - adding the same Part Name again with
 '                 AddMaterial automatically reconnects it).
@@ -290,13 +290,13 @@ Sub AddMaterial()
             ",T_Shipments[Effective_Week]," & w & ")"
     Next w
 
-    ' ---- T_SelfStock / T_TTAFStock (a bordered grid, not a Table. Insert
+    ' ---- T_CSAstocks / T_TTAFStock (a bordered grid, not a Table. Insert
     ' right before anchorRmCode's row so the order matches M_RawMaterials) ----
     Dim ssRowSelf As Long, ssRowTTAF As Long
-    ssRowSelf = InsertOrAppendStockGridRow(thisWb.Sheets("T_SelfStock"), rmCode, nWeeks, "T_SelfStock_Log", "Self_Qty", anchorRmCode)
+    ssRowSelf = InsertOrAppendStockGridRow(thisWb.Sheets("T_CSAstocks"), rmCode, nWeeks, "T_CSAstocks_Log", "Self_Qty", anchorRmCode)
     ssRowTTAF = InsertOrAppendStockGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, nWeeks, "T_TTAFStock_Log", "TTAF_Qty", anchorRmCode)
     If ssRowSelf <> ssRowTTAF Then
-        MsgBox "Warning: T_SelfStock and T_TTAFStock's row numbers ended up different (" & ssRowSelf & " / " & ssRowTTAF & ")." & vbCrLf & _
+        MsgBox "Warning: T_CSAstocks and T_TTAFStock's row numbers ended up different (" & ssRowSelf & " / " & ssRowTTAF & ")." & vbCrLf & _
                "Please check manually. Processing will continue.", vbExclamation
     End If
     Dim ssRow As Long: ssRow = ssRowSelf
@@ -308,8 +308,8 @@ Sub AddMaterial()
     For w = 1 To nWeeks
         col = 1 + w
         cl = ColLetter(col)
-        hasSelf = "('T_SelfStock'!" & cl & ssRow & "<>"""")"
-        selfVal = "'T_SelfStock'!" & cl & ssRow
+        hasSelf = "('T_CSAstocks'!" & cl & ssRow & "<>"""")"
+        selfVal = "'T_CSAstocks'!" & cl & ssRow
         hasTTAF = "('T_TTAFStock'!" & cl & ssRow & "<>"""")"
         ttafVal = "'T_TTAFStock'!" & cl & ssRow
         If w = 1 Then
@@ -404,7 +404,7 @@ Sub RemoveMaterial()
     If MsgBox("This will remove material """ & rmCode & """." & vbCrLf & _
               "The matching row will be deleted from every related sheet (M_RawMaterials," & vbCrLf & _
               "Grid_Requirement, Grid_Incoming, Grid_Stock, Grid_TheoreticalStock," & vbCrLf & _
-              "T_OpeningStock, T_SelfStock, T_TTAFStock, Dashboard, Material_Detail," & vbCrLf & _
+              "T_OpeningStock, T_CSAstocks, T_TTAFStock, Dashboard, Material_Detail," & vbCrLf & _
               "and the matching PO_Draft). This cannot be undone." & vbCrLf & vbCrLf & _
               "(Past data for this material remaining in T_Shipments," & vbCrLf & _
               "the actuals logs, and M_BOM will not be deleted)" & vbCrLf & vbCrLf & "Are you sure?", _
@@ -419,7 +419,7 @@ Sub RemoveMaterial()
     Call DeleteMatchingTableRow(thisWb.Sheets("Grid_TheoreticalStock").ListObjects("Grid_TheoreticalStock"), rmCode)
     Call DeleteMatchingTableRow(thisWb.Sheets("T_OpeningStock").ListObjects("T_OpeningStock"), rmCode)
 
-    Call DeleteMatchingGridRow(thisWb.Sheets("T_SelfStock"), rmCode, 1)
+    Call DeleteMatchingGridRow(thisWb.Sheets("T_CSAstocks"), rmCode, 1)
     Call DeleteMatchingGridRow(thisWb.Sheets("T_TTAFStock"), rmCode, 1)
     Call DeleteMatchingGridRow(thisWb.Sheets("Dashboard"), rmCode, 1)
 
@@ -666,7 +666,7 @@ ErrHandler:
     MsgBox "An error occurred during processing: (" & errNum5 & ") " & errMsg5, vbCritical
 End Sub
 
-' Adds a row for a new material to T_SelfStock/T_TTAFStock. Since these
+' Adds a row for a new material to T_CSAstocks/T_TTAFStock. Since these
 ' are a bordered grid rather than a Table, row addition is handled
 ' manually. If anchorRmCode (the code of the material that was at the same
 ' insert position on the M_RawMaterials side) is given, an Excel row
@@ -711,7 +711,7 @@ End Function
 
 ' Adds 2 rows for a new material to Dashboard (Theoretical Stock, then
 ' Actual Stock, in that order) (ssRow = the row number on the
-' T_SelfStock/T_TTAFStock side, grow = the row number on the
+' T_CSAstocks/T_TTAFStock side, grow = the row number on the
 ' Grid_Requirement/Incoming/Stock side). If anchorRmCode is given, an
 ' Excel row insertion is used to insert right before that material's row,
 ' preserving the same order as M_RawMaterials (an empty string means
@@ -745,9 +745,9 @@ Private Sub AppendDashboardRow(sh As Worksheet, rmCode As String, nWeeks As Long
     End If
     Dim lastWeekCol As String: lastWeekCol = ColLetter(1 + nWeeks)
 
-    Dim ssSelfRng As String: ssSelfRng = "'T_SelfStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
+    Dim ssSelfRng As String: ssSelfRng = "'T_CSAstocks'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
     Dim ssTTAFRng As String: ssTTAFRng = "'T_TTAFStock'!$B$" & ssRow & ":$" & lastWeekCol & "$" & ssRow
-    Dim ssLabelRng As String: ssLabelRng = "'T_SelfStock'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
+    Dim ssLabelRng As String: ssLabelRng = "'T_CSAstocks'!$B$" & SS_TABLE_ROW & ":$" & lastWeekCol & "$" & SS_TABLE_ROW
     ' Variance (kg) = Actual Stock (Grid_Stock) - Theoretical Stock
     ' (Grid_TheoreticalStock). Since theoretical stock resets at the start
     ' of each month, looking at the last week of the displayed period (2
@@ -883,7 +883,7 @@ Private Sub AppendMaterialDetailBlock(sh As Worksheet, rmCode As String, descVal
     sh.Cells(r, 2).Value = "Self Stock (Actual, kg)"
     For w = 1 To nWeeks
         col = MD_WEEK_START_COL + w - 1
-        sh.Cells(r, col).Value = "='T_SelfStock'!" & ColLetter(1 + w) & ssRow
+        sh.Cells(r, col).Value = "='T_CSAstocks'!" & ColLetter(1 + w) & ssRow
     Next w
 
     ' Order row: the field where the planned order quantity is entered
@@ -1055,7 +1055,7 @@ Private Sub DeleteMatchingTableRow(tbl As ListObject, rmCode As String)
 End Sub
 
 ' Deletes, from a bordered grid that doesn't use the Table feature
-' (T_SelfStock/T_TTAFStock/Dashboard/PO_Draft_*), the row matching the
+' (T_CSAstocks/T_TTAFStock/Dashboard/PO_Draft_*), the row matching the
 ' given material code. nameCol = the column number that holds the material code.
 Private Sub DeleteMatchingGridRow(sh As Worksheet, rmCode As String, nameCol As Long)
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, nameCol).End(xlUp).Row

@@ -7,7 +7,7 @@ Option Explicit
 ' [Why] T_StockCount was a manual physical-count override sheet, given top
 ' priority in Grid_Stock's formula (manual count > self+TTAF actuals sum >
 ' roll-forward). The weekly "Raw materials daily check" (which already
-' feeds T_SelfStock via RefreshSelfStock) turned out to already BE the
+' feeds T_CSAstocks via RefreshSelfStock) turned out to already BE the
 ' physical stock count, making T_StockCount's role fully redundant - and
 ' on the live file it was confirmed to have never actually been used (the
 ' sample/placeholder row was still sitting there untouched). This macro:

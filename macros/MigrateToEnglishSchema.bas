@@ -50,7 +50,7 @@ Option Explicit
 ' Japanese for now does not break anything): README sheet body text,
 ' Control_Panel's descriptive text/instructions and button-description
 ' column, PO_Draft_* letterhead placeholder text, T_StockCount/
-' T_SelfStock_Log/T_TTAFStock_Log sample/dummy rows, the MOQ input-field
+' T_CSAstocks_Log/T_TTAFStock_Log sample/dummy rows, the MOQ input-field
 ' comment text, PO_Draft_* header-row labels. These can be updated later
 ' with ordinary find & replace at your convenience.
 '

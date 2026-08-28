@@ -38,7 +38,7 @@ Option Explicit
 ' assigned to buttons on Material_Detail by hand (openpyxl can't create
 ' buttons automatically). JumpToSelectedWeek does nothing on its own once
 ' imported - it also needs a Worksheet_Change wired into each of the
-' Dashboard/Material_Detail/T_SelfStock/T_TTAFStock sheets' own code
+' Dashboard/Material_Detail/T_CSAstocks/T_TTAFStock sheets' own code
 ' modules. See the comment at the top of RefreshData_Utilities and
 ' docs/SOH_System_Guide.md for the exact steps/code.
 ' ============================================================================
@@ -133,7 +133,7 @@ Sub HideInactiveIntermediates()
 End Sub
 
 ' Common routine, meant to be called when C1 (selected week) is entered on
-' Dashboard/Material_Detail/T_SelfStock/T_TTAFStock. Rather than copying the
+' Dashboard/Material_Detail/T_CSAstocks/T_TTAFStock. Rather than copying the
 ' selected week's value into a separate pinned column, this simply scrolls
 ' the window horizontally so the "real week-data column" always appears
 ' right next to the label column (right after the frozen pane). Because
@@ -142,7 +142,7 @@ End Sub
 ' Called from each sheet's own Worksheet_Change with the target sheet, the
 ' resolved week-number cell (F1), and the week-data start column (9 =
 ' column I for Dashboard, 4 = column D for Material_Detail, 2 = column B
-' for T_SelfStock/T_TTAFStock).
+' for T_CSAstocks/T_TTAFStock).
 Public Sub JumpToSelectedWeek(sh As Worksheet, weekIndexCell As String, weekStartCol As Long)
     Dim wIdx As Variant
     wIdx = sh.Range(weekIndexCell).Value

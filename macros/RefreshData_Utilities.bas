@@ -3,7 +3,7 @@ Option Explicit
 
 Public Const MD_HEADER_ROW As Long = 6       ' Material_Detail: header row. Corresponds to build_soh.py's MD_TABLE_ROW
 Public Const MD_WEEK_START_COL As Long = 4   ' Material_Detail: week-data start column (column D). Corresponds to build_soh.py's WEEK_START_COL
-Public Const SS_TABLE_ROW As Long = 5        ' T_SelfStock/T_TTAFStock: header row (week labels). Corresponds to build_soh.py's SS_TABLE_ROW
+Public Const SS_TABLE_ROW As Long = 5        ' T_CSAstocks/T_TTAFStock: header row (week labels). Corresponds to build_soh.py's SS_TABLE_ROW
 Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material data. Corresponds to build_soh.py's DATA_START_ROW
 
 ' ============================================================================
@@ -41,7 +41,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' [Caution] JumpToSelectedWeek does not do anything on its own once
 ' imported - it must additionally be wired up via a Worksheet_Change
 ' event pasted directly into the code module of each of the "Dashboard",
-' "Material_Detail", "T_SelfStock", and "T_TTAFStock" sheets (a standard
+' "Material_Detail", "T_CSAstocks", and "T_TTAFStock" sheets (a standard
 ' module's code never fires from a cell edit). The routine itself lives
 ' in the RefreshData_Display module; see docs/SOH_System_Guide.md for the
 ' exact Worksheet_Change code to paste into each sheet.
@@ -50,7 +50,7 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' array (Range.Value) once, instead of reading an external file's cells one
 ' at a time via .Cells(r,c).Value, and afterward only touches the in-memory
 ' array. Likewise, writes to PP_Grid (intermediate name -> row number) and
-' T_SelfStock_Log/T_TTAFStock_Log ((RM_Code, week's Monday) -> row number)
+' T_CSAstocks_Log/T_TTAFStock_Log ((RM_Code, week's Monday) -> row number)
 ' build a Dictionary once at the start of the run and look values up in it,
 ' instead of calling .Find() or scanning every row on each write (see
 ' BuildNameIndex in this module and BuildStockRowIndex in
@@ -93,10 +93,10 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 ' dialogs, and restored to True during cleanup. As a precaution, the
 ' srcWb.Close call itself is still guarded with If Not srcWb Is Nothing Then.
 '
-' [About the two-layer structure of T_SelfStock/T_TTAFStock]
+' [About the two-layer structure of T_CSAstocks/T_TTAFStock]
 ' RefreshSelfStock/RefreshTTAFStock never write to the visible
-' T_SelfStock/T_TTAFStock sheets at all. They write to the hidden
-' T_SelfStock_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
+' T_CSAstocks/T_TTAFStock sheets at all. They write to the hidden
+' T_CSAstocks_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
 ' visible sheet is built entirely from formulas (a material x week grid)
 ' that recompute from that log every time. The WeekIndex column on the
 ' _Log sheet side is a formula column calculated automatically from the

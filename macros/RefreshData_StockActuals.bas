@@ -8,7 +8,7 @@ Option Explicit
 '                      sheet where our own warehouse's physical count is
 '                      recorded; the filename includes a date in
 '                      DD.MM.YYYY format), adds/updates that week's actuals
-'                      in T_SelfStock. Reads the "CHEMICAL SOH" sheet
+'                      in T_CSAstocks. Reads the "CHEMICAL SOH" sheet
 '                      (column B = CSA/code, columns C and D = stock -
 '                      in the Chemical section C=WH, D=Floor, but in the
 '                      Substrate/Consumables section the meaning of the
@@ -46,10 +46,10 @@ Option Explicit
 ' within the same week still collapses into one row; import order doesn't
 ' matter).
 '
-' [About the two-layer structure of T_SelfStock/T_TTAFStock]
+' [About the two-layer structure of T_CSAstocks/T_TTAFStock]
 ' RefreshSelfStock/RefreshTTAFStock never write to the visible
-' T_SelfStock/T_TTAFStock sheets at all. They write to the hidden
-' T_SelfStock_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
+' T_CSAstocks/T_TTAFStock sheets at all. They write to the hidden
+' T_CSAstocks_Log/T_TTAFStock_Log (a raw log keyed by count date), and the
 ' visible sheet is built entirely from formulas (a material x week grid)
 ' that recompute from that log every time. The WeekIndex column on the
 ' _Log sheet side is a formula column calculated automatically from the
@@ -94,7 +94,7 @@ Sub RefreshSelfStock()
     Dim reportDate As Date: reportDate = ExtractDateFromName(CStr(srcPath)) - 7
 
     Dim thisWb As Workbook: Set thisWb = ThisWorkbook
-    Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_SelfStock_Log").ListObjects("T_SelfStock_Log")
+    Dim selfTbl As ListObject: Set selfTbl = thisWb.Sheets("T_CSAstocks_Log").ListObjects("T_CSAstocks_Log")
     Dim wIdx As Long: wIdx = WeekIndexForDate(thisWb, reportDate)
     Dim selfIdx As Object: Set selfIdx = BuildStockRowIndex(selfTbl)
     ' Determines target rows by whether column C (CSA code) is an actual
@@ -149,9 +149,9 @@ Sub RefreshSelfStock()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.DisplayAlerts = True
-    MsgBox "T_SelfStock has been updated." & vbCrLf & "Target week: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
+    MsgBox "T_CSAstocks has been updated." & vbCrLf & "Target week: " & wIdx & " (" & Format(reportDate, "yyyy-mm-dd") & ")" & vbCrLf & _
            "Added: " & added & ", updated: " & updated & vbCrLf & _
-           "(Multiple actuals within the same week are collapsed into one row. The grid-view T_SelfStock sheet updates automatically.)", vbInformation
+           "(Multiple actuals within the same week are collapsed into one row. The grid-view T_CSAstocks sheet updates automatically.)", vbInformation
     Exit Sub
 
 ErrHandler:
@@ -207,7 +207,7 @@ Sub RefreshTTAFStock()
     ' fall within the same Excel Mon-Sun week, so -7 or -3 would give the
     ' same week-number result either way; -7 is used so the date itself
     ' lines up with Monday, the start of the week, for consistency with
-    ' other actuals like T_SelfStock). The "TTAF count(dd.mm.yyyy)" header
+    ' other actuals like T_CSAstocks). The "TTAF count(dd.mm.yyyy)" header
     ' is sometimes merged across F3:F4 etc., and a merged cell only carries
     ' a value on its top-left (anchor) cell. To avoid reading a blank when
     ' .Cells(4,6) isn't the anchor, .MergeArea.Cells(1,1) is used to always
@@ -335,7 +335,7 @@ End Sub
 ' TTAF-side files such as daily check and CSA Report). If a match is
 ' found, returns M_RawMaterials' official spelling (Part Name) (writing
 ' the source file's raw spelling as-is would disagree with the official
-' spelling used in existing T_SelfStock_Log rows and other sheets, and the
+' spelling used in existing T_CSAstocks_Log rows and other sheets, and the
 ' grid view would fail to recognize it as that material).
 ' Returns an empty string if nothing matches at all.
 Private Function ResolveSelfStockCode(rmTbl As ListObject, rmCodeSet As Object, codeRaw As String) As String
@@ -437,7 +437,7 @@ End Function
 
 ' Computes "that week's Monday" from a date using real calendar arithmetic
 ' (a pure date calculation with no dependency at all on Cal_Weeks!B1's
-' AnchorYear). Used as the matching key for T_SelfStock_Log/T_TTAFStock_Log
+' AnchorYear). Used as the matching key for T_CSAstocks_Log/T_TTAFStock_Log
 ' so that importing multiple times within the same week overwrites a
 ' single row (previously Date itself was the key, which caused rows to
 ' pile up on every daily import).
@@ -445,7 +445,7 @@ Private Function MondayOfWeek(d As Date) As Date
     MondayOfWeek = d - Weekday(d, vbMonday) + 1
 End Function
 
-' Builds, once, an index of tbl's (T_SelfStock_Log/T_TTAFStock_Log)
+' Builds, once, an index of tbl's (T_CSAstocks_Log/T_TTAFStock_Log)
 ' (RM_Code, that week's Monday) -> row number. Columns are RM_Code(1),
 ' Date(2), WeekIndex(3, a formula auto-calculated from Date), Qty(4).
 ' Keying on "that week's Monday" (calculated from the real calendar date,
@@ -478,9 +478,9 @@ End Function
 ' rows," but that behavior only applies when a row is added by hand below
 ' the table in the UI - a row added via VBA's ListRows.Add is not always
 ' auto-duplicated (an actual reported bug: a row added via VBA to
-' T_SelfStock_Log/T_TTAFStock_Log had its WeekIndex column left entirely
+' T_CSAstocks_Log/T_TTAFStock_Log had its WeekIndex column left entirely
 ' blank, formula and all, so the grid side's SUMIFS/COUNTIFS couldn't find
-' that row and T_SelfStock/T_TTAFStock showed nothing). So for a new row,
+' that row and T_CSAstocks/T_TTAFStock showed nothing). So for a new row,
 ' the previous row's WeekIndex formula is explicitly copied (copying via
 ' FormulaR1C1 means the relative reference - the part pointing at its own
 ' Date cell - automatically adjusts to match the destination row).
