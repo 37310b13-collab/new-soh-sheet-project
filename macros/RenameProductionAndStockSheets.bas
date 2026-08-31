@@ -40,8 +40,11 @@ Option Explicit
 '
 ' Each item tries a short list of possible current names in order (in case
 ' an earlier partial migration already renamed some of them) and uses
-' whichever is actually found; an item whose target name already exists is
-' treated as already migrated and skipped.
+' whichever is actually found. An item whose SHEET already has the new
+' name is not blindly skipped - its Table (if any) is re-checked every
+' run and fixed if it's still under the old name, since an earlier run
+' could have renamed the sheet successfully while failing to find/rename
+' the Table (this actually happened - see FixMismatchedTableNames.bas).
 '
 ' [Caution] Back up first and test on a copy - not the live production
 ' file directly. VBA code itself is NOT rewritten by this rename (only
@@ -104,16 +107,27 @@ End Sub
 
 ' Renames whichever of candidateOldNames is actually found (as a worksheet)
 ' to newName - renaming its Table first (if hasTable), so every structured-
-' reference formula follows, then the sheet itself. If newName already
-' exists as a sheet, or none of candidateOldNames is found, does nothing
-' (already migrated / nothing to do).
+' reference formula follows, then the sheet itself. If the sheet already
+' has the new name, the rename itself is skipped, but its Table (if
+' hasTable) is still re-checked and fixed if needed - see the module
+' header comment for why this matters. If none of candidateOldNames is
+' found (and the sheet isn't already renamed either), does nothing.
 Private Sub RenameSheetAndTable(wb As Workbook, candidateOldNames As Variant, newName As String, hasTable As Boolean)
     Dim sh As Worksheet
     On Error Resume Next
     Set sh = wb.Sheets(newName)
     On Error GoTo 0
     If Not sh Is Nothing Then
-        renameLog = renameLog & "- " & newName & ": already migrated (skipped)" & vbCrLf
+        If hasTable Then
+            If EnsureTableName(sh, newName) Then
+                renameLog = renameLog & "- " & newName & ": sheet was already renamed, but its Table was " & _
+                    "still under the old name - fixed now" & vbCrLf
+            Else
+                renameLog = renameLog & "- " & newName & ": already migrated (skipped)" & vbCrLf
+            End If
+        Else
+            renameLog = renameLog & "- " & newName & ": already migrated (skipped)" & vbCrLf
+        End If
         Exit Sub
     End If
 
@@ -133,24 +147,35 @@ Private Sub RenameSheetAndTable(wb As Workbook, candidateOldNames As Variant, ne
 
     Dim actualOldName As String: actualOldName = sh.Name
 
-    If hasTable Then
-        Dim lo As ListObject
-        On Error Resume Next
-        Set lo = sh.ListObjects(actualOldName)
-        On Error GoTo 0
-        If lo Is Nothing And sh.ListObjects.Count = 1 Then
-            Set lo = sh.ListObjects(1)
-        End If
-        If Not lo Is Nothing Then
-            lo.Name = newName
-        Else
-            renameLog = renameLog & "  (WARNING: expected exactly one Table on """ & actualOldName & _
-                """ but found " & sh.ListObjects.Count & " - the Table was NOT renamed, only the sheet " & _
-                "was. Please rename the Table by hand in Excel: select any cell in it, go to the " & _
-                "Table Design tab, and set Table Name to """ & newName & """.)" & vbCrLf
-        End If
-    End If
+    If hasTable Then Call EnsureTableName(sh, newName)
 
     sh.Name = newName
     renameLog = renameLog & "- " & actualOldName & " -> " & newName & vbCrLf
 End Sub
+
+' Ensures sh has a Table named newName. Does nothing and returns False if
+' a Table already has that name. Otherwise, if the sheet has exactly one
+' Table (regardless of its current name), renames it to newName and
+' returns True. If the sheet has zero or more than one Table with no
+' match, logs a warning and returns False rather than guessing which one
+' to rename.
+Private Function EnsureTableName(sh As Worksheet, newName As String) As Boolean
+    Dim lo As ListObject
+    On Error Resume Next
+    Set lo = sh.ListObjects(newName)
+    On Error GoTo 0
+    If Not lo Is Nothing Then
+        EnsureTableName = False
+        Exit Function
+    End If
+
+    If sh.ListObjects.Count = 1 Then
+        sh.ListObjects(1).Name = newName
+        EnsureTableName = True
+    Else
+        renameLog = renameLog & "  (WARNING: sheet """ & sh.Name & """ has " & sh.ListObjects.Count & _
+            " table(s), none named """ & newName & """ - please rename the correct one by hand in Excel: " & _
+            "select a cell in it, go to the Table Design tab, and set Table Name to """ & newName & """.)" & vbCrLf
+        EnsureTableName = False
+    End If
+End Function

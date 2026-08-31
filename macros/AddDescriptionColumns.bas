@@ -52,8 +52,15 @@ Option Explicit
 ' D1, and the frozen columns still stop right after the Description
 ' column. Delete this module once confirmed - it's one-time-use.
 '
-' Safe to run more than once: a sheet whose column B header is already
-' "Description" is skipped.
+' Safe to run more than once: the column-insert step is skipped once
+' column B's header already says "Description" (inserting it twice would
+' create a second, wrong Description column) - but the row-formula and
+' freeze-pane steps always run regardless, since they're cheap and
+' idempotent. This matters because those steps happen after the header is
+' set, so a run that errored out partway through (e.g. only some rows got
+' the formula) would otherwise leave the header saying "Description" while
+' silently understating how much of the sheet is actually done, and a
+' later run would skip it entirely without ever finishing the job.
 ' ============================================================================
 
 Private resultLog As String
@@ -111,19 +118,33 @@ Private Sub AddDescriptionToTableSheet(wb As Workbook, sheetName As String)
     On Error Resume Next
     Set tbl = sh.ListObjects(sheetName)
     On Error GoTo 0
+    If tbl Is Nothing And sh.ListObjects.Count = 1 Then
+        ' The Table isn't named to match the sheet - e.g. a leftover from
+        ' RenameProductionAndStockSheets not finding it under its expected
+        ' old name (see FixMismatchedTableNames.bas). Since this sheet only
+        ' has one Table, it must be the right one regardless of its name.
+        Set tbl = sh.ListObjects(1)
+        resultLog = resultLog & "  (note: this sheet's Table was named """ & tbl.Name & _
+            """, not """ & sheetName & """ - proceeding anyway since it's the only Table here. " & _
+            "Consider running FixMismatchedTableNames.bas too.)" & vbCrLf
+    End If
     If tbl Is Nothing Then
         resultLog = resultLog & "- " & sheetName & ": Table not found (skipped - please check by hand)" & vbCrLf
         Exit Sub
     End If
-    If Trim(CStr(sh.Cells(1, 2).Value)) = "Description" Then
-        resultLog = resultLog & "- " & sheetName & ": already migrated (skipped)" & vbCrLf
-        Exit Sub
+    Dim alreadyHadColumn As Boolean
+    alreadyHadColumn = (Trim(CStr(sh.Cells(1, 2).Value)) = "Description")
+    If Not alreadyHadColumn Then
+        Dim newCol As ListColumn: Set newCol = tbl.ListColumns.Add(Position:=2)
+        newCol.Name = "Description"
+        sh.Columns(2).ColumnWidth = 32
     End If
 
-    Dim newCol As ListColumn: Set newCol = tbl.ListColumns.Add(Position:=2)
-    newCol.Name = "Description"
-    sh.Columns(2).ColumnWidth = 32
-
+    ' Always (re)populate every row's formula and reset the freeze pane,
+    ' even if the column already existed - see the module header comment
+    ' for why this must not be skipped just because the column was already
+    ' there (a previous run could have been interrupted after inserting
+    ' the column but before finishing these steps).
     Dim n As Long: n = tbl.ListRows.Count
     Dim r As Long, rr As Long
     For r = 1 To n
@@ -141,7 +162,11 @@ Private Sub AddDescriptionToTableSheet(wb As Workbook, sheetName As String)
     sh.Range("C2").Select
     ActiveWindow.FreezePanes = True
 
-    resultLog = resultLog & "- " & sheetName & ": Description column added (" & n & " rows)" & vbCrLf
+    If alreadyHadColumn Then
+        resultLog = resultLog & "- " & sheetName & ": column already existed - re-verified/refilled all " & n & " rows" & vbCrLf
+    Else
+        resultLog = resultLog & "- " & sheetName & ": Description column added (" & n & " rows)" & vbCrLf
+    End If
 End Sub
 
 ' Inserts a Description column (position 2) into a plain-grid sheet
@@ -156,15 +181,17 @@ Private Sub AddDescriptionToGridSheet(wb As Workbook, sheetName As String)
         resultLog = resultLog & "- " & sheetName & ": sheet not found (skipped)" & vbCrLf
         Exit Sub
     End If
-    If Trim(CStr(sh.Cells(SS_TABLE_ROW, 2).Value)) = "Description" Then
-        resultLog = resultLog & "- " & sheetName & ": already migrated (skipped)" & vbCrLf
-        Exit Sub
+    Dim alreadyHadColumn As Boolean
+    alreadyHadColumn = (Trim(CStr(sh.Cells(SS_TABLE_ROW, 2).Value)) = "Description")
+    If Not alreadyHadColumn Then
+        sh.Columns(2).Insert Shift:=xlToRight
+        sh.Cells(SS_TABLE_ROW, 2).Value = "Description"
+        sh.Columns(2).ColumnWidth = 32
     End If
 
-    sh.Columns(2).Insert Shift:=xlToRight
-    sh.Cells(SS_TABLE_ROW, 2).Value = "Description"
-    sh.Columns(2).ColumnWidth = 32
-
+    ' Always (re)populate every row's formula and reset the freeze pane,
+    ' even if the column already existed - same reasoning as
+    ' AddDescriptionToTableSheet.
     Dim lastRow As Long: lastRow = sh.Cells(sh.Rows.Count, 1).End(xlUp).Row
     Dim r As Long, n As Long: n = 0
     For r = SS_TABLE_ROW + 1 To lastRow
@@ -184,5 +211,9 @@ Private Sub AddDescriptionToGridSheet(wb As Workbook, sheetName As String)
     sh.Range("C" & (SS_TABLE_ROW + 1)).Select
     ActiveWindow.FreezePanes = True
 
-    resultLog = resultLog & "- " & sheetName & ": Description column added (" & n & " rows)" & vbCrLf
+    If alreadyHadColumn Then
+        resultLog = resultLog & "- " & sheetName & ": column already existed - re-verified/refilled all " & n & " rows" & vbCrLf
+    Else
+        resultLog = resultLog & "- " & sheetName & ": Description column added (" & n & " rows)" & vbCrLf
+    End If
 End Sub
