@@ -199,6 +199,23 @@ NextRowNames:
     For r = hdrRow + 1 To usedRows
         If Not canonNames.Exists(r) Then GoTo NextRow
         Dim ppRowIndex As Long: ppRowIndex = ppIdx(canonNames(r))
+        ' [Diagnostic] ppRowIndex should always be a valid 1-based row number
+        ' into ppGrid by this point (every name in canonNames was either
+        ' already in ppIdx, or just added to it a few lines above). If it
+        ' isn't, ppGrid.ListRows(ppRowIndex) below would fail with the
+        ' unhelpful "(9) Subscript out of range" and give no clue which
+        ' name caused it - so fail loudly here instead, naming the exact
+        ' source row and name involved.
+        If ppRowIndex < 1 Or ppRowIndex > ppGrid.ListRows.Count Then
+            Err.Raise vbObjectError + 4, , _
+                "Could not resolve a Production_Plan row for """ & canonNames(r) & """ " & _
+                "(source file row " & r & ", raw name """ & Trim(CStr(data(r, 2))) & """). " & _
+                "ppIdx returned " & ppRowIndex & ", which is out of range for Production_Plan's " & _
+                ppGrid.ListRows.Count & " rows. This usually means the name doesn't match any " & _
+                "Production_Plan row even after the Solution-alias lookup - please check the exact " & _
+                "spelling in both the source file and Production_Plan's Intermediate column, and the " & _
+                "Control_Panel T_SolutionNames table if it's a Solution alias."
+        End If
         If Not touchedRows.Exists(ppRowIndex) Then
             touchedRows(ppRowIndex) = ppGrid.ListRows(ppRowIndex).Range.Value
         End If
