@@ -63,7 +63,7 @@
 | `SyncPODraftCategories` | （ファイル選択なし・実行するだけ） | M_RawMaterialsのCategory・Origin_Country列を後から書き換えた際、PO_Draft_*シート側の振り分けを実際の値に合わせて同期し直す（詳細は5.7.2〜5.7.3章。いつでも安全に実行可） |
 | `RemoveMaterial` | （ファイル選択なし・InputBoxで入力） | 指定した材料を全関連シートから削除（詳細は5.7章） |
 | `RemoveIntermediate` | （ファイル選択なし・InputBoxで入力） | 生産中止になった中間体をProduction_Plan・M_BOM・Material_Detailから削除（詳細は5.7章） |
-| `SetupPODraftLetterheadLayout` | （ファイル選択なし・実行するだけ） | PO_Draft_Hazardousに手動で作り込んだレターヘッド形式レイアウト（月/週見出しの不具合修正・基準週参照の名前付き範囲化・Firm/Forecast色分け・SafetyStock/CurrentStockの印刷範囲除外）を修正した上で、PO_Draft_Chemical・PO_Draft_Substrate_JPN_CHN・PO_Draft_Substrate_Polandの3シートにも複製する、一度だけ実行する移行用マクロ（詳細は5.7.4章。何度実行しても安全） |
+| `ApplyPODraftZeroHiddenFormattingToAllSheets` | （ファイル選択なし・実行するだけ） | PO_Draft_*シートの「発注数量0の週を非表示」条件付き書式と印刷範囲を4シート全てに再適用（詳細は5.7.4章。いつでも安全に実行可） |
 
 **TTAF供給材料の在庫予測の考え方（重要）**: TTAFは仕入先であると同時に、原材料を預けている
 倉庫でもあります。`T_Shipments`（Status=TTAF Stock）は「TTAFが外部の仕入先から新しく仕入れて
@@ -470,7 +470,7 @@ Origin_Countryも見るように拡張済みなので、各品目が正しい`PO
 場合は、`POSheetNameForMaterial`関数（VBA）と`build_po_draft`の呼び出し（`build_soh.py`）に
 同様の分岐を追加・変更するだけで対応できます。
 
-### 5.7.4 発注書のレターヘッド形式レイアウトとFirm/Forecast色分け（`SetupPODraftLetterheadLayout`）
+### 5.7.4 発注書のレターヘッド形式レイアウトとFirm/Forecast色分け
 
 `PO_Draft_*`シートは元々、`build_soh.py`が生成するシンプルな罫線グリッド（TO/FROM欄は
 仮の文字列、見出しは14行目、データは15行目から）でしたが、実運用では`PO_Draft_Hazardous`
@@ -508,7 +508,7 @@ F〜R=週1〜13, S=Total。かつて存在したF=SafetyStock, G=CurrentStock列
 数式だけが古い`$P$7`参照のまま取り残され、空欄のP7セルを参照し続けて発注数量が
 常に0のまま更新されなくなる不具合がありました。
 
-**修正した不具合（`SetupPODraftLetterheadLayout`で修正）**:
+**修正した不具合**（一度だけ実行する移行マクロ`SetupPODraftLetterheadLayout`で修正・本番ファイルで実行済み。マクロ自体はgit履歴に残し、リポジトリからは削除済みです）:
 1. **月/週見出し(20行目)が消える不具合**: 元は1〜4週目・5〜8週目・9〜13週目という
    固定幅でセル結合し、直前のグループ最終週と月が違う時だけラベルを表示する方式に
    なっていましたが、月によって実際にまたがる週数は変わる（例: 2026年11月は5週に
@@ -538,26 +538,24 @@ F〜R=週1〜13, S=Total。かつて存在したF=SafetyStock, G=CurrentStock列
    Order Date/Issue Month/Firm Month/Revision/基準週(WeekIndex)のラベル列・値列も、
    この前詰めに合わせてL列（ラベル）・N列（値、N〜P結合）に移動しました。
 
-**`SetupPODraftLetterheadLayout`の動作**: 一度だけ実行する移行用マクロです。
-①`PO_Draft_Hazardous`自身の上記の不具合を修正し、②`PO_Draft_Chemical`・
-`PO_Draft_Substrate_JPN_CHN`・`PO_Draft_Substrate_Poland`の3シートに同じレイアウトを
-複製します。複製時、TO/FROM/CC欄は`PO_Draft_Hazardous`の実際の宛先をそのままコピーせず
-仮の文字列に戻します（カテゴリによって担当者・取引先が異なる可能性があるため、複製後に
-実際の宛先を入力してください）。Revision・基準週(WeekIndex)は複製前の各シート自身の値を
-引き継ぎます。データ行（材料一覧）は複製前の内容を使い回さず、`M_RawMaterials`の現在の
-Category・Origin_Countryを基準に作り直します（`SyncPODraftCategories`と同じ判定基準）。
-ロゴ画像・バナー等の装飾は、Excelのシートコピー機能により自動的に複製されますが、
-バナーに日付文字列が手入力されている場合は、複製後に各シートで内容を確認・修正して
-ください。既に移行済みの部分（シートごとに名前付き範囲`BaseWeek`の有無で判定）は
-スキップするため、誤って複数回実行しても安全です。
+**`SetupPODraftLetterheadLayout`は何をしたか（参考・実行済み）**: ①`PO_Draft_Hazardous`
+自身の上記の不具合を修正し、②`PO_Draft_Chemical`・`PO_Draft_Substrate_JPN_CHN`・
+`PO_Draft_Substrate_Poland`の3シートに同じレイアウトを複製する、一度だけの移行マクロ
+でした。複製時、TO/FROM/CC欄は`PO_Draft_Hazardous`の実際の宛先をそのままコピーせず
+仮の文字列に戻し（カテゴリによって担当者・取引先が異なる可能性があるため）、Revision・
+基準週(WeekIndex)は複製前の各シート自身の値を引き継ぎ、データ行（材料一覧）は
+`M_RawMaterials`の現在のCategory・Origin_Countryを基準に作り直していました
+（`SyncPODraftCategories`と同じ判定基準）。本番ファイルで実行済みのため、
+リポジトリからは削除しています。今後、日常的なメンテナンスで使うのは
+`ApplyPODraftZeroHiddenFormattingToAllSheets`（Firm/Forecastの色分け・印刷範囲の再適用）
+だけです。
 
 **発注書の発行(`ExportPODraft`)とRevision**: `PO_Export.bas`の`ExportPODraft`は、
-名前付き範囲`PORevision`があればそれを、無ければ（未移行の旧レイアウトのシート）
-従来通り`P5`セルをRevision番号として読み取ります。レターヘッド形式レイアウトへの
-移行後、`PORevision`を見ずに常に`P5`を読んでいると、常に空欄の`P5`を0扱いのまま読み、
-発行のたびに`P5`（レターヘッドの空白セル）へ`1`を書き込んで静かに壊してしまうところ
-でした。`SetupPODraftLetterheadLayout`実行後は、この心配なく`ExportChemical`等を
-実行できます。
+名前付き範囲`PORevision`があればそれを、無ければ（レターヘッド形式レイアウトへ未移行の
+シート）従来通り`P5`セルをRevision番号として読み取ります。`PORevision`を見ずに常に`P5`を
+読んでいると、常に空欄の`P5`を0扱いのまま読み、発行のたびに`P5`（レターヘッドの空白セル）
+へ`1`を書き込んで静かに壊してしまうところでした。全`PO_Draft_*`シートがレターヘッド形式
+レイアウトへ移行済みの現在は、この心配なく`ExportChemical`等を実行できます。
 
 **中間体（生産される製品コード）側の追加・削除**: 材料（原材料）だけでなく、中間体（`Production_Plan`の
 行、生産計画上の製品コード）の増減にも対応しています。

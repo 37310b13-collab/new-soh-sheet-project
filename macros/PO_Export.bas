@@ -46,12 +46,12 @@ Private Sub ExportPODraft(ByVal sheetName As String, ByVal fileLabel As String)
     Set srcWs = ThisWorkbook.Worksheets(sheetName)
 
     ' --- Read the revision number and increment it after issuing ---
-    ' Use the named range "PORevision" if it exists (sheets already migrated to the
-    ' new layout by SetupPODraftLetterheadLayout have the Revision cell at P11).
-    ' If it doesn't exist (old layout, not yet migrated), fall back to P5 as before.
-    ' Without this fallback, migrating to the new layout would have kept reading the
-    ' always-blank P5 (treating it as revNo=0) and writing "1" into P5 on every
-    ' issue, silently corrupting a blank letterhead cell.
+    ' Use the named range "PORevision" if it exists (the current layout has the
+    ' Revision cell at N11). If it doesn't exist (an old, unmigrated layout),
+    ' fall back to P5 as before. Without this fallback, migrating to the new
+    ' layout would have kept reading the always-blank P5 (treating it as
+    ' revNo=0) and writing "1" into P5 on every issue, silently corrupting a
+    ' blank letterhead cell.
     On Error Resume Next
     Set revCell = srcWs.Range("PORevision")
     On Error GoTo ErrHandler

@@ -1037,7 +1037,8 @@ Public Sub AppendPODraftRow(sh As Worksheet, rmCode As String, ttafCodeVal As St
 
     ' The Firm (weeks 1-4)/Forecast (weeks 5-13) color-coding is left to
     ' the conditional formatting set up once at sheet-setup time
-    ' (SetupPODraftLetterheadLayout/build_soh.py) (colored only when the
+    ' (ApplyPODraftZeroHiddenFormattingToAllSheets in RefreshData_PODraft.bas/
+    ' build_soh.py) (colored only when the
     ' order quantity is non-zero) rather than a direct fill. Since that's
     ' already set up over a generously wide row range, nothing needs to be
     ' set individually for this row.

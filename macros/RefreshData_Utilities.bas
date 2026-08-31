@@ -30,8 +30,8 @@ Public Const DASH_DATA_START_ROW As Long = 7 ' Dashboard: start row of material 
 '                                 JumpToSelectedWeek (display toggles only; never changes data)
 '   RefreshData_MaterialMgmt    : AddMaterial / RemoveMaterial / RemoveIntermediate
 '                                 (add/remove materials and intermediates)
-'   RefreshData_PODraft         : SetupPODraftLetterheadLayout and other PO_Draft_*
-'                                 letterhead-layout setup/maintenance macros
+'   RefreshData_PODraft         : ApplyPODraftZeroHiddenFormattingToAllSheets and
+'                                 other PO_Draft_* letterhead-layout maintenance macros
 '
 ' For a detailed explanation of each macro, see the comment at the top of the
 ' module where it is implemented. Every macro only updates the sheet(s) it is
@@ -211,9 +211,8 @@ End Function
 ' RefreshData_MaterialMgmt.bas's AppendPODraftRow used to hard-code $P$7
 ' directly, any existing sheet whose base-week cell had been moved, e.g.
 ' manually from P7 to P13, would only have its newly-appended rows break).
-' Sheets not yet migrated by SetupPODraftLetterheadLayout
-' (RefreshData_PODraft) have no "BaseWeek" name, so only in that case does
-' this fall back to $P$7 as before.
+' A sheet with no "BaseWeek" name at all (e.g. one built by hand outside
+' the normal build_soh.py/migration flow) falls back to $P$7 as before.
 Public Function BaseWeekRef(sh As Worksheet) As String
     On Error Resume Next
     Dim nm As Name: Set nm = sh.Names("BaseWeek")
